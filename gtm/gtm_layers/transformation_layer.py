@@ -16,13 +16,13 @@ from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
 
 
 class Transformation(nn.Module):
-    def __init__(self, degree, number_variables, polynomial_range, monotonically_increasing=True, spline="bernstein", span_factor=torch.tensor(0.1),
+    def __init__(self, degree, number_variables, spline_range, monotonically_increasing=True, spline="bernstein", span_factor=torch.tensor(0.1),
                  number_covariates=False, initial_log_transform=False, calc_method_bspline="Naive_Basis",span_restriction="None", spline_order=3): #device=None
         super().__init__()
         self.type = "transformation"
         self.degree  = degree
         self.number_variables = number_variables
-        self.polynomial_range = torch.FloatTensor(polynomial_range)
+        self.spline_range = torch.FloatTensor(spline_range)
         self.monotonically_increasing = monotonically_increasing
         
         # For padding!
@@ -59,25 +59,24 @@ class Transformation(nn.Module):
             warnings.warn("Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default.")
         
         
-        ###################################### New ###################################### 
+
         # The following code ensures that:
         # we have knots equally spanning the range of the number of degrees
         # we have the first an last knot on the bound of the span
         # we get equally space boundary knots outside the spane to ensure that at the boundary of the span we get bspline predicitons without errors
-        
-        number_of_bound_knots_per_side = self.spline_order #- 1 # for cubcic splines (order 3) we need 3 knots on each side 
+        number_of_bound_knots_per_side = self.spline_order # for cubcic splines (order 3) we need 3 knots on each side 
         max_knots = max(self.degree) + 2 * number_of_bound_knots_per_side
         self.knots_list = list()    
         for var in range(self.number_variables):
             
             # The distance between knots is the span divided by the number of knots minus 1 
             # because between D points where we have one point at the min and one at the max of a span we have D-1 intervals between knots
-            distance_between_knots_in_bounds = (self.polynomial_range[1,var] - self.polynomial_range[0,var]) / (self.degree[var]-1)
+            distance_between_knots_in_bounds = (self.spline_range[1,var] - self.spline_range[0,var]) / (self.degree[var]-1)
             
             # We get the eqully spaced knots by equal spacing on the extended span
             knots = torch.linspace(
-                                self.polynomial_range[0,var] - number_of_bound_knots_per_side * distance_between_knots_in_bounds,
-                                self.polynomial_range[1,var] + number_of_bound_knots_per_side * distance_between_knots_in_bounds,
+                                self.spline_range[0,var] - number_of_bound_knots_per_side * distance_between_knots_in_bounds,
+                                self.spline_range[1,var] + number_of_bound_knots_per_side * distance_between_knots_in_bounds,
                                 self.degree[var] + 2 * number_of_bound_knots_per_side, # 2* because of two sides
                                 dtype=torch.float32)
             
@@ -87,33 +86,7 @@ class Transformation(nn.Module):
         self.padded_knots = torch.vstack(
             self.knots_list
             ).T
-        ###################################### New ###################################### 
-        
-        ## Defining knots for vectorized compute
-        #max_cols = max(self.degree)+1
-        #self.knots_list = list()    
-        #for var in range(self.number_variables):
-        #    
-        #    if self.spline_order == 2:
-        #        n = self.degree[var] + 1
-        #    elif self.spline_order == 3:
-        #        n = self.degree[var] + 2
-        #    
-        #    
-        #    distance_between_knots = (self.polynomial_range[1,var] - self.polynomial_range[0,var]) * (1 + self.span_factor) / (n - 1)
-        #    
-        #    knots = torch.linspace(self.polynomial_range[0,var] * (1 + self.span_factor) - self.spline_order * distance_between_knots,
-        #                    self.polynomial_range[1,var] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
-        #                    n + 4, dtype=torch.float32) 
-        #    
-        #    self.knots_list.append(
-        #        torch.cat([knots, torch.zeros(max_cols + 5 - knots.size(0))+max(self.polynomial_range[1,:])*2 ])
-        #                           )
-        #
-        #self.padded_knots = torch.vstack(
-        #    self.knots_list
-        #    ).T
-        
+
         if len(set(self.degree)) > 1:
             self.varying_degrees = True 
         else :
@@ -122,26 +95,14 @@ class Transformation(nn.Module):
         if self.varying_degrees == False:
             self.padded_knots = self.padded_knots[:,0]
         
-        ###################################### New ###################################### 
         # Create a mask to track valid values
-        max_params = max(self.degree) + 2 # num_params = inner_knots + degree_spline -1 e.g. degree + 3 -1 = degree +2
+        max_params = max(self.degree) + self.spline_order -1 # num_params = inner_knots + degree_spline -1 e.g. degree + 3 -1 = degree +2
         self.padded_params_mask = torch.vstack([
             torch.cat([torch.ones(p.size(0), dtype=torch.int64), torch.zeros(max_params - p.size(0), dtype=torch.int64)]) for p in self.params
         ]).T  # Shape (num_params, max_cols)
         
         # Fore more efficient memory allocation e.g. to not create a new tensor every time in the forward pass
         self.padded_params = torch.zeros((max_params,len(self.params)))  # Pre-allocate
-        ###################################### New ###################################### 
-        
-        ## Create a mask to track valid values
-        #self.padded_params_mask = torch.vstack([
-        #    torch.cat([torch.ones(p.size(0), dtype=torch.int64), torch.zeros(max_cols - p.size(0), dtype=torch.int64)]) for p in self.params
-        #]).T  # Shape (num_params, max_cols)
-        #
-        ## Fore more efficient memory allocation e.g. to not create a new tensor every time in the forward pass
-        #self.padded_params = torch.zeros((max_cols,len(self.params)))  # Pre-allocate
-            
-       
             
         # TODO: Sort this out, I fixed the values here as it is currently the fastest computation by far
         #self.store_basis = True
@@ -157,16 +118,14 @@ class Transformation(nn.Module):
         par_restricted_opts = []
         
         for var_num in range(self.number_variables):
-            min_val = self.polynomial_range[0][var_num]
-            max_val = self.polynomial_range[1][var_num]
+            min_val = self.spline_range[0][var_num]
+            max_val = self.spline_range[1][var_num]
             
-            #par_unristricted = torch.linspace(min_val, max_val, self.degree[var_num] + 1)
             par_unristricted = torch.linspace(min_val, max_val, self.degree[var_num] + self.spline_order - 1)
             par_restricted_opt = par_unristricted
             par_unristricted[1:] = torch.log(torch.exp(par_restricted_opt[1:] - par_restricted_opt[:-1]) - 1)
             
             if self.number_covariates == 1:
-                #par_unristricted = par_unristricted.repeat(self.degree[var_num]  + 1, 1).T.flatten()
                 par_unristricted = par_unristricted.repeat(self.degree[var_num] + self.spline_order - 1 , 1).T.flatten()
             elif self.number_covariates > 1:
                 raise NotImplementedError("Only implemented for 1 or No covariates!")
@@ -194,7 +153,7 @@ class Transformation(nn.Module):
                 self.params[var_num].unsqueeze(1)  if inverse==False else self.params_inverse[var_num].unsqueeze(1),
                 input[:,var_num],
                 self.degree[var_num] if not inverse else self.degree_inverse[var_num],
-                self.polynomial_range[:, var_num] if inverse==False else self.polynomial_range_inverse[:, var_num],                
+                self.spline_range[:, var_num] if inverse==False else self.spline_range_inverse[:, var_num],                
                 monotonically_increasing=monotonically_increasing,
                 derivativ=derivativ,
                 return_penalties=return_penalties,
@@ -213,7 +172,7 @@ class Transformation(nn.Module):
                             self.params[:, var_num] if inverse==False else self.params_inverse[:, var_num],
                             input[:, var_num],
                             self.degree,
-                            self.polynomial_range[:, var_num] if inverse==False else self.polynomial_range_inverse[:, var_num],
+                            self.spline_range[:, var_num] if inverse==False else self.spline_range_inverse[:, var_num],
                             monotonically_increasing=monotonically_increasing if inverse==False else self.monotonically_increasing_inverse,
                             derivativ=derivativ,
                             span_factor=self.span_factor if inverse==False else self.span_factor_inverse,
@@ -225,13 +184,13 @@ class Transformation(nn.Module):
 
         if not inverse:
             span_factor = self.span_factor
-            polynomial_range = torch.FloatTensor(self.polynomial_range).to(input.device)
+            spline_range = torch.FloatTensor(self.spline_range).to(input.device)
             #degree = self.degree
             degree = self.degree[0]
             spline = self.spline
         else:
             span_factor = self.span_factor_inverse
-            polynomial_range = torch.FloatTensor(self.polynomial_range_inverse).to(input.device)
+            spline_range = torch.FloatTensor(self.spline_range_inverse).to(input.device)
             #degree = self.degree_inverse
             degree = self.degree_inverse[0]
             spline = self.spline_inverse
@@ -239,7 +198,7 @@ class Transformation(nn.Module):
         if spline == "bernstein":
             self.multivariate_basis = compute_multivariate_bernstein_basis(input=input,
                                                                                      degree=degree,
-                                                                                     polynomial_range=polynomial_range,
+                                                                                     spline_range=spline_range,
                                                                                      span_factor=span_factor,
                                                                                      derivativ=0,
                                                                                      covariate=covariate)
@@ -248,7 +207,7 @@ class Transformation(nn.Module):
 
             self.multivariate_basis_derivativ_1 = compute_multivariate_bernstein_basis(input=input,
                                                                                                  degree=degree,
-                                                                                                 polynomial_range=polynomial_range,
+                                                                                                 spline_range=spline_range,
                                                                                                  span_factor=span_factor,
                                                                                                  derivativ=1,
                                                                                                  covariate=covariate)
@@ -258,20 +217,20 @@ class Transformation(nn.Module):
 
         elif spline == "bspline":
             
-            self.multivariate_basis = compute_multivariate_bspline_basis(input, self.degree, self.polynomial_range, span_factor, covariate=covariate) #device=self.device)
+            self.multivariate_basis = compute_multivariate_bspline_basis(input, self.degree, self.spline_range, span_factor, covariate=covariate) #device=self.device)
 
-            self.multivariate_basis_derivativ_1 = compute_multivariate_bspline_basis(input, self.degree, self.polynomial_range, span_factor, covariate=covariate, derivativ=1)# device=self.device)
+            self.multivariate_basis_derivativ_1 = compute_multivariate_bspline_basis(input, self.degree, self.spline_range, span_factor, covariate=covariate, derivativ=1)# device=self.device)
 
             # second derivative required for score matching
             self.multivariate_basis_derivativ_2 = compute_multivariate_bspline_basis(input, self.degree,
-                                                                                               self.polynomial_range,
+                                                                                               self.spline_range,
                                                                                                span_factor,
                                                                                                covariate=covariate,
                                                                                                derivativ=2)  
 
             # third derivative required for score matching
             self.multivariate_basis_derivativ_3 = compute_multivariate_bspline_basis(input, self.degree,
-                                                                                               self.polynomial_range,
+                                                                                               self.spline_range,
                                                                                                span_factor,
                                                                                                covariate=covariate,
                                                                                                derivativ=3) 
@@ -415,7 +374,7 @@ class Transformation(nn.Module):
                            input,
                            self.padded_knots,
                            self.max_degree, 
-                           self.polynomial_range[:, 0] if inverse==False else self.polynomial_range_inverse[:, 0], 
+                           self.spline_range[:, 0] if inverse==False else self.spline_range_inverse[:, 0], 
                            derivativ=0, 
                            return_penalties=True, 
                            calc_method=self.calc_method_bspline,
@@ -433,7 +392,7 @@ class Transformation(nn.Module):
                            input, 
                            self.padded_knots, 
                            self.max_degree, 
-                           self.polynomial_range[:, 0] if inverse==False else self.polynomial_range_inverse[:, 0], 
+                           self.spline_range[:, 0] if inverse==False else self.spline_range_inverse[:, 0], 
                            derivativ=1, 
                            return_penalties=False, 
                            calc_method=self.calc_method_bspline,
@@ -500,22 +459,22 @@ class Transformation(nn.Module):
 
         input_space = torch.zeros((num_samples, self.number_variables), dtype=torch.float32, device=device)
         for var_number in range(self.number_variables):
-            input_space[:, var_number] = torch.linspace(self.polynomial_range[0,var_number].item(),self.polynomial_range[1,var_number].max().item(),num_samples,device=device)
+            input_space[:, var_number] = torch.linspace(self.spline_range[0,var_number].item(),self.spline_range[1,var_number].max().item(),num_samples,device=device)
 
         return_dict = self.forward(input=input_space,covariate=covariate_space)
         output_space = return_dict["output"]
 
-        polynomial_range_inverse = torch.zeros((2, self.number_variables), dtype=torch.float32, device=device)
+        spline_range_inverse = torch.zeros((2, self.number_variables), dtype=torch.float32, device=device)
 
         for var_number in range(self.number_variables):
             span_var_number = output_space[:, var_number].max() - output_space[:, var_number].min()
-            polynomial_range_inverse[:, var_number] = torch.tensor([output_space[:, var_number].min() - span_var_number*span_factor_inverse,
+            spline_range_inverse[:, var_number] = torch.tensor([output_space[:, var_number].min() - span_var_number*span_factor_inverse,
                                                                     output_space[:, var_number].max() + span_var_number*span_factor_inverse],
                                                                    dtype=torch.float32, device=device)
 
         inv_trans = Transformation(degree=self.number_variables * [degree_inverse],
                                    number_variables=self.number_variables,
-                                   polynomial_range=polynomial_range_inverse,
+                                   spline_range=spline_range_inverse,
                                    monotonically_increasing=self.monotonically_increasing_inverse,
                                    spline=spline_inverse,
                                    number_covariates=self.number_covariates,
@@ -529,10 +488,10 @@ class Transformation(nn.Module):
             res = np.linalg.lstsq(inv_trans.multivariate_basis[:,:,num_var].detach().numpy(), input_space[:,num_var].detach().numpy(), rcond=None)
             params_tensor[num_var] = nn.Parameter(torch.tensor(res[0], dtype=torch.float32))
 
-        self.polynomial_range_inverse = polynomial_range_inverse
+        self.spline_range_inverse = spline_range_inverse
         self.params_inverse = nn.ParameterList(params_tensor)
         self.spline_inverse = spline_inverse
         self.degree_inverse = self.number_variables * [degree_inverse]
 
     def __repr__(self):
-        return f"Transformation(degree={self.degree}, number_variables={self.number_variables}, polynomial_range={self.polynomial_range}, monotonically_increasing={self.monotonically_increasing}, spline={self.spline}, number_covariates={self.number_covariates})"
+        return f"Transformation(degree={self.degree}, number_variables={self.number_variables}, spline_range={self.spline_range}, monotonically_increasing={self.monotonically_increasing}, spline={self.spline}, number_covariates={self.number_covariates})"

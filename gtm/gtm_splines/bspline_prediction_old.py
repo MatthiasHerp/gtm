@@ -2,7 +2,7 @@ import torch
 import numpy as np
 #import functorch
 from gtm.gtm_splines.splines_utils import adjust_ploynomial_range, ReLULeR, custom_sigmoid
-#from gtm.gtm_splines.bernstein_prediction import restrict_parameters
+from gtm.gtm_splines.bernstein_prediction import restrict_parameters
 
 def x_in_intervall(x, i, t):
     # if t[i] <= x < t[i+1] then this is one, otherwise zero
@@ -117,8 +117,8 @@ def Naive(x, t, c, p, d):
 
 #from python_nf_mctm.splines.bernstein_prediction import kron
 
-def Naive_Basis(x, polynomial_range, degree, span_factor,derivativ=0,order=3):
-    #print("Naive_Basis polynomial_range", polynomial_range)
+def Naive_Basis(x, spline_range, degree, span_factor,derivativ=0,order=3):
+    #print("Naive_Basis spline_range", spline_range)
     #order = 3 #2 TODO: changed it to 3 so that the third derivative is nonzero for score matching
     p = order
     #n = degree  + 2 #TODO: for the order 3 made +2 instead of +1 before for order 2
@@ -127,12 +127,12 @@ def Naive_Basis(x, polynomial_range, degree, span_factor,derivativ=0,order=3):
     elif order == 3:
         n = degree + 2
 
-    distance_between_knots = (polynomial_range[1] - polynomial_range[0]) * (1+span_factor) / (n - 1)
+    distance_between_knots = (spline_range[1] - spline_range[0]) * (1+span_factor) / (n - 1)
 
     #print("Naive_Basis distance_between_knots", distance_between_knots)
 
-    knots = torch.linspace(polynomial_range[0] * (1+span_factor) - order * distance_between_knots,
-                           polynomial_range[1] * (1+span_factor) + order * distance_between_knots,
+    knots = torch.linspace(spline_range[0] * (1+span_factor) - order * distance_between_knots,
+                           spline_range[1] * (1+span_factor) + order * distance_between_knots,
                                      n + 4, dtype=torch.float32, device=x.device)
 
     t = knots
@@ -173,7 +173,7 @@ def Naive_Basis(x, polynomial_range, degree, span_factor,derivativ=0,order=3):
 
 
 
-def compute_multivariate_bspline_basis(input, degree, polynomial_range, span_factor, covariate=False, derivativ=0): #device=None
+def compute_multivariate_bspline_basis(input, degree, spline_range, span_factor, covariate=False, derivativ=0): #device=None
     # We essentially do a tensor prodcut of two splines! : https://en.wikipedia.org/wiki/Bernstein_polynomial#Generalizations_to_higher_dimension
 
     #print("compute_multivariate_bspline_basis",device)
@@ -183,14 +183,14 @@ def compute_multivariate_bspline_basis(input, degree, polynomial_range, span_fac
     #else:
     #    multivariate_bspline_basis = torch.empty(size=(input.size(0), (max(degree)+1), input.size(1)), device=input.device)
 #
-    #    #print("compute_multivariate_bspline_basis polynomial_range",polynomial_range)
+    #    #print("compute_multivariate_bspline_basis spline_range",spline_range)
 #
     #for var_num in range(input.size(1)):
-    #    input_basis = Naive_Basis(x=input[:, var_num], degree=degree[var_num], polynomial_range=polynomial_range[:, var_num], span_factor=span_factor, derivativ=derivativ)
+    #    input_basis = Naive_Basis(x=input[:, var_num], degree=degree[var_num], spline_range=spline_range[:, var_num], span_factor=span_factor, derivativ=derivativ)
     #    if covariate is not False:
     #        #covariate are transformed between 0 and 1 before inputting into the model
     #        # dont take the derivativ w.r.t to the covariate when computing jacobian of the transformation
-    #        covariate_basis = Naive_Basis(x=covariate, degree=degree, polynomial_range=torch.tensor([0,1],device=input.device), span_factor=span_factor, derivativ=derivativ)
+    #        covariate_basis = Naive_Basis(x=covariate, degree=degree, spline_range=torch.tensor([0,1],device=input.device), span_factor=span_factor, derivativ=derivativ)
     #        basis = kron(input_basis, covariate_basis)
     #    else:
     #        basis = input_basis
@@ -201,11 +201,11 @@ def compute_multivariate_bspline_basis(input, degree, polynomial_range, span_fac
        
     bspline_basis_list = []
     for var_num in range(input.size(1)):
-        input_basis = Naive_Basis(x=input[:, var_num], degree=degree[var_num], polynomial_range=polynomial_range[:, var_num], span_factor=span_factor, derivativ=derivativ)
+        input_basis = Naive_Basis(x=input[:, var_num], degree=degree[var_num], spline_range=spline_range[:, var_num], span_factor=span_factor, derivativ=derivativ)
         if covariate is not False:
             #covariate are transformed between 0 and 1 before inputting into the model
             # dont take the derivativ w.r.t to the covariate when computing jacobian of the transformation
-            covariate_basis = Naive_Basis(x=covariate, degree=degree, polynomial_range=torch.tensor([0,1],device=input.device), span_factor=span_factor, derivativ=derivativ)
+            covariate_basis = Naive_Basis(x=covariate, degree=degree, spline_range=torch.tensor([0,1],device=input.device), span_factor=span_factor, derivativ=derivativ)
             basis = kron(input_basis, covariate_basis)
         else:
             basis = input_basis
@@ -380,88 +380,17 @@ def run_deBoor(x, t, c, p, d):
     return deBorr_func_vectorized(torch.unsqueeze(x,0), torch.unsqueeze(k,0)).squeeze()
 
 
-####################################################################################################################################################################################
-# Vectorized deBoor from ChatGPT (check out notebook dev_vmap_bsplie.ipynb for details and comparison to other methods)
-####################################################################################################################################################################################
-
-
-def compute_k_vectorized(x, t, n):
-    """
-    Finds the knot interval index for each x in a batch-friendly way.
-
-    Args:
-        x: (batch, num_x) - Input values for each spline
-        t: List of tensors [(num_knots_i,)] of different knot positions per spline
-        n: (batch,) - Number of control points for each spline
-
-    Returns:
-        k: (batch, num_x) - Indices of knot intervals
-    """
-    k = torch.stack([torch.searchsorted(ti.contiguous(), xi) - 1 for ti, xi in zip(t, x)], dim=0)
-    k = torch.minimum(k, n[:, None] - 1)  # Ensure valid index range
-    return k
-
-def deboor_algorithm_vectorized(x, k, t, c, p):
-    """
-    Vectorized De Boor algorithm for B-spline evaluation.
-
-    Args:
-        x: (batch, num_x) - Input values
-        k: (batch, num_x) - Knot interval indices
-        t: List of tensors [(num_knots_i,)] - Knot positions per spline
-        c: List of tensors [(num_control_i, output_dim)] - Control points per spline
-        p: (scalar) - Degree of the B-spline
-
-    Returns:
-        y: (batch, num_x, output_dim) - Evaluated spline values
-    """
-    batch_size, num_x = x.shape
-    output_dim = c[0].shape[1]  # Assuming all splines have the same output_dim
-
-    # Initialize results container
-    results = []
-
-    for i in range(batch_size):
-        num_control = c[i].shape[0]
-
-        # Initialize d[j] with control points
-        d = torch.stack([c[i][j + k[i] - p] for j in range(p + 1)], dim=0)  # (p+1, num_x, output_dim)
-
-        # Recursive De Boor iterations
-        for r in range(1, p + 1):
-            for j in range(p, r - 1, -1):
-                alpha = (x[i] - t[i][j + k[i] - p]) / (t[i][j + 1 + k[i] - r] - t[i][j + k[i] - p] + 1e-9)
-                d[j] = (1 - alpha.unsqueeze(-1)) * d[j - 1] + alpha.unsqueeze(-1) * d[j]
-
-        results.append(d[p])  # Append the final evaluated spline values
-
-    return torch.stack(results, dim=0)  # Shape: (batch_size, num_x, output_dim)
-
-
 # Bspline Prediction using the deBoor algorithm
-def bspline_prediction_vectorised(params_a, input_a, degree, polynomial_range, monotonically_increasing=False, derivativ=0, return_penalties=False, calc_method="Naive_Basis",#'Naive_Basis', #before: deBoor 
-                       span_factor=0.1, span_restriction="reluler",
-                       covariate=False, params_covariate=False, covaraite_effect="multiplicativ",
-                       penalize_towards=0, order=3):
-    
-    return 0
-    
-    
-
-####################################################################################################################################################################################
-
-
-# Bspline Prediction using the deBoor algorithm
-def bspline_prediction(params_a, input_a, degree, polynomial_range, monotonically_increasing=False, derivativ=0, return_penalties=False, calc_method="Naive_Basis",#'Naive_Basis', #before: deBoor 
+def bspline_prediction(params_a, input_a, degree, spline_range, monotonically_increasing=False, derivativ=0, return_penalties=False, calc_method="Naive_Basis",#'Naive_Basis', #before: deBoor 
                        span_factor=0.1, span_restriction="reluler",
                        covariate=False, params_covariate=False, covaraite_effect="multiplicativ",
                        penalize_towards=0, order=3): #device=None
 
     # Adjust polynomial range to be a bit wider
     # Empirically found that this helps with the fit
-    #polynomial_range = adjust_ploynomial_range(polynomial_range, span_factor)
+    #spline_range = adjust_ploynomial_range(spline_range, span_factor)
 
-    #print("polynomial_range after:", polynomial_range)  
+    #print("spline_range after:", spline_range)  
     
     #print("params_a.size()", params_a.size())
     if monotonically_increasing:
@@ -477,19 +406,19 @@ def bspline_prediction(params_a, input_a, degree, polynomial_range, monotonicall
     elif order == 3:
         n = degree + 2
 
-    distance_between_knots = (polynomial_range[1] - polynomial_range[0]) * (1 + span_factor) / (n - 1)
+    distance_between_knots = (spline_range[1] - spline_range[0]) * (1 + span_factor) / (n - 1)
 
-    knots = torch.linspace(polynomial_range[0] * (1 + span_factor) - order * distance_between_knots,
-                           polynomial_range[1] * (1 + span_factor) + order * distance_between_knots,
+    knots = torch.linspace(spline_range[0] * (1 + span_factor) - order * distance_between_knots,
+                           spline_range[1] * (1 + span_factor) + order * distance_between_knots,
                            n + 4, dtype=torch.float32, device=input_a.device)
 
-    #input_a_clone = (torch.sigmoid(input_a_clone/((polynomial_range[1] - polynomial_range[0])) * 10) - 0.5) * (polynomial_range[1] - polynomial_range[0])/2
-    #input_a_clone = custom_sigmoid(input=input_a_clone, min=polynomial_range[0], max=polynomial_range[1])
+    #input_a_clone = (torch.sigmoid(input_a_clone/((spline_range[1] - spline_range[0])) * 10) - 0.5) * (spline_range[1] - spline_range[0])/2
+    #input_a_clone = custom_sigmoid(input=input_a_clone, min=spline_range[0], max=spline_range[1])
 
     if span_restriction == "sigmoid":
-        input_a_clone = custom_sigmoid(input_a_clone, polynomial_range)
+        input_a_clone = custom_sigmoid(input_a_clone, spline_range)
     elif span_restriction == "reluler":
-        reluler = ReLULeR(polynomial_range)
+        reluler = ReLULeR(spline_range)
         input_a_clone = reluler.forward(input_a_clone)
     else:
         #print("span_restriction is not used!!!!!!!!!")
@@ -522,7 +451,7 @@ def bspline_prediction(params_a, input_a, degree, polynomial_range, monotonicall
                                     p=order)
     elif calc_method == "Naive_Basis":
         basis = Naive_Basis(x=input_a_clone, 
-                                 polynomial_range=polynomial_range, 
+                                 spline_range=spline_range, 
                                  degree=degree, 
                                  span_factor=span_factor,
                                  derivativ=derivativ,

@@ -5,16 +5,19 @@ from gtm.gtm_layers.transformation_layer import *
 from gtm.gtm_layers.decorrelation_layer import Decorrelation
 from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
 from gtm.gtm_training.objective_functions import log_likelihood, exact_score_matching, single_sliced_score_matching, sliced_score_matching_vr, noise_contrasive_estimation, training_objective
-from gtm.gtm_training.training_helpers import train
+from gtm.gtm_training.training_helpers import train, if_float_create_lambda_penalisation_matrix
 #from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
+
+import optuna
+from optuna.samplers import TPESampler 
+import itertools
 
 
 class GTM(nn.Module):
     def __init__(self, 
-                 input_min, 
-                 input_max,
                  number_variables,
-                 polynomial_range=list([[-15], [15]]), 
+                 transformation_spline_range=list([[-15], [15]]), 
+                 decorrelation_spline_range=list([[-15], [15]]), 
                  spline_transformation="bspline", spline_decorrelation="bspline", # bernstein bernstein bspline
                  degree_transformations=15, degree_decorrelation=20, span_factor=torch.tensor(0.), span_restriction="reluler", #span_factor=torch.tensor(0.1)
                  number_covariates=False,
@@ -30,12 +33,15 @@ class GTM(nn.Module):
         super(GTM, self).__init__()
         
         self.transform_only = transform_only
-
-        self.polynomial_range = polynomial_range
-      
+        
         self.number_variables = number_variables
-        self.input_min = input_min
-        self.input_max = input_max
+
+        # Repeat polynomial ranges for all variables as this is the range for the bsplines essentially
+        self.transformation_spline_range = list([transformation_spline_range[0] * self.number_variables,
+                                                transformation_spline_range[1] * self.number_variables])
+        self.decorrelation_spline_range = list([decorrelation_spline_range[0] * self.number_variables,
+                                                decorrelation_spline_range[1] * self.number_variables])
+  
 
         # required for the varying degree of the transformation layer to work
         # if it is a number then transform into a repeating list of length of number of varaibles
@@ -51,12 +57,6 @@ class GTM(nn.Module):
         self.span_restriction = span_restriction
 
         self.device = device
-
-        # Repeat polynomial ranges for all variables as this is the range for the bsplines essentially
-        self.polynomial_range_transformation = list([polynomial_range[0] * self.number_variables,
-                                                polynomial_range[1] * self.number_variables])
-        self.polynomial_range_decorrelation = list([polynomial_range[0] * self.number_variables,
-                                                polynomial_range[1] * self.number_variables])
 
         self.number_covariates = number_covariates
 
@@ -78,7 +78,7 @@ class GTM(nn.Module):
 
         if self.num_trans_layers > 0:
             self.transformation = Transformation(degree=self.degree_transformations, number_variables=self.number_variables,
-                                     polynomial_range=self.polynomial_range_transformation, span_factor=self.span_factor,
+                                     spline_range=self.transformation_spline_range, span_factor=self.span_factor,
                                      number_covariates=self.number_covariates, spline=self.spline_transformation,
                                      initial_log_transform=self.initial_log_transform,
                                      calc_method_bspline=self.calc_method_bspline,
@@ -93,7 +93,7 @@ class GTM(nn.Module):
         self.number_decorrelation_layers = num_decorr_layers
         if self.number_decorrelation_layers > 0:
             self.decorrelation_layers = nn.ModuleList([Decorrelation(degree=self.degree_decorrelation, number_variables=self.number_variables,
-                                    polynomial_range=self.polynomial_range_decorrelation, span_factor=self.span_factor,
+                                    spline_range=self.decorrelation_spline_range, span_factor=self.span_factor,
                                     span_restriction=self.span_restriction, spline=self.spline_decorrelation,
                                     number_covariates=self.number_covariates,
                                     list_comprehension = self.list_comprehension,
@@ -118,7 +118,7 @@ class GTM(nn.Module):
                 }
     
         
-    def forward(self, y, covariate=False, train=True, evaluate=True, return_scores_hessian=False, return_lambda_matrix = False):
+    def forward(self, y, covariate=False, train=True, evaluate=True, return_scores_hessian=False, return_lambda_matrix = True):
         
         return_dict_nf_mctm = self.create_return_dict_nf_mctm(y)
 
@@ -168,11 +168,11 @@ class GTM(nn.Module):
                         # odd: 1, 3, 5, ...
 
 
-                    return_dict_decorrelation = self.decorrelation_layers[i](return_dict_nf_mctm["output"], covariate, 0,#return_dict_nf_mctm["log_d"],
+                    return_dict_decorrelation = self.decorrelation_layers[i](return_dict_nf_mctm["output"], covariate, 0,
                                                                 return_log_d=True, return_penalties=True, return_scores_hessian=return_scores_hessian)
                     
                     return_dict_nf_mctm["output"] = return_dict_decorrelation["output"]
-                    #return_dict_nf_mctm["log_d"] = return_dict_decorrelation["log_d"]
+                    return_dict_nf_mctm["log_d"] += return_dict_decorrelation["log_d"] #required if the layers are multiplicative
                     return_dict_nf_mctm["second_order_ridge_pen_global"] += return_dict_decorrelation["second_order_ridge_pen_sum"]
                     return_dict_nf_mctm["first_order_ridge_pen_global"] += return_dict_decorrelation["first_order_ridge_pen_sum"]
                     return_dict_nf_mctm["param_ridge_pen_global"] += return_dict_decorrelation["param_ridge_pen_sum"]
@@ -325,9 +325,9 @@ class GTM(nn.Module):
     
     
     def __train__(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), adaptive_lasso_weights_matrix = False,
-                  lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=True, patience=5, min_delta=1e-7, return_plot=True,
+                  lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=False, patience=5, min_delta=1e-7,
           optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", ema_decay=False, seperate_copula_training=False,
-          batch_training_size=None):
+          max_batches_per_iter=None):
 
         if lambda_penalty_params is not False:
             lambda_penalty_params = lambda_penalty_params.to(self.device)
@@ -339,7 +339,7 @@ class GTM(nn.Module):
             self.transformation.params.requires_grad=False
         
         return_dict_model_training = train(self, train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, train_covariates=train_covariates, validate_covariates=validate_covariates, penalty_params=penalty_params, lambda_penalty_params=lambda_penalty_params, learning_rate=learning_rate, 
-                     iterations=iterations, verbose=verbose, patience=patience, min_delta=min_delta, optimizer=optimizer, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix)
+                     iterations=iterations, verbose=verbose, patience=patience, min_delta=min_delta, optimizer=optimizer, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix, max_batches_per_iter=max_batches_per_iter)
         
         if seperate_copula_training==True:
             self.transformation.params.requires_grad=True
@@ -347,8 +347,8 @@ class GTM(nn.Module):
         return return_dict_model_training
     
     
-    def pretrain_tranformation_layer(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=True, patience=5, min_delta=1e-7, return_plot=True,
-          optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", ema_decay=False, batch_training_size=None):
+    def pretrain_tranformation_layer(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=False, patience=5, min_delta=1e-7, return_plot=True,
+          optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", max_batches_per_iter=None):
         
         optimizer='LBFGS'
         warnings.warn("Optimiser for pretrain_tranformation_layer is always LBFGS. If this is an issue change the code.")
@@ -381,7 +381,8 @@ class GTM(nn.Module):
                                            min_delta=min_delta, 
                                            optimizer=optimizer, 
                                            lambda_penalty_mode=lambda_penalty_mode, 
-                                           objective_type=objective_type)
+                                           objective_type=objective_type,
+                                           max_batches_per_iter=max_batches_per_iter)
         
         
         #if return_plot:
@@ -510,7 +511,248 @@ class GTM(nn.Module):
         
     def approximate_transformation_inverse(self):
         self.transformation.approximate_inverse(device=self.device)
-            
-            
-            
         
+        
+    def return_objective_for_hyperparameters(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), 
+                  adaptive_lasso_weights_matrix = False,
+                  lambda_penalty_param=False, learning_rate=1, iterations=2000, patience=5, min_delta=1e-7,
+          optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", seperate_copula_training=False,
+          max_batches_per_iter=None, pretrained_transformation_layer=False):
+    
+        import copy
+        
+        gtm_tuning = copy.deepcopy(self)
+        
+        gtm_tuning.to(self.device)
+        gtm_tuning.device = self.device
+        
+        # Logic here:
+        # we only want to pretrain the transformation layer once if we do not do cross validation folds
+        # In that case each pretaining is basically the same, as same init params and same hyperparameters
+        # If cross_validation_folds is False then only in the first trial we do a pretrain and then store the transformation layer pretrained model
+        # In each subsequent trial we load the pretrained model and directly do the joint training
+        # This only works if we pretrain without a penalty on the transformation layer
+        if pretrained_transformation_layer == True:
+            
+            if hasattr(self, 'pretrained_transformation_layer_model_state_dict'): #pretrained_transformation_layer_model
+                #gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model.state_dict())
+                gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model_state_dict) 
+            else:
+                gtm_tuning.pretrain_tranformation_layer(train_dataloader=train_dataloader,
+                                                    validate_dataloader=validate_dataloader,
+                                                    train_covariates=train_covariates,
+                                                    validate_covariates=validate_covariates,
+                                                    penalty_params=penalty_params,
+                                                    lambda_penalty_params=lambda_penalty_param,
+                                                    iterations=iterations, 
+                                                    learning_rate=learning_rate,
+                                                    patience=patience,
+                                                    min_delta=min_delta,
+                                                    verbose=False,
+                                                    optimizer=optimizer,
+                                                    lambda_penalty_mode=lambda_penalty_mode,
+                                                    objective_type=objective_type,
+                                                    max_batches_per_iter=max_batches_per_iter)
+                
+                if self.cross_validation_folds == False:
+                    #self.pretrained_transformation_layer_model = copy.deepcopy(gtm_tuning)
+                    self.pretrained_transformation_layer_model_state_dict = gtm_tuning.state_dict()
+                
+        
+        gtm_tuning.__train__(train_dataloader=train_dataloader,
+                validate_dataloader=validate_dataloader, 
+                train_covariates=train_covariates,
+                validate_covariates=validate_covariates,
+                penalty_params=penalty_params,
+                lambda_penalty_params=lambda_penalty_param,
+                adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix,
+                iterations=iterations, 
+                learning_rate=learning_rate,
+                patience=patience,
+                min_delta=min_delta,
+                verbose=False,
+                optimizer=optimizer,
+                lambda_penalty_mode=lambda_penalty_mode,
+                objective_type=objective_type,
+                seperate_copula_training=seperate_copula_training,
+                max_batches_per_iter=max_batches_per_iter)
+        
+        num_batches=0
+        target=0
+        for y_validate in validate_dataloader:
+            num_batches += 1
+            covar_batch = False
+            if objective_type == "negloglik":
+                target += gtm_tuning.log_likelihood(y_validate, covar_batch).cpu().detach().numpy().mean()  # .mean()
+            elif objective_type == "score_matching" or objective_type == "single_sliced_score_matching":
+                #TODO: does the -1 * make sense is it not already in the exact_score_loss method
+                target += -1 * gtm_tuning.exact_score_matching(y_validate, covar_batch).cpu().detach().numpy().mean()  # .mean() # maximize the reverse score loss e.g.g minimize the loss
+            elif objective_type == "noise_contrastive_estimation":
+                target += gtm_tuning.log_likelihood(y_validate, covar_batch).cpu().detach().numpy().mean()  #TODO: For Now! Its cheating right?
+        
+        target = target / num_batches     
+        
+            
+        # Handelling CUDA Out of Memory Error
+        if self.device == "cuda":
+            # Explicitly delete the model to free up memory
+            del gtm_tuning
+            
+            # Clear the cache
+            torch.cuda.empty_cache()
+        
+        return target
+        
+    def hyperparameter_tune_penalties(self, 
+                                      train_dataloader, 
+                                      validate_dataloader, 
+                                      penvalueridge: list,
+                                      penfirstridge: list,
+                                      pensecondridge: list,
+                                      ctm_pensecondridge: list,
+                                      lambda_penalty_params: list,
+                                      train_covariates=False, 
+                                      validate_covariates=False, 
+                                      adaptive_lasso_weights_matrix = False,
+                                      learning_rate=1, 
+                                      iterations=2000, 
+                                      patience=5, 
+                                      min_delta=1e-7, 
+                                      optimizer='LBFGS', 
+                                      lambda_penalty_mode="square", 
+                                      objective_type="negloglik", 
+                                      seperate_copula_training=False,
+                                      max_batches_per_iter=None,
+                                        tuning_mode="optuna",
+                              cross_validation_folds=False,
+                              random_state_KFold=42,
+                              device=None,
+                              pretrained_transformation_layer=False,
+                              n_trials=15,
+                              temp_folder=".", 
+                              study_name=None):
+        
+        
+        list_of_lists = [penvalueridge, penfirstridge, pensecondridge, 
+                         ctm_pensecondridge,
+                         lambda_penalty_params]
+        hyperparameter_combinations_list = list(itertools.product(*list_of_lists))
+        
+        if train_covariates is False:
+            number_covariates = 0
+        else:
+            number_covariates = 1
+
+        if tuning_mode == "optuna":
+            penvalueridge, penfirstridge, pensecondridge, ctm_pensecondridge, lambda_penalty_params  = hyperparameter_combinations_list[0]
+            
+            # so model has no marginal part
+            if seperate_copula_training == True:
+                num_trans_layers = 0
+                
+            def optuna_objective(trial, train_dataloader=train_dataloader, 
+                                      validate_dataloader=validate_dataloader ): 
+                
+                if penvalueridge == None:
+                    penvalueridge_opt = 0
+                elif isinstance(penvalueridge, float) or isinstance(penvalueridge, int):
+                    penvalueridge_opt = penvalueridge
+                elif penvalueridge == "sample":
+                    penvalueridge_opt = trial.suggest_float("penvalueridge", 0.0000001, 30, log=False) #True
+                else:
+                    warnings.warn("penvalueridge not understood. Please provide a float, int None, or the string \"sample\".")
+
+                if penfirstridge == None:
+                    penfirstridge_opt = 0
+                elif isinstance(penfirstridge, float) or isinstance(penfirstridge, int):
+                    penfirstridge_opt = penfirstridge
+                elif penfirstridge == "sample":
+                    penfirstridge_opt = trial.suggest_float("penfirstridge", 0.0000001, 30, log=False) # True
+                else:
+                    warnings.warn("penfirstridge not understood. Please provide a float, int None, or the string \"sample\".")
+                    
+                if pensecondridge == None:
+                    pensecondridge_opt = 0
+                elif isinstance(pensecondridge, float) or isinstance(pensecondridge, int):
+                    pensecondridge_opt = pensecondridge
+                elif pensecondridge == "sample":
+                    pensecondridge_opt = trial.suggest_float("pensecondridge", 0.0000001, 30, log=False) # True
+                else:
+                    warnings.warn("pensecondridge not understood. Please provide a float, int None, or the string \"sample\".")
+                    
+                if ctm_pensecondridge == None:
+                    ctm_pensecondridge_opt = 0
+                elif isinstance(ctm_pensecondridge, float) or isinstance(ctm_pensecondridge, int):
+                    ctm_pensecondridge_opt = ctm_pensecondridge
+                elif ctm_pensecondridge == "sample":
+                    ctm_pensecondridge_opt = trial.suggest_float("ctm_pensecondridge", 0.0000001, 30, log=False) # True
+                else:
+                    warnings.warn("ctm_pensecondridge not understood. Please provide a float, int None, or the string \"sample\".")
+                    
+                if lambda_penalty_params == None:
+                    lambda_penalty_params_opt = 0
+                elif isinstance(lambda_penalty_params, float) or isinstance(lambda_penalty_params, int):
+                    lambda_penalty_params_opt = lambda_penalty_params
+                elif lambda_penalty_params == "sample":
+                    lambda_penalty_params_opt = trial.suggest_float("lambda_penalty_params", 0.0000001, 1, log=True)
+                else:
+                    warnings.warn("lambda_penalty_params not understood. Please provide a float, int None, or the string \"sample\".")
+                    
+                print("This Trial has the Hyperparameters:", 
+                    "penvalueridge_opt:", penvalueridge_opt, " ", 
+                    "penfirstridge_opt:", penfirstridge_opt, " ", 
+                    "pensecondridge_opt:", pensecondridge_opt, " ", 
+                    "ctm_pensecondridge_opt:", ctm_pensecondridge_opt, " ",
+                    "lambda_penalty_params_opt:", lambda_penalty_params_opt)
+                lambda_penalty_params_opt = if_float_create_lambda_penalisation_matrix(lambda_penalty_params_opt, num_vars=self.number_variables)
+                penalty_params_opt = torch.tensor([penvalueridge_opt,
+                                            penfirstridge_opt,
+                                            pensecondridge_opt,
+                                            ctm_pensecondridge_opt])
+                
+                if cross_validation_folds == False:
+                    # define model, train the model with tuning params and return the objective value on the given validation set
+                    target = self.return_objective_for_hyperparameters(train_dataloader, validate_dataloader, train_covariates, validate_covariates, penalty_params_opt, 
+                                                                        adaptive_lasso_weights_matrix,
+                                                                        lambda_penalty_params_opt, learning_rate, iterations, patience, min_delta, 
+                                                                        optimizer, lambda_penalty_mode, objective_type, seperate_copula_training, max_batches_per_iter,
+                                                                        pretrained_transformation_layer)
+                    
+                    return target
+                else:
+                    warnings.warn("cross validation based hyperparameter tuning is not oimplemented yet based on dataloaders")
+                    ## Perform cross-validation
+                    #for fold, (train_idx, val_idx) in enumerate(kf.split(dataset)):
+                    #    print(f"Fold {fold + 1}: Train size = {len(train_idx)}, Val size = {len(val_idx)}")
+#
+                    #    # Create subset samplers
+                    #    train_subset = Subset(dataset, train_idx)
+                    #    val_subset = Subset(dataset, val_idx)
+#
+                    #    # Create DataLoaders
+                    #    train_loader = DataLoader(train_subset, batch_size=16, shuffle=True)
+                    #    val_loader = DataLoader(val_subset, batch_size=16, shuffle=False)
+#
+                    #    # Example: Iterate through one batch
+                    #    for batch in train_loader:
+                    #        x, y = batch
+                    #        print(f"Train Batch Shape: {x.shape}, Labels: {y.shape}")
+                    #        break  # Just show one batch per fold
+                
+            study = optuna.create_study(sampler=TPESampler(n_startup_trials=int(np.floor(n_trials/2)), #7
+                                                       consider_prior=False, #True # is this useful without a prior weight?
+                                                       # Set consider_prior=False othwise with score matching we got the error: raise ValueError("Prior weight must be positive.")
+                                                       prior_weight=0,#1.0, #default value 1.0 but then does not explore the space as good I think
+                                                       multivariate=True # experimental but very useful here as our parameters are highly correlated
+                                                       ),
+                                    storage='sqlite:///'+temp_folder+'/hyperparameter_tuning_study.db',
+                                    #hyperparameter_tuning_study.db',
+                                    direction='maximize',
+                                    study_name=study_name,
+                                    load_if_exists=True)
+                    
+            study.optimize(optuna_objective, n_trials=n_trials)
+            print("hyperparameter_tuning done")
+            return study
+
+                

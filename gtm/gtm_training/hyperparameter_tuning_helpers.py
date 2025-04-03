@@ -188,61 +188,24 @@ def run_hyperparameter_tuning(y_train: torch.Tensor,
                                            pensecondridge_opt,
                                            ctm_pensecondridge_opt])
 
-            # for fold, (train_idx, val_idx) in enumerate(splits.split(np.arange(y.size()[0]))):
-            #    y_train = y[train_idx, :]
-            #    y_validate = y[val_idx, :]
-
-            #Cross validation inspired by:
-            #https://stackoverflow.com/questions/63224426/how-can-i-cross-validate-by-pytorch-and-optuna
-
-            if cross_validation_folds == False:
-
-                y_train = y_train.to(device)
-                y_validate = y_validate.to(device)
-
-                if linear_mctm:
-                    nf_mctm = MCTM(input_min=y_train.min(0).values,  # y_sub_train
-                                   input_max=y_train.max(0).values,  # y_sub_train
-                                   polynomial_range=poly_range,
-                                   number_variables=y_train.size()[1],  # y_sub_train
-                                   spline_transformation=spline_transformation,
-                                   spline_decorrelation=spline_decorrelation,
-                                   degree_transformations=int(degree_transformations),
-                                   degree_decorrelation=int(degree_decorrelation),
-                                   span_factor=span_factor,  # device=device torch.tensor(
-                                   span_restriction=span_restriction,
-                                   number_covariates=number_covariates,
-                                   list_comprehension=list_comprehension,
-                                   num_decorr_layers=num_decorr_layers,
-                                   num_trans_layers=num_trans_layers,
-                                   initial_log_transform=initial_log_transform)  # device=device
-                elif factor_graph:
-                    nf_mctm = Factor_Graph( input_min = y_train.min(0).values, 
-                                            input_max = y_train.max(0).values, 
-                                            polynomial_range = list([[-5], [5]]),
-                                            degree_transformations=int(degree_transformations),
-                                            degree_decorrelation=int(degree_decorrelation),
-                                            affine_decorr_layer=affine_decorr_layer, 
-                                            degree_multi=int(degree_multi))
-                else:
-                    nf_mctm = NF_MCTM(input_min=y_train.min(0).values,  # y_sub_train
-                                      input_max=y_train.max(0).values,  # y_sub_train
-                                      polynomial_range=poly_range,
-                                      number_variables=y_train.size()[1],  # y_sub_train
-                                      spline_transformation=spline_transformation,
-                                      spline_decorrelation=spline_decorrelation,
-                                      degree_transformations=int(degree_transformations),
-                                      degree_decorrelation=int(degree_decorrelation),
-                                      span_factor=span_factor,  # device=device torch.tensor(
-                                      span_restriction=span_restriction,
-                                      number_covariates=number_covariates,
-                                      list_comprehension=list_comprehension,
-                                      num_decorr_layers=num_decorr_layers,
-                                      num_trans_layers=num_trans_layers,
-                                      initial_log_transform=initial_log_transform,
-                                      calc_method_bspline=calc_method_bspline,
-                                      affine_decorr_layer=affine_decorr_layer,
-                                      degree_multi=degree_multi)  # device=device
+                nf_mctm = NF_MCTM(input_min=y_train.min(0).values,  # y_sub_train
+                                  input_max=y_train.max(0).values,  # y_sub_train
+                                  polynomial_range=poly_range,
+                                  number_variables=y_train.size()[1],  # y_sub_train
+                                  spline_transformation=spline_transformation,
+                                  spline_decorrelation=spline_decorrelation,
+                                  degree_transformations=int(degree_transformations),
+                                  degree_decorrelation=int(degree_decorrelation),
+                                  span_factor=span_factor,  # device=device torch.tensor(
+                                  span_restriction=span_restriction,
+                                  number_covariates=number_covariates,
+                                  list_comprehension=list_comprehension,
+                                  num_decorr_layers=num_decorr_layers,
+                                  num_trans_layers=num_trans_layers,
+                                  initial_log_transform=initial_log_transform,
+                                  calc_method_bspline=calc_method_bspline,
+                                  affine_decorr_layer=affine_decorr_layer,
+                                  degree_multi=degree_multi)  # device=device
 
                 #nf_mctm = NF_MCTM(input_min=y_train.min(0).values,
                 #                  input_max=y_train.max(0).values,

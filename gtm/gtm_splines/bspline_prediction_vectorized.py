@@ -127,8 +127,8 @@ def Naive_varying_degree(x, t, c, p, d
 ##################################################################################################################################################################################################################
  
 
-def Naive_Basis(x, polynomial_range, degree, span_factor,derivativ=0,order=3):
-    #print("Naive_Basis polynomial_range", polynomial_range)
+def Naive_Basis(x, spline_range, degree, span_factor,derivativ=0,order=3):
+    #print("Naive_Basis spline_range", spline_range)
     #basic order is 3 (cubic spline) so that the third derivative is nonzero for score matching
     p = order
     if order == 2:
@@ -136,10 +136,10 @@ def Naive_Basis(x, polynomial_range, degree, span_factor,derivativ=0,order=3):
     elif order == 3:
         n = degree + 2
 
-    distance_between_knots = (polynomial_range[1] - polynomial_range[0]) * (1+span_factor) / (n - 1)
+    distance_between_knots = (spline_range[1] - spline_range[0]) * (1+span_factor) / (n - 1)
 
-    knots = torch.linspace(polynomial_range[0] * (1+span_factor) - order * distance_between_knots,
-                           polynomial_range[1] * (1+span_factor) + order * distance_between_knots,
+    knots = torch.linspace(spline_range[0] * (1+span_factor) - order * distance_between_knots,
+                           spline_range[1] * (1+span_factor) + order * distance_between_knots,
                                      n + 4, dtype=torch.float32, device=x.device)
 
     t = knots
@@ -148,16 +148,16 @@ def Naive_Basis(x, polynomial_range, degree, span_factor,derivativ=0,order=3):
     return torch.vstack([B_derivativ_fixed_degree(x, p, i, t, derivativ=derivativ) for i in range(n)]).T
 
 
-def compute_multivariate_bspline_basis(input, degree, polynomial_range, span_factor, covariate=False, derivativ=0): 
+def compute_multivariate_bspline_basis(input, degree, spline_range, span_factor, covariate=False, derivativ=0): 
     # We essentially do a tensor prodcut of two splines! : https://en.wikipedia.org/wiki/Bernstein_polynomial#Generalizations_to_higher_dimension
        
     bspline_basis_list = []
     for var_num in range(input.size(1)):
-        input_basis = Naive_Basis(x=input[:, var_num], degree=degree[var_num], polynomial_range=polynomial_range[:, var_num], span_factor=span_factor, derivativ=derivativ)
+        input_basis = Naive_Basis(x=input[:, var_num], degree=degree[var_num], spline_range=spline_range[:, var_num], span_factor=span_factor, derivativ=derivativ)
         if covariate is not False:
             #covariate are transformed between 0 and 1 before inputting into the model
             # dont take the derivativ w.r.t to the covariate when computing jacobian of the transformation
-            covariate_basis = Naive_Basis(x=covariate, degree=degree, polynomial_range=torch.tensor([0,1],device=input.device), span_factor=span_factor, derivativ=derivativ)
+            covariate_basis = Naive_Basis(x=covariate, degree=degree, spline_range=torch.tensor([0,1],device=input.device), span_factor=span_factor, derivativ=derivativ)
             basis = kron(input_basis, covariate_basis)
         else:
             basis = input_basis
@@ -367,52 +367,13 @@ def run_deBoor_fixed_degrees(x, t, c, p, d):
     return prediction
 
 ################################################################################################################################################################################################################## 
-########################## REstricting Parameters to ensure a monotonically increasing spline ##########################
-##################################################################################################################################################################################################################
-
-
-#import torch
-#
-#def restrict_parameters(params_a, covariate, degree, monotonically_increasing, device=None):
-#    """
-#    Vectorized implementation of parameter restriction for splines.
-#    
-#    :param params_a: Parameter matrix of shape [degree+1, num_vars]
-#    :param covariate: Boolean flag (1 if covariate is included, else 0)
-#    :param degree: Degree of the spline
-#    :param monotonically_increasing: Boolean flag (True if constraints should be applied)
-#    :param device: Device for tensor computation
-#    :return: Restricted parameter matrix with the same shape as params_a
-#    """
-#    if not monotonically_increasing:
-#        return params_a  # No modification needed
-#
-#    params_restricted = params_a.clone()
-#
-#    # Apply softplus (log(1 + exp(x))) instead of exp() for stability
-#    if covariate == 1:
-#        params_restricted[degree:] = torch.log1p(torch.exp(params_restricted[degree:]))
-#    else:
-#        params_restricted[1:] = torch.log1p(torch.exp(params_restricted[1:]))
-#
-#    # Construct the summing matrix (upper triangular)
-#    #summing_matrix = torch.triu(torch.ones(degree + 1, degree + 1, device=params_a.device))
-#    
-#    summing_matrix = torch.triu(torch.ones(degree, degree, device=params_a.device))
-#
-#    # Apply the summing matrix via batched matrix multiplication
-#    params_restricted = torch.matmul(summing_matrix, params_restricted)
-#
-#    return params_restricted
-
-################################################################################################################################################################################################################## 
 ########################## B-Spline Prediction Method ##########################
 ##################################################################################################################################################################################################################
 
 
 # Bspline Prediction using the deBoor algorithm
 def bspline_prediction_vectorized(params_a, input_a, knots,
-                       degree, polynomial_range, monotonically_increasing=False, 
+                       degree, spline_range, monotonically_increasing=False, 
                        derivativ=0, return_penalties=False, calc_method="Naive_Basis",#'Naive_Basis', #before: deBoor 
                        span_factor=0.1, span_restriction="reluler",
                        covariate=False, params_covariate=False, covaraite_effect="multiplicativ",
@@ -421,9 +382,9 @@ def bspline_prediction_vectorized(params_a, input_a, knots,
     input_a_clone = input_a
     
     if span_restriction == "sigmoid":
-        input_a_clone = custom_sigmoid(input_a_clone, polynomial_range)
+        input_a_clone = custom_sigmoid(input_a_clone, spline_range)
     elif span_restriction == "reluler":
-        reluler = ReLULeR(polynomial_range)
+        reluler = ReLULeR(spline_range)
         input_a_clone = reluler.forward(input_a_clone)
     else:
         pass

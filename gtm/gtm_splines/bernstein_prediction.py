@@ -17,7 +17,7 @@ def b(v, n, x):
     return torch_binom(n, v) * x**v * (1 - x)**(n - v)
 
 
-def compute_bernstein_basis(x, degree, polynomial_range, span_factor, derivativ=0): #device=None
+def compute_bernstein_basis(x, degree, spline_range, span_factor, derivativ=0): #device=None
     """
 
     :param x:
@@ -29,13 +29,13 @@ def compute_bernstein_basis(x, degree, polynomial_range, span_factor, derivativ=
 
     # Adjust polynomial range to be a bit wider
     # Empirically found that this helps with the fit
-    #print("compute_bernstein_basis polynomial_range", polynomial_range)
-    polynomial_range = adjust_ploynomial_range(polynomial_range, span_factor)
-    #print("adjust_ploynomial_range polynomial_range", polynomial_range)
+    #print("compute_bernstein_basis spline_range", spline_range)
+    spline_range = adjust_ploynomial_range(spline_range, span_factor)
+    #print("adjust_ploynomial_range spline_range", spline_range)
 
     # Standardising the Data
-    normalizing_range = polynomial_range[1] - polynomial_range[0]
-    x = (x - polynomial_range[0]) / (normalizing_range)
+    normalizing_range = spline_range[1] - spline_range[0]
+    x = (x - spline_range[0]) / (normalizing_range)
 
     #print("x", x.device)
     #print("normalizing_range", normalizing_range.device)
@@ -63,7 +63,7 @@ def kron(input_basis, covariate_basis):
     return torch.vstack([torch.kron(input_basis[i,:],covariate_basis.T[:,i]) for i in range(input_basis.size(0))])
 
 
-def compute_multivariate_bernstein_basis(input, degree, polynomial_range, span_factor, derivativ=0, covariate=False): #device=None
+def compute_multivariate_bernstein_basis(input, degree, spline_range, span_factor, derivativ=0, covariate=False): #device=None
     # We essentially do a tensor prodcut of two splines! : https://en.wikipedia.org/wiki/Bernstein_polynomial#Generalizations_to_higher_dimension
 
     if covariate is not False:
@@ -71,13 +71,13 @@ def compute_multivariate_bernstein_basis(input, degree, polynomial_range, span_f
     else:
         multivariate_bernstein_basis = torch.empty(size=(input.size(0), (degree+1), input.size(1)))
 
-    #print("compute_multivariate_bernstein_basis polynomial_range", polynomial_range)
+    #print("compute_multivariate_bernstein_basis spline_range", spline_range)
     for var_num in range(input.size(1)):
-        input_basis = compute_bernstein_basis(x=input[:, var_num], degree=degree, polynomial_range=polynomial_range[:, var_num], span_factor=span_factor, derivativ=derivativ) #device=device
+        input_basis = compute_bernstein_basis(x=input[:, var_num], degree=degree, spline_range=spline_range[:, var_num], span_factor=span_factor, derivativ=derivativ) #device=device
         if covariate is not False:
             #covariate are transformed between 0 and 1 before inputting into the model
             # dont take the derivativ w.r.t to the covariate when computing jacobian of the transformation
-            covariate_basis = compute_bernstein_basis(x=covariate, degree=degree, polynomial_range=torch.tensor([0,1]), span_factor=span_factor, derivativ=derivativ) #device=device
+            covariate_basis = compute_bernstein_basis(x=covariate, degree=degree, spline_range=torch.tensor([0,1]), span_factor=span_factor, derivativ=derivativ) #device=device
             basis = kron(input_basis, covariate_basis)
         else:
             basis = input_basis
@@ -149,7 +149,7 @@ def bernstein_prediction(multivariate_bernstein_basis, multivariate_bernstein_ba
                          params_a,
                          #input_a,
                          degree,
-                         #polynomial_range,
+                         #spline_range,
                          monotonically_increasing=False,
                          derivativ=0,
                          #span_factor=0.1,
@@ -204,7 +204,7 @@ def bernstein_prediction(multivariate_bernstein_basis, multivariate_bernstein_ba
 
     # Adjust polynomial range to be a bit wider
     # Empirically found that this helps with the fit
-    #polynomial_range = adjust_ploynomial_range(polynomial_range, span_factor)
+    #spline_range = adjust_ploynomial_range(spline_range, span_factor)
 
     # Restricts Monotonically increasing by insuring that params increase
     #if monotonically_increasing:
@@ -239,8 +239,8 @@ def bernstein_prediction(multivariate_bernstein_basis, multivariate_bernstein_ba
     param_ridge_pen = 0
 
 
-    #normalizing_range = polynomial_range[1] - polynomial_range[0]
-    #input_a = (input_a - polynomial_range[0]) / (normalizing_range)
+    #normalizing_range = spline_range[1] - spline_range[0]
+    #input_a = (input_a - spline_range[0]) / (normalizing_range)
 
     #if derivativ == 0:
         # Explanation:
@@ -279,4 +279,4 @@ def bernstein_prediction(multivariate_bernstein_basis, multivariate_bernstein_ba
 
 
     return output, second_order_ridge_pen, first_order_ridge_pen, param_ridge_pen
-    #return (output + polynomial_range[0]) / (polynomial_range[1] - polynomial_range[0])
+    #return (output + spline_range[0]) / (spline_range[1] - spline_range[0])

@@ -282,28 +282,12 @@ def training_objective(model, samples, penalty_params, train_covariates=False, l
         num_params_trans=1
         # lambda_penalty_params is not False for the pretrain to work
     if lambda_penalty_params is not False and torch.all(lambda_penalty_params == 0) == False:
-        #print("lambda_penalty_params",lambda_penalty_params)
-        #if adaptive_lasso_weights_matrix is False:
-            #adaptive_lasso_weights_matrix = torch.ones(model.number_variables, model.number_variables)
-            #adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix.to(samples.device)
-            #adaptive_lasso_weights_matrix = 1
-        
-        if model.__module__ == "python_nf_mctm.models.nf_mctm":
-            precision_matrix = torch.matmul(
-                torch.transpose(return_dict_model_loss["lambda_matrix_global"], 1, 2),
-                    return_dict_model_loss["lambda_matrix_global"])
-            if adaptive_lasso_weights_matrix is False:
-                pen_lambda_lasso = (lambda_penalty_params                                 * (torch.square(precision_matrix).sum(0)) ** 0.5).tril(-1).mean()
-            else:
-                pen_lambda_lasso = (lambda_penalty_params * adaptive_lasso_weights_matrix * (torch.square(precision_matrix).sum(0)) ** 0.5).tril(-1).mean()
-            
-        elif model.__module__ == "python_nf_mctm.models.factor_graph":
-            if adaptive_lasso_weights_matrix is False:
-                pen_lambda_lasso = (lambda_penalty_params                                 *  return_dict_model_loss["lambda_matrix_global"].tril(-1)).mean()
-            else:
-                pen_lambda_lasso = (lambda_penalty_params * adaptive_lasso_weights_matrix *  return_dict_model_loss["lambda_matrix_global"].tril(-1)).mean()
-            
 
+        precision_matrix = torch.matmul(torch.transpose(return_dict_model_loss["lambda_matrix_global"], 1, 2),return_dict_model_loss["lambda_matrix_global"])
+        if adaptive_lasso_weights_matrix is False:
+            pen_lambda_lasso = (lambda_penalty_params                                 * (torch.square(precision_matrix).sum(0)) ** 0.5).tril(-1).mean()
+        else:
+            pen_lambda_lasso = (lambda_penalty_params * adaptive_lasso_weights_matrix * (torch.square(precision_matrix).sum(0)) ** 0.5).tril(-1).mean()
     else:
         pen_lambda_lasso = 0
         

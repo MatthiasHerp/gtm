@@ -190,3 +190,13 @@ def train(model, train_dataloader, validate_dataloader=False, train_covariates=F
     
     return return_dict_model_training
     
+    
+        
+def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars):
+
+    lambda_penalty_params = torch.tensor(lambda_penalty_params, dtype=torch.float32)
+    if lambda_penalty_params.size() == torch.Size([]):
+        lambda_penalty_params = torch.tril(lambda_penalty_params.repeat(num_vars, num_vars)) - torch.eye( #before got warning with torch.tensor(lambda_penalty_params) in the tril
+            num_vars, num_vars) * lambda_penalty_params
+
+    return lambda_penalty_params
