@@ -33,7 +33,9 @@ class Decorrelation(nn.Module):
             self.spline_prediction = self.bernstein_prediction_method
         else:
             warnings.warn("Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default.")
-
+        
+        self.spline_order = spline_order
+        
         self.params = self.compute_starting_values_bspline(start_value=0.001)
 
         self.number_covariates = number_covariates
@@ -59,25 +61,45 @@ class Decorrelation(nn.Module):
         
         self.calc_method_bspline = calc_method_bspline
         
-        self.spline_order = spline_order
+        #self.spline_order = spline_order
         
         # TODO: Sort this out, I fixed the values here as it is currently the fastest computation by far
         self.vmap = True #False #True
         self.list_comprehension = False #True #False
         #self.calc_method_bspline = "deBoor" #"deBoor" #"Naive"
         
-        if self.spline_order == 2:
-            n = self.degree + 1
-        elif self.spline_order == 3:
-            n = self.degree + 2
-            
-            
-        distance_between_knots = (self.polynomial_range[1,0] - self.polynomial_range[0,0]) * (1 + self.span_factor) / (n - 1)
-            
-            
-        self.knots = torch.linspace(self.polynomial_range[0,0] * (1 + self.span_factor) - self.spline_order * distance_between_knots,
-                            self.polynomial_range[1,0] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
-                            n + 4, dtype=torch.float32)
+        ###################################### New ###################################### 
+        # The following code ensures that:
+        # we have knots equally spanning the range of the number of degrees
+        # we have the first an last knot on the bound of the span
+        # we get equally space boundary knots outside the spane to ensure that at the boundary of the span we get bspline predicitons without errors
+        
+        # The distance between knots is the span divided by the number of knots minus 1 
+        # because between D points where we have one point at the min and one at the max of a span we have D-1 intervals between knots
+        distance_between_knots_in_bounds = (self.polynomial_range[1,0] - self.polynomial_range[0,0]) / (self.degree-1)
+        
+        number_of_bound_knots_per_side = self.spline_order #- 1 # for cubcic splines (order 3) we need 2 knots on each side 
+        
+        # We get the eqully spaced knots by equal spacing on the extended span
+        self.knots = torch.linspace(
+                            self.polynomial_range[0,0] - number_of_bound_knots_per_side * distance_between_knots_in_bounds,
+                            self.polynomial_range[1,0] + number_of_bound_knots_per_side * distance_between_knots_in_bounds,
+                            self.degree + 2 * number_of_bound_knots_per_side, # 2* because of two sides
+                            dtype=torch.float32)
+        ###################################### New ###################################### 
+        
+        #if self.spline_order == 2:
+        #    n = self.degree + 1
+        #elif self.spline_order == 3:
+        #    n = self.degree + 2
+        #    
+        #    
+        #distance_between_knots = (self.polynomial_range[1,0] - self.polynomial_range[0,0]) * (1 + self.span_factor) / (n - 1)
+        #    
+        #    
+        #self.knots = torch.linspace(self.polynomial_range[0,0] * (1 + self.span_factor) - self.spline_order * distance_between_knots,
+        #                    self.polynomial_range[1,0] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
+        #                    n + 4, dtype=torch.float32)
         
         self.var_num_list, self.covar_num_list = torch.tril_indices(self.number_variables, self.number_variables, offset=-1)
         
@@ -97,13 +119,16 @@ class Decorrelation(nn.Module):
         
     
     def compute_starting_values_bspline(self,start_value=0.001):
-        p = torch.FloatTensor(np.repeat(np.repeat(start_value, self.degree + 1),
+        #p = torch.FloatTensor(np.repeat(np.repeat(start_value, self.degree + 1),
+        #                                self.num_lambdas))
+        p = torch.FloatTensor(np.repeat(np.repeat(start_value, self.degree + self.spline_order - 1),
                                         self.num_lambdas)) 
 
         if self.num_lambdas == 1:
             params = nn.Parameter(p.unsqueeze(1))
         else:
-            params = nn.Parameter(torch.reshape(p, (self.degree + 1, int(self.num_lambdas))))
+            #params = nn.Parameter(torch.reshape(p, (self.degree + 1, int(self.num_lambdas))))
+            params = nn.Parameter(torch.reshape(p, (self.degree + self.spline_order - 1, int(self.num_lambdas))))
 
         return params
         

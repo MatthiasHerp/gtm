@@ -27,22 +27,24 @@ if __name__ == "__main__":
     # create GTM model
     model = GTM(input_min=-5, 
                 input_max=5, 
-                span_factor=torch.tensor(0.5),
-                degree_decorrelation=40,
-                degree_transformations=15,
+                polynomial_range=list([[-5], [5]]),
+                degree_decorrelation=10,
+                degree_transformations=10,
+                span_factor=torch.tensor(0.01), 
+                span_restriction="reluler",
                 num_decorr_layers=3,
                 number_variables=3) # somehow the model with the vectorised version only works with 3 dimensions minimum due to the vectorisation (makes sense) TODO: need to solve that
 
     
     # pretrain the marginal transformations
-    model.pretrain_tranformation_layer(dataloader, iterations=20)
+    model.pretrain_tranformation_layer(dataloader, iterations=10)
     
     # TODO: next step to refactor
     # hyperparameter tune the model
     # model.hyperparameter_tune(y, n_epochs=1000)
     
     # train the joint model
-    model.__train__(train_dataloader=dataloader, validate_dataloader=dataloader, iterations=20, optimizer="LBFGS",
+    model.__train__(train_dataloader=dataloader, validate_dataloader=dataloader, iterations=10, optimizer="LBFGS",
                     penalty_params=torch.FloatTensor([0,0,0,0]), adaptive_lasso_weights_matrix = False, lambda_penalty_params=False)
 
     # evaluate the likelihood of the data
@@ -67,5 +69,6 @@ if __name__ == "__main__":
     
     # check approximation for fun
     print(synth_samples.mean(0))
+    print(synth_samples.T.cov())
     print(synth_samples.T.cov() @ torch.diag(1 / torch.diag(synth_samples.T.cov())))
         

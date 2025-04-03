@@ -16,7 +16,7 @@ class GTM(nn.Module):
                  number_variables,
                  polynomial_range=list([[-15], [15]]), 
                  spline_transformation="bspline", spline_decorrelation="bspline", # bernstein bernstein bspline
-                 degree_transformations=15, degree_decorrelation=20, span_factor=torch.tensor(0.), span_restriction="Reluler", #span_factor=torch.tensor(0.1)
+                 degree_transformations=15, degree_decorrelation=20, span_factor=torch.tensor(0.), span_restriction="reluler", #span_factor=torch.tensor(0.1)
                  number_covariates=False,
                  num_trans_layers=1,
                  num_decorr_layers=3, list_comprehension=False, initial_log_transform=False,

@@ -58,30 +58,61 @@ class Transformation(nn.Module):
         else:
             warnings.warn("Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default.")
         
-        # Defining knots for vectorized compute
-        max_cols = max(self.degree)+1
+        
+        ###################################### New ###################################### 
+        # The following code ensures that:
+        # we have knots equally spanning the range of the number of degrees
+        # we have the first an last knot on the bound of the span
+        # we get equally space boundary knots outside the spane to ensure that at the boundary of the span we get bspline predicitons without errors
+        
+        number_of_bound_knots_per_side = self.spline_order #- 1 # for cubcic splines (order 3) we need 3 knots on each side 
+        max_knots = max(self.degree) + 2 * number_of_bound_knots_per_side
         self.knots_list = list()    
         for var in range(self.number_variables):
             
-            if self.spline_order == 2:
-                n = self.degree[var] + 1
-            elif self.spline_order == 3:
-                n = self.degree[var] + 2
+            # The distance between knots is the span divided by the number of knots minus 1 
+            # because between D points where we have one point at the min and one at the max of a span we have D-1 intervals between knots
+            distance_between_knots_in_bounds = (self.polynomial_range[1,var] - self.polynomial_range[0,var]) / (self.degree[var]-1)
             
-            
-            distance_between_knots = (self.polynomial_range[1,var] - self.polynomial_range[0,var]) * (1 + self.span_factor) / (n - 1)
-            
-            knots = torch.linspace(self.polynomial_range[0,var] * (1 + self.span_factor) - self.spline_order * distance_between_knots,
-                            self.polynomial_range[1,var] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
-                            n + 4, dtype=torch.float32) 
+            # We get the eqully spaced knots by equal spacing on the extended span
+            knots = torch.linspace(
+                                self.polynomial_range[0,var] - number_of_bound_knots_per_side * distance_between_knots_in_bounds,
+                                self.polynomial_range[1,var] + number_of_bound_knots_per_side * distance_between_knots_in_bounds,
+                                self.degree[var] + 2 * number_of_bound_knots_per_side, # 2* because of two sides
+                                dtype=torch.float32)
             
             self.knots_list.append(
-                torch.cat([knots, torch.zeros(max_cols + 5 - knots.size(0))+max(self.polynomial_range[1,:])*2 ])
+                torch.cat([knots, torch.zeros(max_knots - knots.size(0)) ]) # additional padding to ensure that all knots are of the same size
                                    )
-        
         self.padded_knots = torch.vstack(
             self.knots_list
             ).T
+        ###################################### New ###################################### 
+        
+        ## Defining knots for vectorized compute
+        #max_cols = max(self.degree)+1
+        #self.knots_list = list()    
+        #for var in range(self.number_variables):
+        #    
+        #    if self.spline_order == 2:
+        #        n = self.degree[var] + 1
+        #    elif self.spline_order == 3:
+        #        n = self.degree[var] + 2
+        #    
+        #    
+        #    distance_between_knots = (self.polynomial_range[1,var] - self.polynomial_range[0,var]) * (1 + self.span_factor) / (n - 1)
+        #    
+        #    knots = torch.linspace(self.polynomial_range[0,var] * (1 + self.span_factor) - self.spline_order * distance_between_knots,
+        #                    self.polynomial_range[1,var] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
+        #                    n + 4, dtype=torch.float32) 
+        #    
+        #    self.knots_list.append(
+        #        torch.cat([knots, torch.zeros(max_cols + 5 - knots.size(0))+max(self.polynomial_range[1,:])*2 ])
+        #                           )
+        #
+        #self.padded_knots = torch.vstack(
+        #    self.knots_list
+        #    ).T
         
         if len(set(self.degree)) > 1:
             self.varying_degrees = True 
@@ -90,14 +121,27 @@ class Transformation(nn.Module):
          
         if self.varying_degrees == False:
             self.padded_knots = self.padded_knots[:,0]
-            
+        
+        ###################################### New ###################################### 
         # Create a mask to track valid values
+        max_params = max(self.degree) + 2 # num_params = inner_knots + degree_spline -1 e.g. degree + 3 -1 = degree +2
         self.padded_params_mask = torch.vstack([
-            torch.cat([torch.ones(p.size(0), dtype=torch.int64), torch.zeros(max_cols - p.size(0), dtype=torch.int64)]) for p in self.params
+            torch.cat([torch.ones(p.size(0), dtype=torch.int64), torch.zeros(max_params - p.size(0), dtype=torch.int64)]) for p in self.params
         ]).T  # Shape (num_params, max_cols)
         
         # Fore more efficient memory allocation e.g. to not create a new tensor every time in the forward pass
-        self.padded_params = torch.zeros((max_cols,len(self.params)))  # Pre-allocate
+        self.padded_params = torch.zeros((max_params,len(self.params)))  # Pre-allocate
+        ###################################### New ###################################### 
+        
+        ## Create a mask to track valid values
+        #self.padded_params_mask = torch.vstack([
+        #    torch.cat([torch.ones(p.size(0), dtype=torch.int64), torch.zeros(max_cols - p.size(0), dtype=torch.int64)]) for p in self.params
+        #]).T  # Shape (num_params, max_cols)
+        #
+        ## Fore more efficient memory allocation e.g. to not create a new tensor every time in the forward pass
+        #self.padded_params = torch.zeros((max_cols,len(self.params)))  # Pre-allocate
+            
+       
             
         # TODO: Sort this out, I fixed the values here as it is currently the fastest computation by far
         #self.store_basis = True
@@ -116,12 +160,14 @@ class Transformation(nn.Module):
             min_val = self.polynomial_range[0][var_num]
             max_val = self.polynomial_range[1][var_num]
             
-            par_unristricted = torch.linspace(min_val, max_val, self.degree[var_num] + 1)
+            #par_unristricted = torch.linspace(min_val, max_val, self.degree[var_num] + 1)
+            par_unristricted = torch.linspace(min_val, max_val, self.degree[var_num] + self.spline_order - 1)
             par_restricted_opt = par_unristricted
             par_unristricted[1:] = torch.log(torch.exp(par_restricted_opt[1:] - par_restricted_opt[:-1]) - 1)
             
             if self.number_covariates == 1:
-                par_unristricted = par_unristricted.repeat(self.degree[var_num]  + 1, 1).T.flatten()
+                #par_unristricted = par_unristricted.repeat(self.degree[var_num]  + 1, 1).T.flatten()
+                par_unristricted = par_unristricted.repeat(self.degree[var_num] + self.spline_order - 1 , 1).T.flatten()
             elif self.number_covariates > 1:
                 raise NotImplementedError("Only implemented for 1 or No covariates!")
 
@@ -356,7 +402,7 @@ class Transformation(nn.Module):
             
         return_dict = self.create_return_dict_transformation(input)
 
-        padded_params = torch.vstack([torch.nn.functional.pad(p, (0, self.max_degree + 1 - p.size(0))) for p in self.params]).T
+        padded_params = torch.vstack([torch.nn.functional.pad(p, (0, self.max_degree + self.spline_order -1 - p.size(0))) for p in self.params]).T
          
         padded_params = restrict_parameters(padded_params, #.contiguous().unsqueeze(1), 
                                             covariate=covariate, degree=self.max_degree, monotonically_increasing=True, device=input.device)

@@ -228,9 +228,15 @@ def deboor_algorithm_varying_degrees(x, k, t, c, p):
 def deboor_algorithm_varying_degrees_first_derivativ(x, k, t, c, p):
         batch_size, num_x = x.shape
         
+        # https://stackoverflow.com/questions/57507696/b-spline-derivative-using-de-boors-algorithm
+        # range(p) not range(p+1) as in the non derivativ form
+        #q = torch.stack([ torch.stack( [
+        #                                  p * (c[i][j+k[i]-p+1] - c[i][j+k[i]-p]) / (t[i][j+k[i]+1] - t[i][j+k[i]-p+1])
+        #                                     for j in range(p + 1)] , dim=0) for i in range(0,batch_size) ])
+        
         q = torch.stack([ torch.stack( [
                                           p * (c[i][j+k[i]-p+1] - c[i][j+k[i]-p]) / (t[i][j+k[i]+1] - t[i][j+k[i]-p+1])
-                                             for j in range(p + 1)] , dim=0) for i in range(0,batch_size) ])
+                                             for j in range(p)] , dim=0) for i in range(0,batch_size) ])
 
         for r in range(1, p):
             for j in range(p-1, r-1, -1):
@@ -302,7 +308,6 @@ def deboor_algorithm_fixed_degrees(x, k, t, c, p):
 
     d = torch.stack([ torch.stack( [c[i][j + k[i] - p] for j in range(p + 1)] , dim=0) for i in range(0,batch_size) ])
 
-
     # Recursive De Boor iterations
     for r in range(1, p + 1):
         for j in range(p, r - 1, -1):
@@ -319,9 +324,15 @@ def deboor_algorithm_fixed_degrees(x, k, t, c, p):
 def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p):
         batch_size, num_x = x.shape
         
+        #q = torch.stack([ torch.stack( [
+        #                                  p * (c[i][j+k[i]-p+1] - c[i][j+k[i]-p]) / (t[j+k[i]+1] - t[j+k[i]-p+1])
+        #                                     for j in range(p + 1)] , dim=0) for i in range(0,batch_size) ])
+        
+        # https://stackoverflow.com/questions/57507696/b-spline-derivative-using-de-boors-algorithm
+        # range(p) not range(p+1) as in the non derivativ form
         q = torch.stack([ torch.stack( [
                                           p * (c[i][j+k[i]-p+1] - c[i][j+k[i]-p]) / (t[j+k[i]+1] - t[j+k[i]-p+1])
-                                             for j in range(p + 1)] , dim=0) for i in range(0,batch_size) ])
+                                             for j in range(p)] , dim=0) for i in range(0,batch_size) ])
 
         for r in range(1, p):
             for j in range(p-1, r-1, -1):
@@ -360,37 +371,39 @@ def run_deBoor_fixed_degrees(x, t, c, p, d):
 ##################################################################################################################################################################################################################
 
 
-import torch
-
-def restrict_parameters(params_a, covariate, degree, monotonically_increasing, device=None):
-    """
-    Vectorized implementation of parameter restriction for splines.
-    
-    :param params_a: Parameter matrix of shape [degree+1, num_vars]
-    :param covariate: Boolean flag (1 if covariate is included, else 0)
-    :param degree: Degree of the spline
-    :param monotonically_increasing: Boolean flag (True if constraints should be applied)
-    :param device: Device for tensor computation
-    :return: Restricted parameter matrix with the same shape as params_a
-    """
-    if not monotonically_increasing:
-        return params_a  # No modification needed
-
-    params_restricted = params_a.clone()
-
-    # Apply softplus (log(1 + exp(x))) instead of exp() for stability
-    if covariate == 1:
-        params_restricted[degree:] = torch.log1p(torch.exp(params_restricted[degree:]))
-    else:
-        params_restricted[1:] = torch.log1p(torch.exp(params_restricted[1:]))
-
-    # Construct the summing matrix (upper triangular)
-    summing_matrix = torch.triu(torch.ones(degree + 1, degree + 1, device=params_a.device))
-
-    # Apply the summing matrix via batched matrix multiplication
-    params_restricted = torch.matmul(summing_matrix, params_restricted)
-
-    return params_restricted
+#import torch
+#
+#def restrict_parameters(params_a, covariate, degree, monotonically_increasing, device=None):
+#    """
+#    Vectorized implementation of parameter restriction for splines.
+#    
+#    :param params_a: Parameter matrix of shape [degree+1, num_vars]
+#    :param covariate: Boolean flag (1 if covariate is included, else 0)
+#    :param degree: Degree of the spline
+#    :param monotonically_increasing: Boolean flag (True if constraints should be applied)
+#    :param device: Device for tensor computation
+#    :return: Restricted parameter matrix with the same shape as params_a
+#    """
+#    if not monotonically_increasing:
+#        return params_a  # No modification needed
+#
+#    params_restricted = params_a.clone()
+#
+#    # Apply softplus (log(1 + exp(x))) instead of exp() for stability
+#    if covariate == 1:
+#        params_restricted[degree:] = torch.log1p(torch.exp(params_restricted[degree:]))
+#    else:
+#        params_restricted[1:] = torch.log1p(torch.exp(params_restricted[1:]))
+#
+#    # Construct the summing matrix (upper triangular)
+#    #summing_matrix = torch.triu(torch.ones(degree + 1, degree + 1, device=params_a.device))
+#    
+#    summing_matrix = torch.triu(torch.ones(degree, degree, device=params_a.device))
+#
+#    # Apply the summing matrix via batched matrix multiplication
+#    params_restricted = torch.matmul(summing_matrix, params_restricted)
+#
+#    return params_restricted
 
 ################################################################################################################################################################################################################## 
 ########################## B-Spline Prediction Method ##########################

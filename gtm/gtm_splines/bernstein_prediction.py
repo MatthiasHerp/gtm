@@ -115,7 +115,11 @@ def restrict_parameters(params_a, covariate, degree, monotonically_increasing,de
                 #softplus = torch.nn.Softplus()
                 #params_restricted[1:,num_var] = torch.nn.functional.softplus(params_a[degree:,num_var])
                 # Summing up of each value with all its prior values
-                summing_matrix = torch.ones(degree+1, degree+1, device=device) #the input.device is npassed here
+                #summing_matrix = torch.ones(degree+1, degree+1, device=device) #the input.device is npassed here
+                
+                summing_matrix = torch.ones(params_restricted.size(0), params_restricted.size(0), device=device) #the input.device is npassed here
+                
+                
                 #if dev is not False:
                 #    summing_matrix.to(dev)
 
