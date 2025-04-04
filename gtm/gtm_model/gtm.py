@@ -580,6 +580,7 @@ class GTM(nn.Module):
         num_batches=0
         target=0
         for y_validate in validate_dataloader:
+            y_validate = y_validate.to(self.device)
             num_batches += 1
             covar_batch = False
             if objective_type == "negloglik":
