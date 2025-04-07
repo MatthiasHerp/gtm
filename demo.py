@@ -8,6 +8,8 @@ if __name__ == "__main__":
     # Set the random seed for reproducibility
     torch.manual_seed(42)
 
+    
+    ###### Example Dummy Dataset ######
     class Gaussian2DDataset(Dataset):
         def __init__(self, num_samples=2000):
             self.mean = torch.tensor([1.0, -1.0, 0.0])  
@@ -26,7 +28,8 @@ if __name__ == "__main__":
     dataset = Gaussian2DDataset()
     dataloader = DataLoader(dataset, batch_size=200, shuffle=True)
 
-    # create GTM model
+    
+    ###### 1. Data Driven manner to find the optimal degrees for the trransformation layer splines ######
     model = GTM(
                 transformation_spline_range=list([[-10], [10]]), 
                 degree_decorrelation=10,
@@ -59,7 +62,7 @@ if __name__ == "__main__":
         optimal_degrees_transformation = model.degree_transformations
     
 
-    # hyperparameter tune the model
+    ###### 2. Hyperparameter Tune the models penalties ######
     hyperparameter_tune = False
     if hyperparameter_tune == True:
         study = model.hyperparameter_tune_penalties( 
@@ -69,7 +72,7 @@ if __name__ == "__main__":
                                         penfirstridge = ["sample"],
                                         pensecondridge = ["sample"],
                                         ctm_pensecondridge = ["sample"],
-                                        lambda_penalty_params = ["sample"],
+                                        lambda_penalty_params = [0], #["sample"],
                                         train_covariates=False, 
                                         validate_covariates=False, 
                                         adaptive_lasso_weights_matrix = False,
@@ -98,7 +101,7 @@ if __name__ == "__main__":
                                     study.best_params["ctm_pensecondridge"]
                                       ])
         adaptive_lasso_weights_matrix = False
-        lambda_penalty_params=torch.FloatTensor([study.best_params["lambda_penalty_params"]])
+        lambda_penalty_params=False #torch.FloatTensor([study.best_params["lambda_penalty_params"]])
     else:
         penalty_params=torch.FloatTensor([
                                     0, 0, 0, 0
@@ -106,15 +109,7 @@ if __name__ == "__main__":
         adaptive_lasso_weights_matrix = False
         lambda_penalty_params=False
     
-    #tm_model = TM(degree=20, spline_range=list([-15, 15]))
-    #data_1d = next(iter(dataloader))[:,0]
-    #tm_model.forward_log_likelihood(data_1d)
-    
-    #tm_model.subsect_dimension = 0
-    
-    #tm_model.__train__(train_dataloader=dataloader, validate_dataloader=dataloader, iterations=10, optimizer="LBFGS",
-    #                penalty_params=penalty_params, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, lambda_penalty_params=lambda_penalty_params, 
-    #                max_batches_per_iter=10)
+    ###### 3. Train the optimal model ######
     
     # pretrain the marginal transformations
     model.pretrain_tranformation_layer(dataloader, iterations=100, max_batches_per_iter=False, penalty_params=penalty_params)
@@ -123,6 +118,8 @@ if __name__ == "__main__":
     model.__train__(train_dataloader=dataloader, validate_dataloader=dataloader, iterations=100, optimizer="LBFGS",
                     penalty_params=penalty_params, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, lambda_penalty_params=lambda_penalty_params, 
                     max_batches_per_iter=False)
+    
+    ###### 4. How to save and load the trained model ######
 
     # save model
     torch.save(model, "model_state_dict.pth")
