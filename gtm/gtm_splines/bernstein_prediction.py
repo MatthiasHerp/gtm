@@ -93,7 +93,7 @@ def restrict_parameters(params_a, covariate, degree, monotonically_increasing,de
     # check out Bayesian CTM book 2.1 theorem!!!
 
         #params_restricted = torch.randn((16*16))
-        params_restricted = params_a#.clone()
+        params_restricted = params_a.clone()
         for num_var in range(params_a.size(1)):
             if covariate == 1:
                 # exp() for all parameters except the intercepts for each different covariate value

@@ -81,7 +81,7 @@ class Transformation(nn.Module):
                                 dtype=torch.float32)
             
             self.knots_list.append(
-                torch.cat([knots, torch.zeros(max_knots - knots.size(0)) ]) # additional padding to ensure that all knots are of the same size
+                torch.cat([knots, torch.zeros(max_knots - knots.size(0)) +max(self.spline_range[1,:])*2 ]) # additional padding to ensure that all knots are of the same size
                                    )
         self.padded_knots = torch.vstack(
             self.knots_list

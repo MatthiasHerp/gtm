@@ -12,6 +12,9 @@ import optuna
 from optuna.samplers import TPESampler 
 import itertools
 
+import scipy
+from gtm.gtm_model.tm import TM
+
 
 class GTM(nn.Module):
     def __init__(self, 
@@ -346,7 +349,6 @@ class GTM(nn.Module):
         
         return return_dict_model_training
     
-    
     def pretrain_tranformation_layer(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=False, patience=5, min_delta=1e-7, return_plot=True,
           optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", max_batches_per_iter=None):
         
@@ -404,6 +406,54 @@ class GTM(nn.Module):
         #else:
         #    return return_dict_model_training
         return return_dict_model_training
+    
+    
+    def find_minimal_transformation_degrees(self,train_dataloader, validate_dataloader, iterations=100, degrees_try_list=list(range(5,155,5)), max_batches_per_iter=False):
+        
+        optimal_degree = []
+        optimal_degree_pvalue = []
+        for dimension in range(self.number_variables):
+            for degree in degrees_try_list:
+                print("Starting run for data dim ",dimension," with degrees of ",degree)
+                try:
+                    tm_model = TM(degree=degree, spline_range=[self.transformation_spline_range[0][dimension],
+                                                            self.transformation_spline_range[1][dimension]])
+                    tm_model.subset_dimension = dimension
+            
+                    train_dict = tm_model.__train__(train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, iterations=iterations, optimizer="LBFGS",
+                                    penalty_params=[0,0,0,0], adaptive_lasso_weights_matrix=False, lambda_penalty_params=False, 
+                                    max_batches_per_iter=max_batches_per_iter)
+                    
+                    z_tilde = []
+                    #y_train_all = []
+                    for y_train in validate_dataloader:
+                        y_train_sub = y_train[:,tm_model.subset_dimension]
+                        z_tilde.append(tm_model.latent_space(y_train_sub))
+                        #y_train_all.append(y_train_sub)
+                    z_tilde = torch.hstack(z_tilde).detach().numpy()
+                    #y_train_all = torch.hstack(y_train_all).detach().numpy()
+                    
+                    #perform Shapiro-Wilk test for normality
+                    pv = scipy.stats.shapiro(z_tilde[:5000]).pvalue # becuase warning that pvalue may not be accurate for larger than 5000 obs in the package
+                    #print(pv)
+                    #plt.hist(y_train_all,bins=100)
+                    #plt.hist(z_tilde,bins=100)
+                    #plt.hist(z_tilde,bins=100)
+                    if pv >= 0.01:
+                    
+                        print("pvalue is ",pv," for data dim ",dimension," with degrees of ",degree)
+                        
+                        optimal_degree.append(degree)
+                        optimal_degree_pvalue.append(pv)
+                        
+                        # for next loop iteration to not always plot
+                        pv = 0 
+                        
+                        break
+                except:
+                    continue
+                
+        return optimal_degree, optimal_degree_pvalue
         
     
 

@@ -1,6 +1,8 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 from gtm.gtm_model.gtm import GTM
+from gtm.gtm_model.tm import TM
+
 
 if __name__ == "__main__":
     # Set the random seed for reproducibility
@@ -22,74 +24,118 @@ if __name__ == "__main__":
 
     # Create dataset and DataLoader
     dataset = Gaussian2DDataset()
-    dataloader = DataLoader(dataset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=200, shuffle=True)
 
     # create GTM model
     model = GTM(
-                transformation_spline_range=list([[-15], [15]]), 
+                transformation_spline_range=list([[-10], [10]]), 
                 degree_decorrelation=10,
                 degree_transformations=10,
                 num_decorr_layers=3,
+                num_trans_layers=1,
                 number_variables=3,
-                device="cpu") # somehow the model with the vectorised version only works with 3 dimensions minimum due to the vectorisation (makes sense) TODO: need to solve that
+                calc_method_bspline="deBoor",
+                device="cpu") 
+    # somehow the model with the vectorised version only works with 3 dimensions minimum due to the vectorisation (makes sense) TODO: need to solve that
+    
+    varying_degree_transformation = True
+    if varying_degree_transformation == True:
+        optimal_degrees_transformation, optimal_degrees_transformation_pvalues = model.find_minimal_transformation_degrees(dataloader, 
+                                                                                                                        dataloader, 
+                                                                                                                        iterations=100, 
+                                                                                                                        degrees_try_list=list(range(5,155,5)),
+                                                                                                                        max_batches_per_iter=False)
+        
+        model = GTM(
+                    transformation_spline_range=list([[-10], [10]]), 
+                    degree_decorrelation=10,
+                    degree_transformations=optimal_degrees_transformation,
+                    num_decorr_layers=3,
+                    num_trans_layers=1,
+                    number_variables=3,
+                    calc_method_bspline="deBoor",
+                    device="cpu") 
+    else:
+        optimal_degrees_transformation = model.degree_transformations
+    
 
     # hyperparameter tune the model
-    study = model.hyperparameter_tune_penalties( 
-                                      train_dataloader=dataloader, 
-                                      validate_dataloader=dataloader, 
-                                      penvalueridge = ["sample"],
-                                      penfirstridge = ["sample"],
-                                      pensecondridge = ["sample"],
-                                      ctm_pensecondridge = ["sample"],
-                                      lambda_penalty_params = ["sample"],
-                                      train_covariates=False, 
-                                      validate_covariates=False, 
-                                      adaptive_lasso_weights_matrix = False,
-                                      learning_rate=1, 
-                                      iterations=20, 
-                                      patience=5, 
-                                      min_delta=1e-7, 
-                                      optimizer='LBFGS', 
-                                      lambda_penalty_mode="square", 
-                                      objective_type="negloglik", 
-                                      seperate_copula_training=False,
-                                      max_batches_per_iter=10,
+    hyperparameter_tune = False
+    if hyperparameter_tune == True:
+        study = model.hyperparameter_tune_penalties( 
+                                        train_dataloader=dataloader, 
+                                        validate_dataloader=dataloader, 
+                                        penvalueridge = [0], #["sample"],
+                                        penfirstridge = ["sample"],
+                                        pensecondridge = ["sample"],
+                                        ctm_pensecondridge = ["sample"],
+                                        lambda_penalty_params = ["sample"],
+                                        train_covariates=False, 
+                                        validate_covariates=False, 
+                                        adaptive_lasso_weights_matrix = False,
+                                        learning_rate=1, 
+                                        iterations=100, 
+                                        patience=5, 
+                                        min_delta=1e-7, 
+                                        optimizer='LBFGS', 
+                                        lambda_penalty_mode="square", 
+                                        objective_type="negloglik", 
+                                        seperate_copula_training=False,
+                                        max_batches_per_iter=False,
                                         tuning_mode="optuna",
-                              cross_validation_folds=False,
-                              random_state_KFold=42,
-                              device=None,
-                              pretrained_transformation_layer=False,
-                              n_trials=6,
-                              temp_folder=".", 
-                              study_name=None)
+                                cross_validation_folds=False,
+                                random_state_KFold=42,
+                                device=None,
+                                pretrained_transformation_layer=False,
+                                n_trials=10,
+                                temp_folder=".", 
+                                study_name=None)
     
-    penalty_params=torch.FloatTensor([
-                                    study.best_params["penvalueridge"],
+        penalty_params=torch.FloatTensor([
+                                    0, #study.best_params["penvalueridge"],
                                     study.best_params["penfirstridge"],
                                     study.best_params["pensecondridge"],
                                     study.best_params["ctm_pensecondridge"]
                                       ])
-    adaptive_lasso_weights_matrix = False
-    lambda_penalty_params=torch.FloatTensor([study.best_params["lambda_penalty_params"]])
+        adaptive_lasso_weights_matrix = False
+        lambda_penalty_params=torch.FloatTensor([study.best_params["lambda_penalty_params"]])
+    else:
+        penalty_params=torch.FloatTensor([
+                                    0, 0, 0, 0
+                                      ])
+        adaptive_lasso_weights_matrix = False
+        lambda_penalty_params=False
+    
+    #tm_model = TM(degree=20, spline_range=list([-15, 15]))
+    #data_1d = next(iter(dataloader))[:,0]
+    #tm_model.forward_log_likelihood(data_1d)
+    
+    #tm_model.subsect_dimension = 0
+    
+    #tm_model.__train__(train_dataloader=dataloader, validate_dataloader=dataloader, iterations=10, optimizer="LBFGS",
+    #                penalty_params=penalty_params, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, lambda_penalty_params=lambda_penalty_params, 
+    #                max_batches_per_iter=10)
     
     # pretrain the marginal transformations
-    model.pretrain_tranformation_layer(dataloader, iterations=10, max_batches_per_iter=10, penalty_params=penalty_params)
+    model.pretrain_tranformation_layer(dataloader, iterations=100, max_batches_per_iter=False, penalty_params=penalty_params)
     
     # train the joint model
-    model.__train__(train_dataloader=dataloader, validate_dataloader=dataloader, iterations=10, optimizer="LBFGS",
+    model.__train__(train_dataloader=dataloader, validate_dataloader=dataloader, iterations=100, optimizer="LBFGS",
                     penalty_params=penalty_params, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, lambda_penalty_params=lambda_penalty_params, 
-                    max_batches_per_iter=10)
+                    max_batches_per_iter=False)
 
     # save model
     torch.save(model, "model_state_dict.pth")
     
     # Create the same model structure
     model2 = GTM(
-                transformation_spline_range=list([[-15], [15]]), 
+                transformation_spline_range=list([[-10], [10]]), 
                 degree_decorrelation=10,
-                degree_transformations=10,
+                degree_transformations=optimal_degrees_transformation,
                 num_decorr_layers=3,
+                num_trans_layers=1,
                 number_variables=3,
+                calc_method_bspline="deBoor",
                 device="cpu") 
 
     # Load saved weights
@@ -116,8 +162,8 @@ if __name__ == "__main__":
     synth_samples = model2.sample(n_samples=10000)
     
     # check approximation for fun
-    print(synth_samples.mean(0))
-    print(synth_samples.T.cov())
-    print(synth_samples.T.cov() @ torch.diag(1 / torch.diag(synth_samples.T.cov())))
+    print(synth_samples.mean(0).numpy().round(3))
+    print(synth_samples.T.cov().numpy().round(3))
+    print((synth_samples.T.cov() @ torch.diag(1 / torch.diag(synth_samples.T.cov()))).numpy().round(3))
         
 
