@@ -709,7 +709,7 @@ class GTM(nn.Module):
                 elif isinstance(penvalueridge, float) or isinstance(penvalueridge, int):
                     penvalueridge_opt = penvalueridge
                 elif penvalueridge == "sample":
-                    penvalueridge_opt = trial.suggest_float("penvalueridge", 0.0000001, 30, log=False) #True
+                    penvalueridge_opt = trial.suggest_float("penvalueridge", 0.0000001, 30, log=True) #True
                 else:
                     warnings.warn("penvalueridge not understood. Please provide a float, int None, or the string \"sample\".")
 
@@ -718,7 +718,7 @@ class GTM(nn.Module):
                 elif isinstance(penfirstridge, float) or isinstance(penfirstridge, int):
                     penfirstridge_opt = penfirstridge
                 elif penfirstridge == "sample":
-                    penfirstridge_opt = trial.suggest_float("penfirstridge", 0.0000001, 30, log=False) # True
+                    penfirstridge_opt = trial.suggest_float("penfirstridge", 0.0000001, 30, log=True) # True
                 else:
                     warnings.warn("penfirstridge not understood. Please provide a float, int None, or the string \"sample\".")
                     
@@ -727,7 +727,7 @@ class GTM(nn.Module):
                 elif isinstance(pensecondridge, float) or isinstance(pensecondridge, int):
                     pensecondridge_opt = pensecondridge
                 elif pensecondridge == "sample":
-                    pensecondridge_opt = trial.suggest_float("pensecondridge", 0.0000001, 30, log=False) # True
+                    pensecondridge_opt = trial.suggest_float("pensecondridge", 0.0000001, 30, log=True) # True
                 else:
                     warnings.warn("pensecondridge not understood. Please provide a float, int None, or the string \"sample\".")
                     
@@ -736,7 +736,7 @@ class GTM(nn.Module):
                 elif isinstance(ctm_pensecondridge, float) or isinstance(ctm_pensecondridge, int):
                     ctm_pensecondridge_opt = ctm_pensecondridge
                 elif ctm_pensecondridge == "sample":
-                    ctm_pensecondridge_opt = trial.suggest_float("ctm_pensecondridge", 0.0000001, 30, log=False) # True
+                    ctm_pensecondridge_opt = trial.suggest_float("ctm_pensecondridge", 0.0000001, 30, log=True) # True
                 else:
                     warnings.warn("ctm_pensecondridge not understood. Please provide a float, int None, or the string \"sample\".")
                     

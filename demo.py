@@ -63,7 +63,7 @@ if __name__ == "__main__":
     
 
     ###### 2. Hyperparameter Tune the models penalties ######
-    hyperparameter_tune = False
+    hyperparameter_tune = True
     if hyperparameter_tune == True:
         study = model.hyperparameter_tune_penalties( 
                                         train_dataloader=dataloader, 
