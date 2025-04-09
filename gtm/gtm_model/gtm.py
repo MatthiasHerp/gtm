@@ -450,6 +450,10 @@ class GTM(nn.Module):
                         pv = 0 
                         
                         break
+                    # Handels the case where even the max degree is not enough
+                    elif degree == max(degrees_try_list):
+                        optimal_degree.append(degree)
+                        optimal_degree_pvalue.append(pv)
                 except:
                     continue
                 
