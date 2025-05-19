@@ -16,8 +16,8 @@ from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
 
 
 class Transformation(nn.Module):
-    def __init__(self, degree, number_variables, spline_range, monotonically_increasing=True, spline="bernstein", span_factor=torch.tensor(0.1),
-                 number_covariates=False, initial_log_transform=False, calc_method_bspline="Naive_Basis",span_restriction="None", spline_order=3): #device=None
+    def __init__(self, degree, number_variables, spline_range, monotonically_increasing=True, spline="bspline", span_factor=torch.tensor(0.1),
+                 number_covariates=False, initial_log_transform=False, calc_method_bspline="deBoor",span_restriction="None", spline_order=3): #device=None
         super().__init__()
         self.type = "transformation"
         self.degree  = degree

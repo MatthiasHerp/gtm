@@ -10,7 +10,7 @@ from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
 
 class Decorrelation(nn.Module):
     def __init__(self, degree, number_variables, spline_range, spline="bspline", span_factor=torch.tensor(0.1), span_restriction="None",
-                 number_covariates=False, list_comprehension = False, covaraite_effect="multiplicativ", calc_method_bspline="Naive_Basis",
+                 number_covariates=False, list_comprehension = False, covaraite_effect="multiplicativ", calc_method_bspline="deBoor",
                  affine_layer=False, degree_multi=False, spline_order=3):
         super().__init__()
         self.type = "decorrelation"
