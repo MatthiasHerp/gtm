@@ -4,7 +4,7 @@ from torch import nn
 from gtm.gtm_layers.transformation_layer import *
 from gtm.gtm_layers.decorrelation_layer import Decorrelation
 from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
-from gtm.gtm_training.objective_functions import log_likelihood, exact_score_matching, single_sliced_score_matching, sliced_score_matching_vr, noise_contrasive_estimation, training_objective
+from gtm.gtm_training.objective_functions import log_likelihood, training_objective
 from gtm.gtm_training.training_helpers import train, if_float_create_lambda_penalisation_matrix
 #from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
 
@@ -142,6 +142,10 @@ class GTM(nn.Module):
 
                     return_dict_nf_mctm["output"] = return_dict_transformation["output"]
                     return_dict_nf_mctm["log_d"] = return_dict_transformation["log_d"]
+                else:
+                    return_dict_nf_mctm["output"] = y.clone()
+                    return_dict_nf_mctm["log_d"] = torch.zeros(y.size()).float()
+                    
 
             elif evaluate:
                 if self.num_trans_layers > 0:
@@ -150,6 +154,9 @@ class GTM(nn.Module):
                     
                     return_dict_nf_mctm["output"] = return_dict_transformation["output"]
                     return_dict_nf_mctm["log_d"] = return_dict_transformation["log_d"]
+                else:
+                    return_dict_nf_mctm["output"] = y.clone()
+                    return_dict_nf_mctm["log_d"] = torch.zeros(y.size()).float()
             
             if self.transform_only == True:
                 return return_dict_nf_mctm
