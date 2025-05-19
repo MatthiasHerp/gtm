@@ -249,74 +249,6 @@ class GTM(nn.Module):
     
     def log_likelihood(self, samples, covariate=False, mean_loss=False):
         return self.log_likelihood_loss(samples, covariate=False, mean_loss=mean_loss, train=False, evaluate=True)["log_likelihood_data"] #.sum(1)
-
-
-    def exact_score_matching_loss(self, samples, covariate=False, mean_loss=True):
-        samples.requires_grad_(True)
-
-        return_dict_nf_mctm = exact_score_matching(
-            model=self,
-            samples=samples,
-            train_covariates=covariate,
-            train=True,
-            evaluate=True,
-            score_method="autograd",
-            mean_loss=mean_loss)
-
-        return return_dict_nf_mctm
-    
-    
-    def exact_score_matching(self, samples, covariate=False):
-        return self.exact_score_matching_loss(samples, covariate=False)["exact_score_matching_loss"]
-    
-    
-    def single_sliced_score_matching_loss(self, samples, covariate=False, mean_loss=True):
-        samples.requires_grad_(True)
-
-        return_dict_nf_mctm = single_sliced_score_matching(
-            model=self,
-            samples=samples,
-            train_covariates=covariate,
-            train=True,
-            evaluate=True,
-            score_method="autograd",
-            mean_loss=mean_loss,
-            noise=None, 
-            detach=False, 
-            noise_type='gaussian')
-
-        return return_dict_nf_mctm
-    
-    
-    def vr_sliced_score_matching_loss(self, samples, covariate=False, mean_loss=True):
-        samples.requires_grad_(True)
-
-        return_dict_nf_mctm = sliced_score_matching_vr(
-            model=self,
-            samples=samples,
-            train_covariates=covariate,
-            train=True,
-            evaluate=True,
-            score_method="autograd",
-            mean_loss=mean_loss)
-
-        return return_dict_nf_mctm
-    
-    
-    def noise_contrasive_estimation_loss(self, samples, covariate=False, mean_loss=True):
-        samples.requires_grad_(True)
-
-        return_dict_nf_mctm = noise_contrasive_estimation(
-            model=self,
-            samples=samples,
-            train_covariates=covariate,
-            train=True,
-            evaluate=True,
-            score_method="autograd",
-            mean_loss=mean_loss)
-
-        return return_dict_nf_mctm
-    
     
     def training_objective(self, samples, penalty_params, train_covariates=False, lambda_penalty_params: torch.Tensor =False, 
                            adaptive_lasso_weights_matrix: torch.Tensor =False, 
@@ -362,13 +294,6 @@ class GTM(nn.Module):
             # set to false because this is the pretraining of the transformation layer
             lambda_penalty_params = False
             
-            
-        #if return_plot:
-        #    return_dict = self.forward(train_data, covariate=train_covariates, train=True, evaluate=False)
-        #    z_tilde_init = return_dict["output"]
-        #
-        #    fig_init_marginals = plot_marginals(z_tilde_init.detach().cpu().numpy())
-            
         return_dict_model_training = train(self, 
                                            train_dataloader=train_dataloader, 
                                            validate_dataloader=validate_dataloader, 
@@ -386,25 +311,8 @@ class GTM(nn.Module):
                                            objective_type=objective_type,
                                            max_batches_per_iter=max_batches_per_iter)
         
-        
-        #if return_plot:
-        #    return_dict = self.forward(train_data, covariate=train_covariates, train=True, evaluate=False)
-        #    z_tilde_trained = return_dict["output"]
-        #
-        #    fig_trained_marginals = plot_marginals(z_tilde_trained.detach().cpu().numpy(),covariate=train_covariates)
-#
-        #    fig_trained_space = plot_densities(z_tilde_trained.detach().cpu().numpy(), covariate=train_covariates)
-        
         self.transform_only = False
         
-        #if return_plot:   
-        #    return return_dict_model_training, \
-        #       fig_train, \
-        #       fig_init_marginals, \
-        #       fig_trained_marginals, \
-        #       fig_trained_space
-        #else:
-        #    return return_dict_model_training
         return return_dict_model_training
     
     
