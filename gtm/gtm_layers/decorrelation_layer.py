@@ -356,8 +356,8 @@ class Decorrelation(nn.Module):
                     return_dict["lambda_matrix"][:, var_num, covar_num] = lambda_value
 
                     # filling the derivative lambda matrix with the derivative values ,see obsidean
-                    return_dict["der_lambda_matrix"][:, var_num, covar_num] = der_lambda_value * input[:, covar_num] + lambda_value
-                    return_dict["der2_lambda_matrix"][:, var_num, covar_num] = der_lambda_value + der2_lambda_value * input[:, covar_num] + der_lambda_value
+                    #return_dict["der_lambda_matrix"][:, var_num, covar_num] = der_lambda_value * input[:, covar_num] + lambda_value
+                    #return_dict["der2_lambda_matrix"][:, var_num, covar_num] = der_lambda_value + der2_lambda_value * input[:, covar_num] + der_lambda_value
                     
                 # filling in the multiplicative effect into the lambda matrix
                 return_dict["lambda_matrix"][:, var_num, var_num] = lambda_value_multiplier_total
@@ -376,7 +376,7 @@ class Decorrelation(nn.Module):
                 if return_scores_hessian == True:
                         warnings.warn("Warning: return_scores_hessian not implemented for list comprehension. The der_lambda_matrix and der2_lambda_matrix will be zeros.")
                 return_dict = self.list_comprehension_forward(input, log_d, covariate, return_penalties=return_penalties)
-            elif self.vmap == True:
+            elif self.vmap == True and self.number_variables > 2:
                 return_dict = self.vmap_forward(input, log_d, covariate, return_penalties=return_penalties)
             else:
                 return_dict = self.for_loop_forward(input, log_d, covariate, inverse=False, return_penalties=return_penalties, return_scores_hessian=return_scores_hessian)

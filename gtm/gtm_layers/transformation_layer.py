@@ -426,12 +426,11 @@ class Transformation(nn.Module):
 
             return_dict = self.store_basis_forward(input, log_d = 0, inverse=inverse, return_scores_hessian=return_scores_hessian)
             
-            
         else:
             if return_scores_hessian == True:
                 warnings.warn("Warning: return_scores_hessian is only available if store_basis is True.")
                             
-            if inverse:
+            if inverse or self.number_variables == 2:
 
                 return_dict = self.for_loop_forward(input, covariate, log_d = 0, inverse=inverse)
             else:
