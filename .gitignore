@@ -1,4 +1,6 @@
+__pycache__/
 **/__pycache__/
+*.py[cod]
 *.egg-info/
 .idea
 *.pyc
