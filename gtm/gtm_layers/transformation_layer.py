@@ -17,7 +17,7 @@ from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
 
 class Transformation(nn.Module):
     def __init__(self, degree, number_variables, spline_range, monotonically_increasing=True, spline="bspline", span_factor=torch.tensor(0.1),
-                 number_covariates=False, initial_log_transform=False, calc_method_bspline="deBoor",span_restriction="None", spline_order=3): #device=None
+                 number_covariates=False, initial_log_transform=False, calc_method_bspline="deBoor",span_restriction="reluler", spline_order=3): #device=None
         super().__init__()
         self.type = "transformation"
         self.degree  = degree
@@ -59,7 +59,7 @@ class Transformation(nn.Module):
             warnings.warn("Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default.")
         
         
-
+        ### Old
         # The following code ensures that:
         # we have knots equally spanning the range of the number of degrees
         # we have the first an last knot on the bound of the span
@@ -86,6 +86,36 @@ class Transformation(nn.Module):
         self.padded_knots = torch.vstack(
             self.knots_list
             ).T
+        
+        ##### Update
+        ## Defining knots for vectorized compute
+        #max_cols = max(self.degree)+1
+        #self.knots_list = list()    
+        #for var in range(self.number_variables):
+        #    
+        #    if self.spline_order == 2:
+        #        n = self.degree[var] + 1
+        #    elif self.spline_order == 3:
+        #        n = self.degree[var] + 2
+        #    
+        #    
+        #    distance_between_knots = (self.spline_range[1,var] - self.spline_range[0,var]) * (1 + self.span_factor) / (n - 1)
+        #    
+        #    knots = torch.linspace(self.spline_range[0,var] * (1 + self.span_factor) - self.spline_order * distance_between_knots,
+        #                    self.spline_range[1,var] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
+        #                    n + 4, dtype=torch.float32) #, device=input.device)
+        #    
+        #    #self.knots_list.append(
+        #    #    torch.nn.functional.pad(knots, (max_cols + 5 - knots.size(0), int(self.polynomial_range[1,var]+5)))
+        #    #                       )
+        #    
+        #    self.knots_list.append(
+        #        torch.cat([knots, torch.zeros(max_cols + 5 - knots.size(0))+max(self.spline_range[1,:])*2 ])
+        #                           )
+        #
+        #self.padded_knots = torch.vstack(
+        #    self.knots_list
+        #    ).T
 
         if len(set(self.degree)) > 1:
             self.varying_degrees = True 

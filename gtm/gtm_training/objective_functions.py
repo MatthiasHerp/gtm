@@ -24,8 +24,11 @@ def training_objective(model, samples, penalty_params, train_covariates=False, l
     if objective_type == "negloglik":
         return_dict_model_loss = model.log_likelihood_loss(samples, covariate=train_covariates, mean_loss=True)
         loss = return_dict_model_loss["negative_log_likelihood_data"]     
+    #elif objective_type == "vi":
+    #    return_dict_model_loss = model.vi_loss(samples, covariate=train_covariates, mean_loss=True)
+    #    loss = return_dict_model_loss["vi_loss"] 
         
-    if model.__module__ == "python_nf_mctm.models.nf_mctm":
+    if model.__module__ == 'gtm.gtm_model.gtm':
         num_splines_per_layer = model.number_variables * (model.number_variables-1) /2 #offdiagonal splines (additive effect)
         #if model.affine_layer is not False:
         #    num_splines_per_layer += model.number_variables * (model.number_variables-1) /2 #diagonal splines (multiplicative effect)

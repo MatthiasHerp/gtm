@@ -9,7 +9,7 @@ from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
 
 
 class Decorrelation(nn.Module):
-    def __init__(self, degree, number_variables, spline_range, spline="bspline", span_factor=torch.tensor(0.1), span_restriction="None",
+    def __init__(self, degree, number_variables, spline_range, spline="bspline", span_factor=torch.tensor(0.1), span_restriction="reluler",
                  number_covariates=False, list_comprehension = False, covaraite_effect="multiplicativ", calc_method_bspline="deBoor",
                  affine_layer=False, degree_multi=False, spline_order=3):
         super().__init__()
@@ -66,6 +66,7 @@ class Decorrelation(nn.Module):
         self.list_comprehension = False #True #False
         #self.calc_method_bspline = "deBoor" #"deBoor" #"Naive"
         
+        ### Old
         # The following code ensures that:
         # we have knots equally spanning the range of the number of degrees
         # we have the first an last knot on the bound of the span
@@ -83,6 +84,19 @@ class Decorrelation(nn.Module):
                             self.spline_range[1,0] + number_of_bound_knots_per_side * distance_between_knots_in_bounds,
                             self.degree + 2 * number_of_bound_knots_per_side, # 2* because of two sides
                             dtype=torch.float32)
+        
+        ##### Update
+        #if self.spline_order == 2:
+        #    n = self.degree + 1
+        #elif self.spline_order == 3:
+        #    n = self.degree + 2
+        #      
+        #distance_between_knots = (self.spline_range[1,0] - self.spline_range[0,0]) * (1 + self.span_factor) / (n - 1)
+        #    
+        #    
+        #self.knots = torch.linspace(self.spline_range[0,0] * (1 + self.span_factor) - self.spline_order * distance_between_knots,
+        #                    self.spline_range[1,0] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
+        #                    n + 4, dtype=torch.float32)
         
         self.var_num_list, self.covar_num_list = torch.tril_indices(self.number_variables, self.number_variables, offset=-1)
         

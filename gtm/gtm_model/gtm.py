@@ -6,6 +6,7 @@ from gtm.gtm_layers.decorrelation_layer import Decorrelation
 from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
 from gtm.gtm_training.objective_functions import log_likelihood, training_objective
 from gtm.gtm_training.training_helpers import train, if_float_create_lambda_penalisation_matrix
+from gtm.gtm_plots_analysis.compute_conditional_independence_kld import *
 #from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
 
 import optuna
@@ -385,6 +386,21 @@ class GTM(nn.Module):
                                             return_dict["lambda_matrix_global"])
 
         return precision_matrix
+    
+    
+    def compute_correlation_matrix(self, y, covariate=False):
+        
+        def p_to_corr(matrix):
+            d = matrix.size(0)
+            diag_sqrt = torch.diag(matrix) ** 0.5
+            matrix_std_multiplied = np.matmul(torch.reshape(diag_sqrt, (d, 1)), torch.reshape(diag_sqrt, (1, d)))
+            return -1 * matrix / matrix_std_multiplied
+
+        with torch.no_grad():
+            precision_matrix = self.compute_precision_matrix( y, covariate=False)
+            correlation_matrix_train = torch.stack([p_to_corr(precision_matrix[obs_num,:,:]) for obs_num in range(precision_matrix.size(0))])
+
+        return correlation_matrix_train
 
 
     def sample(self, n_samples, covariate=False):
@@ -628,7 +644,7 @@ class GTM(nn.Module):
                 elif isinstance(penvalueridge, float) or isinstance(penvalueridge, int):
                     penvalueridge_opt = penvalueridge
                 elif penvalueridge == "sample":
-                    penvalueridge_opt = trial.suggest_float("penvalueridge", 0.0000001, 30, log=True) #True
+                    penvalueridge_opt = trial.suggest_float("penvalueridge", 0.0000001, 30, log=False) #True
                 else:
                     warnings.warn("penvalueridge not understood. Please provide a float, int None, or the string \"sample\".")
 
@@ -637,7 +653,7 @@ class GTM(nn.Module):
                 elif isinstance(penfirstridge, float) or isinstance(penfirstridge, int):
                     penfirstridge_opt = penfirstridge
                 elif penfirstridge == "sample":
-                    penfirstridge_opt = trial.suggest_float("penfirstridge", 0.0000001, 30, log=True) # True
+                    penfirstridge_opt = trial.suggest_float("penfirstridge", 0.0000001, 30, log=False) # True
                 else:
                     warnings.warn("penfirstridge not understood. Please provide a float, int None, or the string \"sample\".")
                     
@@ -646,7 +662,7 @@ class GTM(nn.Module):
                 elif isinstance(pensecondridge, float) or isinstance(pensecondridge, int):
                     pensecondridge_opt = pensecondridge
                 elif pensecondridge == "sample":
-                    pensecondridge_opt = trial.suggest_float("pensecondridge", 0.0000001, 30, log=True) # True
+                    pensecondridge_opt = trial.suggest_float("pensecondridge", 0.0000001, 30, log=False) # True
                 else:
                     warnings.warn("pensecondridge not understood. Please provide a float, int None, or the string \"sample\".")
                     
@@ -655,7 +671,7 @@ class GTM(nn.Module):
                 elif isinstance(ctm_pensecondridge, float) or isinstance(ctm_pensecondridge, int):
                     ctm_pensecondridge_opt = ctm_pensecondridge
                 elif ctm_pensecondridge == "sample":
-                    ctm_pensecondridge_opt = trial.suggest_float("ctm_pensecondridge", 0.0000001, 30, log=True) # True
+                    ctm_pensecondridge_opt = trial.suggest_float("ctm_pensecondridge", 0.0000001, 30, log=False) # True
                 else:
                     warnings.warn("ctm_pensecondridge not understood. Please provide a float, int None, or the string \"sample\".")
                     
@@ -724,5 +740,24 @@ class GTM(nn.Module):
             study.optimize(optuna_objective, n_trials=n_trials)
             print("hyperparameter_tuning done")
             return study
-
+        
+    def compute_conditional_independence_table(self,
+                                        y = None,
+                                        x = False,
+                                        evaluation_data_type = "data",
+                                        num_processes=10,
+                                        sample_size = 1000,
+                                        num_points_quad=20,
+                                        optimized=False,
+                                        copula_only=False):
+        
+        return compute_conditional_independence_kld(self,
+                                        y,
+                                        x,
+                                        evaluation_data_type,
+                                        num_processes,
+                                        sample_size,
+                                        num_points_quad,
+                                        optimized,
+                                        copula_only)
                 
