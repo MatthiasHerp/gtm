@@ -468,7 +468,8 @@ def compute_ci_probability_deviance_two_dim_glq(model,
     
     
 
-def independence_kld_process_row(row_num, precision_matrix_summary_statistics, evaluation_data, model_alternative, num_points_quad=20, optimized=False):
+def independence_kld_process_row(row_num, precision_matrix_summary_statistics, evaluation_data, model_alternative, num_points_quad=20, optimized=False,
+                                 min_val=-5, max_val=5):
     var_row_num = int(precision_matrix_summary_statistics.iloc[row_num]["var_row"])
     var_col_num = int(precision_matrix_summary_statistics.iloc[row_num]["var_col"])
     
@@ -479,8 +480,8 @@ def independence_kld_process_row(row_num, precision_matrix_summary_statistics, e
         data=evaluation_data,
         num_col_1=var_row_num,
         num_col_2=var_col_num,
-        min_val=-5,  # Adjust as needed
-        max_val=5,   # Adjust as needed
+        min_val=min_val,  # Adjust as needed
+        max_val=max_val,   # Adjust as needed
         num_points_quad=num_points_quad,
         copula=False, ####### False
         optimized=optimized

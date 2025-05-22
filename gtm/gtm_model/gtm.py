@@ -23,7 +23,7 @@ class GTM(nn.Module):
                  transformation_spline_range=list([[-15], [15]]), 
                  decorrelation_spline_range=list([[-15], [15]]), 
                  spline_transformation="bspline", spline_decorrelation="bspline", # bernstein bernstein bspline
-                 degree_transformations=15, degree_decorrelation=20, span_factor=torch.tensor(0.), span_restriction="reluler", #span_factor=torch.tensor(0.1)
+                 degree_transformations=15, degree_decorrelation=20, span_factor=torch.tensor(0.1), span_restriction="reluler", #span_factor=torch.tensor(0.1)
                  number_covariates=False,
                  num_trans_layers=1,
                  num_decorr_layers=3, list_comprehension=False, initial_log_transform=False,
@@ -749,7 +749,9 @@ class GTM(nn.Module):
                                         sample_size = 1000,
                                         num_points_quad=20,
                                         optimized=False,
-                                        copula_only=False):
+                                        copula_only=False,
+                                        min_val=-5, 
+                                        max_val=5):
         
         return compute_conditional_independence_kld(self,
                                         y,
@@ -759,5 +761,7 @@ class GTM(nn.Module):
                                         sample_size,
                                         num_points_quad,
                                         optimized,
-                                        copula_only)
+                                        copula_only,
+                                        min_val,
+                                        max_val)
                 

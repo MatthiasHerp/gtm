@@ -17,7 +17,9 @@ def compute_conditional_independence_kld(self,
                                         sample_size = 1000,
                                         num_points_quad=20,
                                         optimized=False,
-                                        copula_only=False):
+                                        copula_only=False,
+                                        min_val=-5,
+                                        max_val=5):
     
             
         # in case of gpu cuda compute
@@ -50,11 +52,11 @@ def compute_conditional_independence_kld(self,
         # Using Pool from the multiprocessing module
         if num_processes > 1:
             with multiprocessing.Pool(processes=num_processes) as pool:
-                results = pool.starmap(independence_kld_process_row, [(row_num, precision_matrix_summary_statistics, evaluation_data, self, num_points_quad, optimized) for row_num in range(precision_matrix_summary_statistics.shape[0])])
+                results = pool.starmap(independence_kld_process_row, [(row_num, precision_matrix_summary_statistics, evaluation_data, self, num_points_quad, optimized, min_val, max_val) for row_num in range(precision_matrix_summary_statistics.shape[0])])
             # Unpacking the results
             actual_log_distribution_glq_list, under_ci_assumption_log_distribution_glq_list, under_ci_assumption_log_distribution_glq_full_data_list = zip(*results)
         else:
-            results = [independence_kld_process_row(row_num, precision_matrix_summary_statistics, evaluation_data, self, num_points_quad, optimized) for row_num in range(precision_matrix_summary_statistics.shape[0])]
+            results = [independence_kld_process_row(row_num, precision_matrix_summary_statistics, evaluation_data, self, num_points_quad, optimized, min_val, max_val) for row_num in range(precision_matrix_summary_statistics.shape[0])]
             
             actual_log_distribution_glq_list, under_ci_assumption_log_distribution_glq_list, under_ci_assumption_log_distribution_glq_full_data_list = zip(*results)
                 

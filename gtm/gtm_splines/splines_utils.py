@@ -13,7 +13,7 @@ def adjust_ploynomial_range(polynomial_range: object, span_factor: object) -> ob
 class ReLULeR(): #nn.Module
     def __init__(self,polynomial_range: torch.Tensor):
         #super().__init__()
-        self.polynomial_range = polynomial_range
+        self.polynomial_range = 0.9*polynomial_range # this factor helps stabilize bounds of the decorrelation layer spline predictions
         self.l0 = nn.ReLU()
         self.l1 = nn.ReLU()
 
