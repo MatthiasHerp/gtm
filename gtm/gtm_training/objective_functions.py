@@ -11,7 +11,10 @@ def log_likelihood(model, samples, train_covariates=False, train=True, evaluate=
         log_likelihood_data = log_likelihood_latent + return_dict_nf_mctm["log_d"]
         log_likelihood_data = torch.mean(log_likelihood_data)
     else:
-        log_likelihood_data = torch.sum(log_likelihood_latent + return_dict_nf_mctm["log_d"],1)
+        if model.number_variables > 1: #for 1D TM Model
+            log_likelihood_data = torch.sum(log_likelihood_latent + return_dict_nf_mctm["log_d"],1)
+        else:
+            log_likelihood_data = log_likelihood_latent + return_dict_nf_mctm["log_d"]
         
     return_dict_nf_mctm["log_likelihood_data"] = log_likelihood_data
     

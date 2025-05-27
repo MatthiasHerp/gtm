@@ -3,14 +3,14 @@ import warnings
 import torch
 from torch import nn
 import numpy as np
-#from gtm.gtm_splines.bernstein_prediction import bernstein_prediction
+
 from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
-from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
+from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction_vectorized, binomial_coeffs
 
 
 class Decorrelation(nn.Module):
     def __init__(self, degree, number_variables, spline_range, spline="bspline", span_factor=torch.tensor(0.1), span_restriction="reluler",
-                 number_covariates=False, list_comprehension = False, covaraite_effect="multiplicativ", calc_method_bspline="deBoor",
+                 number_covariates=False, covaraite_effect="multiplicativ", calc_method_bspline="deBoor",
                  affine_layer=False, degree_multi=False, spline_order=3):
         super().__init__()
         self.type = "decorrelation"
@@ -21,15 +21,19 @@ class Decorrelation(nn.Module):
         self.num_lambdas = number_variables * (number_variables-1) / 2
         self.spline = spline
         if spline == "bernstein":
-            warnings.warn("Bernstein polynomial penalization is not implemented yet. oonly returns zeros hardcoded in bernstein_prediction.py fct")
+            warnings.warn("Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct")
+            n = self.degree + 1
+            self.binom_n  = binomial_coeffs(n)#, device=self.device)
+            self.binom_n1 = binomial_coeffs(n-1)#, device=self.device)
+            self.binom_n2 = binomial_coeffs(n-2)#, device=self.device)
 
         self.span_factor = span_factor
 
         self.span_restriction = span_restriction
 
-        if spline == "bspline" :
+        if self.spline == "bspline" :
             self.spline_prediction = self.bspline_prediction_method
-        elif spline == "bernstein":
+        elif self.spline == "bernstein":
             self.spline_prediction = self.bernstein_prediction_method
         else:
             warnings.warn("Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default.")
@@ -39,8 +43,6 @@ class Decorrelation(nn.Module):
         self.params = self.compute_starting_values_bspline(start_value=0.001)
 
         self.number_covariates = number_covariates
-
-        self.list_comprehension = list_comprehension
 
         if self.number_covariates is not False:
             if self.number_covariates > 1:
@@ -63,7 +65,6 @@ class Decorrelation(nn.Module):
         
         # TODO: Sort this out, I fixed the values here as it is currently the fastest computation by far
         self.vmap = True #False #True
-        self.list_comprehension = False #True #False
         #self.calc_method_bspline = "deBoor" #"deBoor" #"Naive"
         
         ### Old
@@ -129,94 +130,59 @@ class Decorrelation(nn.Module):
         
     def bspline_prediction_method(self, input, params_index, covariate, covar_num, derivativ, return_penalties, monotonically_increasing=False, multi=False):
         
-        return bspline_prediction(
-                            self.params[:, params_index] if multi==False else self.params_multiplier[:, params_index],
-                            input[:, covar_num],
-                            self.degree if multi==False else self.degree_multi,
-                            self.spline_range[:, 0],
-                            monotonically_increasing=monotonically_increasing,
-                            derivativ=derivativ,
-                            return_penalties=return_penalties,
-                            span_factor=self.span_factor,
+        #return bspline_prediction(
+        #                    self.params[:, params_index] if multi==False else self.params_multiplier[:, params_index],
+        #                    input[:, covar_num],
+        #                    self.degree if multi==False else self.degree_multi,
+        #                    self.spline_range[:, 0],
+        #                    monotonically_increasing=monotonically_increasing,
+        #                    derivativ=derivativ,
+        #                    return_penalties=return_penalties,
+        #                    span_factor=self.span_factor,
+        #                    span_restriction=self.span_restriction,
+        #                    covariate=covariate,
+        #                    params_covariate=False, #self.params_covariate[:, covar_num],
+        #                    covaraite_effect=self.covaraite_effect,
+        #                    calc_method=self.calc_method_bspline,
+        #                    order = self.spline_order)  
+        
+        return bspline_prediction_vectorized(
+                            self.params[:, params_index].unsqueeze(1) if multi==False else self.params_multiplier[:, params_index].unsqueeze(1),
+                            input[:, covar_num].unsqueeze(1), 
+                            self.knots,
+                            self.degree, 
+                            self.spline_range[:, 0], 
+                            derivativ=derivativ, 
+                            return_penalties=return_penalties, 
+                            calc_method=self.calc_method_bspline, 
+                            span_factor=self.span_factor, 
                             span_restriction=self.span_restriction,
-                            covariate=covariate,
-                            params_covariate=False, #self.params_covariate[:, covar_num],
+                            covariate=covariate, 
+                            params_covariate=self.params_covariate, 
                             covaraite_effect=self.covaraite_effect,
-                            calc_method=self.calc_method_bspline,
-                            order = self.spline_order)  
+                            penalize_towards=0, 
+                            order=self.spline_order,
+                            varying_degrees=False,
+                            params_a_mask=None,)
+            
         
+    def bernstein_prediction_method(self, input, params_index, covariate, covar_num, derivativ, return_penalties, monotonically_increasing=False, multi=False):
         
-        
-    def bernstein_prediction_method(self, input, params_index, covariate, covar_num, derivativ, return_penalties, monotonically_increasing=False):
-        
-        return bernstein_prediction(
-                            self.params[:, params_index],
-                            input[:, covar_num],
-                            self.degree,
-                            self.spline_range[:, covar_num],
+        return bernstein_prediction_vectorized(
+                            params_a=self.params[:, params_index].unsqueeze(1) if multi==False else self.params_multiplier[:, params_index].unsqueeze(1),
+                            input_a=input[:, covar_num].unsqueeze(1),
+                            #knots=self.knots,
+                            degree=self.degree,
+                            spline_range=self.spline_range[:, covar_num],
                             monotonically_increasing=monotonically_increasing,
                             derivativ=derivativ,
                             span_factor=self.span_factor,
                             covariate=covariate,
-                            params_covariate=self.params_covariate[:, covar_num])  
-        
-        
-    def list_comprehension_forward(self, input, log_d, covariate, return_penalties=True): 
-        
-
-        return_dict = self.create_return_dict_decorrelation(input)
-
-        # This is a list comprehension implementation of the foward pass that should be faster than the nested for loop
-        def forward_pass_row(var_num, covar_num):
-
-            num_gtm_splines = max(var_num * (var_num - 1) / 2,0)
-            params_index = int(num_gtm_splines + covar_num)
-            
-            lambda_value, second_order_ridge_pen_current, \
-                first_order_ridge_pen_current, param_ridge_pen_current = self.spline_prediction(input, 
-                                                                                                params_index, 
-                                                                                                covariate, 
-                                                                                                covar_num, 
-                                                                                                derivativ=0, 
-                                                                                                return_penalties=True, 
-                                                                                                monotonically_increasing=False)
-
-            return input[:, covar_num] * lambda_value, \
-                second_order_ridge_pen_current, first_order_ridge_pen_current, param_ridge_pen_current,\
-                lambda_value
-
-        def forward_pass_col(var_num):
-
-            if var_num == 0:
-                return torch.zeros(input.size()[0]), 0, 0, 0
-            else:
-                res = [forward_pass_row(var_num, covar_num) for covar_num in range(var_num)]
-
-                add_to_output = sum(res[covar_num][0] for covar_num in range(var_num))
-
-                second_order_ridge_pen_row_sum = sum(res[covar_num][1] for covar_num in range(var_num))
-                first_order_ridge_pen_row_sum = sum(res[covar_num][2] for covar_num in range(var_num))
-                param_ridge_pen_row_sum = sum(res[covar_num][3] for covar_num in range(var_num))
-
-                lambda_matrix_entries = torch.cat([res[covar_num][4].unsqueeze(0) for covar_num in range(var_num)])
-
-                return add_to_output, \
-                        second_order_ridge_pen_row_sum, first_order_ridge_pen_row_sum, param_ridge_pen_row_sum, \
-                    lambda_matrix_entries
-
-        res = [forward_pass_col(var_num) for var_num in range(self.number_variables)]
-        
-        return_dict["output"] += torch.vstack([res[var_num][0].to(input.device) for var_num in range(self.number_variables)]).T
-
-        return_dict["second_order_ridge_pen_sum"] = sum(res[var_num][1] for var_num in range(self.number_variables))
-        return_dict["first_order_ridge_pen_sum"] = sum(res[var_num][2] for var_num in range(self.number_variables))
-        return_dict["param_ridge_pen_sum"] = sum(res[var_num][3] for var_num in range(self.number_variables))
-
-        for var_num in range(1,self.number_variables): #1 because the first row has no precision matrix entries
-            return_dict["lambda_matrix"][:,var_num,0:var_num] = res[var_num][4].T
-
-        return return_dict
-
+                            params_covariate=False,
+                            binom_n=self.binom_n,
+                            binom_n1=self.binom_n1,
+                            binom_n2=self.binom_n2,
+                            return_penalties=return_penalties)#self.params_covariate[:, covar_num])  
         
     
     def vmap_forward(self, input, log_d, covariate, return_penalties=True): 
@@ -225,25 +191,48 @@ class Decorrelation(nn.Module):
         
         self.var_num_list = self.var_num_list.to(input.device)
         self.covar_num_list = self.covar_num_list.to(input.device)
-        self.knots = self.knots.to(input.device)    
-    
-        return_dict["lambda_matrix"][:, self.var_num_list, self.covar_num_list], return_dict["second_order_ridge_pen_sum"], return_dict["first_order_ridge_pen_sum"], return_dict["param_ridge_pen_sum"] = bspline_prediction_vectorized(self.params,
-                           input.index_select(1,self.covar_num_list), 
-                           self.knots,
-                           self.degree, 
-                           self.spline_range[:, 0], 
-                           derivativ=0, 
-                           return_penalties=return_penalties, 
-                           calc_method=self.calc_method_bspline, 
-                           span_factor=self.span_factor, 
-                           span_restriction=self.span_restriction,
-                           covariate=covariate, 
-                           params_covariate=self.params_covariate, 
-                           covaraite_effect=self.covaraite_effect,
-                           penalize_towards=0, 
-                           order=self.spline_order,
-                           varying_degrees=False,
-                           params_a_mask=None)
+        self.knots = self.knots.to(input.device)   
+
+        if self.spline == "bspline":
+            return_dict["lambda_matrix"][:, self.var_num_list, self.covar_num_list], return_dict["second_order_ridge_pen_sum"], return_dict["first_order_ridge_pen_sum"], return_dict["param_ridge_pen_sum"] = bspline_prediction_vectorized(self.params,
+                            input.index_select(1,self.covar_num_list), 
+                            self.knots,
+                            self.degree, 
+                            self.spline_range[:, 0], 
+                            derivativ=0, 
+                            return_penalties=return_penalties, 
+                            calc_method=self.calc_method_bspline, 
+                            span_factor=self.span_factor, 
+                            span_restriction=self.span_restriction,
+                            covariate=covariate, 
+                            params_covariate=self.params_covariate, 
+                            covaraite_effect=self.covaraite_effect,
+                            penalize_towards=0, 
+                            order=self.spline_order,
+                            varying_degrees=False,
+                            params_a_mask=None)
+        elif self.spline == "bernstein":
+            # note that it also returns the log determinant
+            return_dict["lambda_matrix"][:, self.var_num_list, self.covar_num_list], return_dict["second_order_ridge_pen_sum"], return_dict["first_order_ridge_pen_sum"], return_dict["param_ridge_pen_sum"] = bernstein_prediction_vectorized(self.params,
+                            input.index_select(1,self.covar_num_list), 
+                            #self.knots,
+                            self.degree, 
+                            self.spline_range[:, 0], 
+                            derivativ=0, 
+                            return_penalties=return_penalties, 
+                            calc_method=self.calc_method_bspline, 
+                            span_factor=self.span_factor, 
+                            span_restriction=self.span_restriction,
+                            covariate=covariate, 
+                            params_covariate=self.params_covariate, 
+                            covaraite_effect=self.covaraite_effect,
+                            penalize_towards=0, 
+                            order=self.spline_order,
+                            varying_degrees=False,
+                            params_a_mask=None,
+                            binom_n  = self.binom_n, 
+                            binom_n1 = self.binom_n1,
+                            binom_n2 = self.binom_n2)
 
         return_dict["output"] = return_dict["output"].unsqueeze_(2)
         return_dict["output"] = torch.bmm(return_dict["lambda_matrix"], return_dict["output"]).squeeze(2)
@@ -385,24 +374,16 @@ class Decorrelation(nn.Module):
 
     def forward(self, input, covariate=False, log_d = 0, inverse = False, return_log_d = False, return_penalties=False, return_scores_hessian=False):  
         
-        if not inverse:
-            if self.list_comprehension == True:
-                if return_scores_hessian == True:
-                        warnings.warn("Warning: return_scores_hessian not implemented for list comprehension. The der_lambda_matrix and der2_lambda_matrix will be zeros.")
-                return_dict = self.list_comprehension_forward(input, log_d, covariate, return_penalties=return_penalties)
-            elif self.vmap == True and self.number_variables > 2:
-                return_dict = self.vmap_forward(input, log_d, covariate, return_penalties=return_penalties)
-            else:
-                return_dict = self.for_loop_forward(input, log_d, covariate, inverse=False, return_penalties=return_penalties, return_scores_hessian=return_scores_hessian)
-        else:
-            if self.list_comprehension == True:
-                        warnings.warn("Warning: Inverse can only be computed iteratively using a for-loop. List comprehension is not implemented for inverse. Using for-loop instead. ")
+        if inverse == True or self.number_variables == 2 or self.vmap == False:
             return_dict = self.for_loop_forward(input, log_d, covariate, inverse=inverse, return_penalties=return_penalties, return_scores_hessian=return_scores_hessian)
-            
+        #elif self.vmap == True and self.number_variables > 2:
+        else:
+            return_dict = self.vmap_forward(input, log_d, covariate, return_penalties=return_penalties)
+                    
         return return_dict
 
     def __repr__(self):
-        return f"Decorrelation(degree={self.degree}, number_variables={self.number_variables}, spline_range={self.spline_range}, spline={self.spline}, span_factor={self.span_factor}, span_restriction={self.span_restriction}, number_covariates={self.number_covariates}, list_comprehension={self.list_comprehension})"
+        return f"Decorrelation(degree={self.degree}, number_variables={self.number_variables}, spline_range={self.spline_range}, spline={self.spline}, span_factor={self.span_factor}, span_restriction={self.span_restriction}, number_covariates={self.number_covariates}, vectorised_mapping={self.vmap})"
     
     
     

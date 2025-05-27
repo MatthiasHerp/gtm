@@ -8,9 +8,9 @@ import seaborn as sns
 import warnings
 
 
-from gtm.gtm_splines.bernstein_prediction import bernstein_prediction, compute_multivariate_bernstein_basis, restrict_parameters
+from gtm.gtm_splines.bernstein_basis import compute_multivariate_bernstein_basis, restrict_parameters
 from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized, compute_multivariate_bspline_basis
-from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
+from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction_vectorized, binomial_coeffs
 
 
 
@@ -54,10 +54,16 @@ class Transformation(nn.Module):
             self.spline_prediction = self.bspline_prediction_method
         elif spline == "bernstein":
             self.spline_prediction = self.bernstein_prediction_method
-            warnings.warn("Warning: Custom Spline Order is not implemented for Bernstein, only for B-Spline.")
+            warnings.warn("Warning: Varying Spline Degree for each Dimension is not implemented for Bernstein, only for B-Spline.")
         else:
             warnings.warn("Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default.")
         
+        if spline == "bernstein":
+            warnings.warn("Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct")
+            n = self.max_degree + 1
+            self.binom_n  = binomial_coeffs(n)#, device=self.device)
+            self.binom_n1 = binomial_coeffs(n-1)#, device=self.device)
+            self.binom_n2 = binomial_coeffs(n-2)#, device=self.device)
         
         ### Old
         # The following code ensures that:
@@ -164,50 +170,95 @@ class Transformation(nn.Module):
         return par_restricted_opts
     
     def create_return_dict_transformation(self, input):
-        return {"output": input.clone(),
-                "log_d": torch.zeros(input.size(), device=input.device),
+        return {"output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
+                "log_d": torch.zeros(input.size() if input.dim() > 1 else input.clone().unsqueeze(1), device=input.device),
                 "transformation_second_order_ridge_pen_sum": 0,
                 "second_order_ridge_pen_sum": 0,
                 "first_order_ridge_pen_sum": 0,
                 "param_ridge_pen_sum": 0,
                 "scores": 0,
                 "hessian": 0,
-                "output_first_derivativ": torch.zeros(input.size(), device=input.device),
-                "output_second_derivativ": torch.zeros(input.size(), device=input.device),
-                "output_third_derivativ": torch.zeros(input.size(), device=input.device)
+                "output_first_derivativ": torch.zeros(input.size() if input.dim() > 1 else input.unsqueeze(1).size(), device=input.device),
+                "output_second_derivativ": torch.zeros(input.size() if input.dim() > 1 else input.unsqueeze(1).size(), device=input.device),
+                "output_third_derivativ": torch.zeros(input.size() if input.dim() > 1 else input.unsqueeze(1).size(), device=input.device)
                 }
         
     def bspline_prediction_method(self, input, var_num, covariate, derivativ, return_penalties, monotonically_increasing=False, inverse=False):
     
-        return bspline_prediction(
-                self.params[var_num].unsqueeze(1)  if inverse==False else self.params_inverse[var_num].unsqueeze(1),
-                input[:,var_num],
-                self.degree[var_num] if not inverse else self.degree_inverse[var_num],
-                self.spline_range[:, var_num] if inverse==False else self.spline_range_inverse[:, var_num],                
-                monotonically_increasing=monotonically_increasing,
-                derivativ=derivativ,
-                return_penalties=return_penalties,
-                span_factor=self.span_factor,
-                span_restriction=self.span_restriction,
-                covariate=covariate,
-                params_covariate=self.params_covariate,
-                covaraite_effect=self.covaraite_effect,
-                calc_method=self.calc_method_bspline,
-                order=self.spline_order
-            )
+        #return bspline_prediction(
+        #        self.params[var_num].unsqueeze(1)  if inverse==False else self.params_inverse[var_num].unsqueeze(1),
+        #        input[:,var_num],
+        #        self.degree[var_num] if not inverse else self.degree_inverse[var_num],
+        #        self.spline_range[:, var_num] if inverse==False else self.spline_range_inverse[:, var_num],                
+        #        monotonically_increasing=monotonically_increasing,
+        #        derivativ=derivativ,
+        #        return_penalties=return_penalties,
+        #        span_factor=self.span_factor,
+        #        span_restriction=self.span_restriction,
+        #        covariate=covariate,
+        #        params_covariate=self.params_covariate,
+        #        covaraite_effect=self.covaraite_effect,
+        #        calc_method=self.calc_method_bspline,
+        #        order=self.spline_order
+        #    )
+        
+        params = self.params[var_num].unsqueeze(1) if inverse==False else self.params_inverse[var_num].unsqueeze(1)
+
+        params = restrict_parameters(params, #.contiguous().unsqueeze(1), 
+                                            covariate=covariate, degree=self.max_degree, monotonically_increasing=monotonically_increasing, device=input.device)
+        
+        return bspline_prediction_vectorized(
+                            params,
+                            input[:, var_num].unsqueeze(1), 
+                            self.knots_list[var_num] if inverse == False else self.padded_knots_inverse,
+                            self.degree[var_num] if not inverse else self.degree_inverse[var_num],
+                            spline_range=self.spline_range[:, var_num] if inverse==False else self.spline_range_inverse[:, var_num], 
+                            #monotonically_increasing=monotonically_increasing,
+                            derivativ=derivativ, 
+                            return_penalties=return_penalties, 
+                            calc_method=self.calc_method_bspline if inverse==False else self.calc_method_bspline_inverse, 
+                            span_factor=self.span_factor if inverse==False else self.span_factor_inverse, 
+                            span_restriction=self.span_restriction if inverse==False else self.span_restriction_inverse,
+                            covariate=covariate, 
+                            params_covariate=self.params_covariate, 
+                            covaraite_effect=self.covaraite_effect,
+                            penalize_towards=0, 
+                            order=self.spline_order,
+                            varying_degrees=False,
+                            params_a_mask=None,)
         
     def bernstein_prediction_method(self, input, var_num, covariate, derivativ, return_penalties, monotonically_increasing=False, inverse=False):
         
-        return bernstein_prediction(
-                            self.params[:, var_num] if inverse==False else self.params_inverse[:, var_num],
-                            input[:, var_num],
-                            self.degree,
-                            self.spline_range[:, var_num] if inverse==False else self.spline_range_inverse[:, var_num],
-                            monotonically_increasing=monotonically_increasing if inverse==False else self.monotonically_increasing_inverse,
+        #return bernstein_prediction(
+        #                    self.params[var_num] if inverse==False else self.params_inverse[var_num],
+        #                    input[:, var_num],
+        #                    self.max:degree,
+        #                    self.spline_range[:, var_num] if inverse==False else self.spline_range_inverse[:, var_num],
+        #                    monotonically_increasing=monotonically_increasing if inverse==False else self.monotonically_increasing_inverse,
+        #                    derivativ=derivativ,
+        #                    span_factor=self.span_factor if inverse==False else self.span_factor_inverse,
+        #                    covariate=covariate,
+        #                    params_covariate=self.params_covariate) 
+        params = self.params[var_num].unsqueeze(1) if inverse==False else self.params_inverse[var_num].unsqueeze(1)
+        
+        params = restrict_parameters(params, #.contiguous().unsqueeze(1), 
+                                            covariate=covariate, degree=self.max_degree, monotonically_increasing=monotonically_increasing, device=input.device)
+        
+        return bernstein_prediction_vectorized(
+                            params,
+                            input_a=input[:,var_num].unsqueeze(1),
+                            #knots=self.knots,
+                            degree=self.max_degree,
+                            spline_range=self.spline_range[:, var_num] if inverse==False else self.spline_range_inverse[:, var_num], 
+                            #monotonically_increasing=monotonically_increasing,
                             derivativ=derivativ,
-                            span_factor=self.span_factor if inverse==False else self.span_factor_inverse,
+                            span_factor=self.span_factor,
                             covariate=covariate,
-                            params_covariate=self.params_covariate) 
+                            params_covariate=False,
+                            return_penalties=return_penalties,
+                            binom_n=self.binom_n,
+                            binom_n1=self.binom_n1,
+                            binom_n2=self.binom_n2)#self.params_covariate[:, covar_num])  
         
         
     def generate_basis(self, input, covariate, inverse=False):
@@ -247,14 +298,15 @@ class Transformation(nn.Module):
 
         elif spline == "bspline":
             
-            self.multivariate_basis = compute_multivariate_bspline_basis(input, self.degree, self.spline_range, span_factor, covariate=covariate) #device=self.device)
+            self.multivariate_basis = compute_multivariate_bspline_basis(input, self.degree, self.spline_range, span_factor, knots=self.padded_knots, covariate=covariate) #device=self.device)
 
-            self.multivariate_basis_derivativ_1 = compute_multivariate_bspline_basis(input, self.degree, self.spline_range, span_factor, covariate=covariate, derivativ=1)# device=self.device)
+            self.multivariate_basis_derivativ_1 = compute_multivariate_bspline_basis(input, self.degree, self.spline_range, span_factor, knots=self.padded_knots, covariate=covariate, derivativ=1)# device=self.device)
 
             # second derivative required for score matching
             self.multivariate_basis_derivativ_2 = compute_multivariate_bspline_basis(input, self.degree,
                                                                                                self.spline_range,
                                                                                                span_factor,
+                                                                                               knots=self.padded_knots,
                                                                                                covariate=covariate,
                                                                                                derivativ=2)  
 
@@ -262,6 +314,7 @@ class Transformation(nn.Module):
             self.multivariate_basis_derivativ_3 = compute_multivariate_bspline_basis(input, self.degree,
                                                                                                self.spline_range,
                                                                                                span_factor,
+                                                                                               knots=self.padded_knots,
                                                                                                covariate=covariate,
                                                                                                derivativ=3) 
 
@@ -359,8 +412,13 @@ class Transformation(nn.Module):
             
             if self.number_covariates > 1:
                 warnings.warn("Warning: With for-loop computation only implemented with one or no covariate.")
+                
+            if inverse:
+                self.spline_prediction_current = self.bspline_prediction_method
+            else:
+                self.spline_prediction_current = self.spline_prediction
             
-            return_dict["output"][:, var_num], second_order_ridge_pen, _, _ = self.spline_prediction(input, 
+            return_dict["output"][:, var_num], second_order_ridge_pen, _, _ = self.spline_prediction_current(input, 
                                                       var_num, 
                                                       covariate, 
                                                       derivativ=0, 
@@ -368,11 +426,11 @@ class Transformation(nn.Module):
                                                       monotonically_increasing=True if inverse==False else False,
                                                       inverse=inverse)
             
-            return_dict["output_first_derivativ"][:, var_num], _, _, _ = self.spline_prediction(input, 
+            return_dict["output_first_derivativ"][:, var_num] = self.spline_prediction_current(input, 
                                                       var_num, 
                                                       covariate, 
                                                       derivativ=1, 
-                                                      return_penalties=True, 
+                                                      return_penalties=False, 
                                                       monotonically_increasing=True if inverse==False else False,
                                                       inverse=inverse)
             
@@ -399,43 +457,88 @@ class Transformation(nn.Module):
         if not hasattr(self, 'padded_knots') or self.padded_knots.device != input.device:
             self.padded_knots = self.padded_knots.to(input.device)
 
+        if self.spline == "bspline" or inverse== True: #Inverse always uses bspline
+            return_dict["output"], return_dict["second_order_ridge_pen_sum"] , _, _ = bspline_prediction_vectorized(padded_params, # if inverse==False else torch.vstack(self.params_inverse).T,
+                            input,
+                            self.padded_knots,
+                            self.max_degree, 
+                            self.spline_range[:, 0], # if inverse==False else self.spline_range_inverse[:, 0], 
+                            derivativ=0, 
+                            return_penalties=True, 
+                            calc_method=self.calc_method_bspline,
+                            span_factor=self.span_factor, 
+                            span_restriction=self.span_restriction,
+                            covariate=covariate, 
+                            params_covariate=self.params_covariate, 
+                            covaraite_effect=self.covaraite_effect,
+                            penalize_towards=0, 
+                            order=self.spline_order,
+                            varying_degrees=self.varying_degrees,
+                            params_a_mask=self.padded_params_mask)
+            
+            return_dict["log_d"] = bspline_prediction_vectorized(padded_params,# if inverse==False else torch.vstack(self.params_inverse).T, 
+                            input, 
+                            self.padded_knots, 
+                            self.max_degree, 
+                            self.spline_range[:, 0],# if inverse==False else self.spline_range_inverse[:, 0], 
+                            derivativ=1, 
+                            return_penalties=False, 
+                            calc_method=self.calc_method_bspline,
+                            span_factor=self.span_factor, 
+                            span_restriction=self.span_restriction,
+                            covariate=covariate, 
+                            params_covariate=self.params_covariate, 
+                            covaraite_effect=self.covaraite_effect,
+                            penalize_towards=0, 
+                            order=self.spline_order,
+                            varying_degrees=self.varying_degrees,
+                            params_a_mask=self.padded_params_mask)
+            
+        elif self.spline == "bernstein":
+            return_dict["output"], return_dict["second_order_ridge_pen_sum"] , _, _ = bernstein_prediction_vectorized(padded_params, # if inverse==False else torch.vstack(self.params_inverse).T,
+                            input,
+                            #self.padded_knots, #no different lengths option for bernstein polynomials
+                            self.max_degree, 
+                            self.spline_range[:, 0], # if inverse==False else self.spline_range_inverse[:, 0], 
+                            derivativ=0, 
+                            return_penalties=True, 
+                            calc_method=self.calc_method_bspline,
+                            span_factor=self.span_factor, 
+                            span_restriction=self.span_restriction,
+                            covariate=covariate, 
+                            params_covariate=self.params_covariate, 
+                            covaraite_effect=self.covaraite_effect,
+                            penalize_towards=0, 
+                            order=self.spline_order,
+                            varying_degrees=False,
+                            params_a_mask=None,
+                            binom_n  = self.binom_n, 
+                            binom_n1 = self.binom_n1,
+                            binom_n2 = self.binom_n2)
+            
+            return_dict["log_d"] = bernstein_prediction_vectorized(padded_params, # if inverse==False else torch.vstack(self.params_inverse).T, 
+                            input, 
+                            #self.padded_knots, 
+                            self.max_degree, 
+                            self.spline_range[:, 0], # if inverse==False else self.spline_range_inverse[:, 0], 
+                            derivativ=1, 
+                            return_penalties=False, 
+                            calc_method=self.calc_method_bspline,
+                            span_factor=self.span_factor, 
+                            span_restriction=self.span_restriction,
+                            covariate=covariate, 
+                            params_covariate=self.params_covariate, 
+                            covaraite_effect=self.covaraite_effect,
+                            penalize_towards=0, 
+                            order=self.spline_order,
+                            varying_degrees=False,
+                            params_a_mask=None,
+                            binom_n  = self.binom_n, 
+                            binom_n1 = self.binom_n1,
+                            binom_n2 = self.binom_n2)
+            
         
-        return_dict["output"], return_dict["second_order_ridge_pen_sum"] , _, _ = bspline_prediction_vectorized(padded_params if inverse==False else torch.vstack(self.params_inverse).T,
-                           input,
-                           self.padded_knots,
-                           self.max_degree, 
-                           self.spline_range[:, 0] if inverse==False else self.spline_range_inverse[:, 0], 
-                           derivativ=0, 
-                           return_penalties=True, 
-                           calc_method=self.calc_method_bspline,
-                           span_factor=self.span_factor, 
-                           span_restriction=self.span_restriction,
-                           covariate=covariate, 
-                           params_covariate=self.params_covariate, 
-                           covaraite_effect=self.covaraite_effect,
-                           penalize_towards=0, 
-                           order=self.spline_order,
-                           varying_degrees=self.varying_degrees,
-                           params_a_mask=self.padded_params_mask)
-        
-        return_dict["log_d"] = bspline_prediction_vectorized(padded_params if inverse==False else torch.vstack(self.params_inverse).T, 
-                           input, 
-                           self.padded_knots, 
-                           self.max_degree, 
-                           self.spline_range[:, 0] if inverse==False else self.spline_range_inverse[:, 0], 
-                           derivativ=1, 
-                           return_penalties=False, 
-                           calc_method=self.calc_method_bspline,
-                           span_factor=self.span_factor, 
-                           span_restriction=self.span_restriction,
-                           covariate=covariate, 
-                           params_covariate=self.params_covariate, 
-                           covaraite_effect=self.covaraite_effect,
-                           penalize_towards=0, 
-                           order=self.spline_order,
-                           varying_degrees=self.varying_degrees,
-                           params_a_mask=self.padded_params_mask)
-        
+            
         return_dict["log_d"] = torch.log(return_dict["log_d"])
         
         return return_dict    
@@ -460,16 +563,17 @@ class Transformation(nn.Module):
             if return_scores_hessian == True:
                 warnings.warn("Warning: return_scores_hessian is only available if store_basis is True.")
                             
-            if inverse or self.number_variables == 2:
-
+            if inverse or self.number_variables <= 2:
+            
                 return_dict = self.for_loop_forward(input, covariate, log_d = 0, inverse=inverse)
             else:
+                
                 return_dict = self.vmap_forward(input, covariate, log_d = 0, inverse=inverse)
         
         return return_dict    
 
-    def approximate_inverse(self, spline_inverse="bspline", degree_inverse=150, span_factor_inverse=0.2,
-                            input_covariate=False, num_samples=10000, device="cpu"):
+    def approximate_inverse(self, spline_inverse="bspline", degree_inverse=100, span_factor_inverse=torch.tensor(0.2),
+                            input_covariate=False, num_samples=40000, device="cpu"):
 
         #if self.initial_log_transform==True:
         #    input = torch.log(input+0.01)
@@ -521,6 +625,8 @@ class Transformation(nn.Module):
         self.params_inverse = nn.ParameterList(params_tensor)
         self.spline_inverse = spline_inverse
         self.degree_inverse = self.number_variables * [degree_inverse]
+        self.padded_knots_inverse = inv_trans.padded_knots
+        self.calc_method_bspline_inverse = "deBoor"
 
     def __repr__(self):
         return f"Transformation(degree={self.degree}, number_variables={self.number_variables}, spline_range={self.spline_range}, monotonically_increasing={self.monotonically_increasing}, spline={self.spline}, number_covariates={self.number_covariates})"

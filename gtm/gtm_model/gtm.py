@@ -14,7 +14,6 @@ from optuna.samplers import TPESampler
 import itertools
 
 import scipy
-from gtm.gtm_model.tm import TM
 
 
 class GTM(nn.Module):
@@ -26,7 +25,7 @@ class GTM(nn.Module):
                  degree_transformations=15, degree_decorrelation=20, span_factor=torch.tensor(0.1), span_restriction="reluler", #span_factor=torch.tensor(0.1)
                  number_covariates=False,
                  num_trans_layers=1,
-                 num_decorr_layers=3, list_comprehension=False, initial_log_transform=False,
+                 num_decorr_layers=3, initial_log_transform=False,
                  covaraite_effect="multiplicativ",
                  calc_method_bspline="deBoor",
                  affine_decorr_layer=False,
@@ -64,8 +63,6 @@ class GTM(nn.Module):
 
         self.number_covariates = number_covariates
 
-        self.list_comprehension = list_comprehension
-
         self.num_trans_layers = num_trans_layers
 
         self.initial_log_transform = initial_log_transform
@@ -100,18 +97,19 @@ class GTM(nn.Module):
                                     spline_range=self.decorrelation_spline_range, span_factor=self.span_factor,
                                     span_restriction=self.span_restriction, spline=self.spline_decorrelation,
                                     number_covariates=self.number_covariates,
-                                    list_comprehension = self.list_comprehension,
                                     covaraite_effect = self.covaraite_effect,
                                     calc_method_bspline = self.calc_method_bspline,
                                     spline_order = self.spline_order,
                                     affine_layer = self.affine_decorr_layer,
                                     degree_multi = self.degree_multi
                                                                     ) for i in range(self.number_decorrelation_layers)])
+            
+        self.subset_dimension=None
         
     
     def create_return_dict_nf_mctm(self, input):
-        return {"output": input.clone(),
-                "log_d": torch.zeros(input.size()).to(self.device),
+        return {"output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
+                "log_d": torch.zeros(input.size() if input.dim() > 1 else input.unsqueeze(1).size()).to(self.device),
                 "transformation_second_order_ridge_pen_global": 0,
                 "second_order_ridge_pen_global": 0,
                 "first_order_ridge_pen_global": 0,
@@ -125,6 +123,10 @@ class GTM(nn.Module):
     def forward(self, y, covariate=False, train=True, evaluate=True, return_scores_hessian=False, return_lambda_matrix = True):
         
         return_dict_nf_mctm = self.create_return_dict_nf_mctm(y)
+        
+        if self.subset_dimension is not None:
+            # if subset dimension is set then only use this dimension
+            y = y[:,self.subset_dimension].unsqueeze(1)
 
         if self.initial_log_transform==True:
             y = y + 0.01 #log(0) does not work
@@ -280,6 +282,16 @@ class GTM(nn.Module):
         
         if seperate_copula_training==True:
             self.transformation.params.requires_grad=False
+            
+        if self.spline_decorrelation == "bernstein":
+            for layer in self.decorrelation_layers:
+                layer.binom_n  = layer.binom_n.to(self.device)
+                layer.binom_n1 = layer.binom_n1.to(self.device) 
+                layer.binom_n2 = layer.binom_n2.to(self.device)
+        if self.spline_transformation == "bernstein":
+                self.transformation.binom_n  = self.transformation.binom_n.to(self.device)
+                self.transformation.binom_n1 = self.transformation.binom_n1.to(self.device) 
+                self.transformation.binom_n2 = self.transformation.binom_n2.to(self.device)      
         
         return_dict_model_training = train(self, train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, train_covariates=train_covariates, validate_covariates=validate_covariates, penalty_params=penalty_params, lambda_penalty_params=lambda_penalty_params, learning_rate=learning_rate, 
                      iterations=iterations, verbose=verbose, patience=patience, min_delta=min_delta, optimizer=optimizer, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix, max_batches_per_iter=max_batches_per_iter)
@@ -332,8 +344,18 @@ class GTM(nn.Module):
             for degree in degrees_try_list:
                 print("Starting run for data dim ",dimension," with degrees of ",degree)
                 try:
-                    tm_model = TM(degree=degree, spline_range=[self.transformation_spline_range[0][dimension],
-                                                            self.transformation_spline_range[1][dimension]])
+                    
+                    tm_model = GTM(number_variables=1,
+                             transformation_spline_range=[[self.transformation_spline_range[0][dimension]],
+                                                     [self.transformation_spline_range[1][dimension]]],
+                             num_decorr_layers=0,
+                             num_trans_layers=1,
+                            degree_transformations=[degree],
+                            spline_transformation=self.spline_transformation,
+                    )
+                    
+                    #tm_model = TM(degree=degree, spline_range=[self.transformation_spline_range[0][dimension],
+                    #                                        self.transformation_spline_range[1][dimension]])
                     tm_model.subset_dimension = dimension
             
                     train_dict = tm_model.__train__(train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, iterations=iterations, optimizer="LBFGS",
@@ -343,8 +365,8 @@ class GTM(nn.Module):
                     z_tilde = []
                     #y_train_all = []
                     for y_train in validate_dataloader:
-                        y_train_sub = y_train[:,tm_model.subset_dimension]
-                        z_tilde.append(tm_model.latent_space(y_train_sub))
+                        y_train_sub = y_train[:,tm_model.subset_dimension].unsqueeze(1)
+                        z_tilde.append(tm_model.after_transformation(y_train_sub).squeeze())
                         #y_train_all.append(y_train_sub)
                     z_tilde = torch.hstack(z_tilde).detach().numpy()
                     #y_train_all = torch.hstack(y_train_all).detach().numpy()
@@ -409,23 +431,24 @@ class GTM(nn.Module):
             
             z = torch.distributions.Normal(0, 1).sample((n_samples, self.number_variables)).to(device=self.device)
             
-            for i in range(self.number_decorrelation_layers -1, -1, -1):
+            if self.number_decorrelation_layers > 0:
+                for i in range(self.number_decorrelation_layers -1, -1, -1):
 
-                if ((i+1) % 2) == 0:
-                    # even
-                    z = (self.flip_matrix @ z.T).T
-                    # else:
-                    #    # odd
+                    if ((i+1) % 2) == 0:
+                        # even
+                        z = (self.flip_matrix @ z.T).T
+                        # else:
+                        #    # odd
 
-                return_dict = self.decorrelation_layers[i](z, covariate=covariate, return_log_d=False, return_penalties=False, inverse=True)
-                z = return_dict["output"]
+                    return_dict = self.decorrelation_layers[i](z, covariate=covariate, return_log_d=False, return_penalties=False, inverse=True)
+                    z = return_dict["output"]
 
-                if ((i+1) % 2) == 0:
-                    # even
-                    z = (self.flip_matrix @ z.T).T
-                    # else:
-                    #    # odd
-                    
+                    if ((i+1) % 2) == 0:
+                        # even
+                        z = (self.flip_matrix @ z.T).T
+                        # else:
+                        #    # odd
+                     
             if self.num_trans_layers > 0:
                 return_dict = self.transformation(z, covariate, new_input=True, inverse=True)
                 y = return_dict["output"]

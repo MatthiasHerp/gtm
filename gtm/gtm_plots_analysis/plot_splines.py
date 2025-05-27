@@ -5,7 +5,9 @@ from itertools import combinations
 import warnings
 import numpy as np
 import pandas as pd
-from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
+#from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
+from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
+from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction_vectorized
 
 def plot_splines(layer, y_train=None, covariate_exists=False, affine=False):
 
@@ -95,15 +97,37 @@ def plot_splines(layer, y_train=None, covariate_exists=False, affine=False):
                     else:
                         col_indices = lower_tri_indices[1][spline_num]
 
-                    output_splines[:,spline_num] = bspline_prediction(layer.params[:, spline_num],
-                                       data_span_vec[:, col_indices],
-                                       degree=layer.degree,
-                                       spline_range=torch.FloatTensor(layer.spline_range)[:, 0], #assume same polly range across variables
-                                       monotonically_increasing=False,
-                                       derivativ=0,
-                                       covariate=covariate_value,
-                                       params_covariate=layer.params_covariate[:, 0],
-                                       calc_method="deBoor") # hardcoded for only one covariate
+                    #output_splines[:,spline_num] = bspline_prediction(layer.params[:, spline_num],
+                    #                   data_span_vec[:, col_indices],
+                    #                   degree=layer.degree,
+                    #                   spline_range=torch.FloatTensor(layer.spline_range)[:, 0], #assume same polly range across variables
+                    #                   monotonically_increasing=False,
+                    #                   derivativ=0,
+                    #                   covariate=covariate_value,
+                    #                   params_covariate=layer.params_covariate[:, 0],
+                    #                   calc_method="deBoor") # hardcoded for only one covariate
+                    if layer.spline == "bspline":
+                        output_splines[:,spline_num] = bspline_prediction_vectorized(
+                                layer.params[:, spline_num].unsqueeze(1),
+                                data_span_vec[:, col_indices].unsqueeze(1),
+                                layer.knots,
+                                layer.degree, 
+                                layer.spline_range[:, 0], 
+                                derivativ=0, 
+                                return_penalties=False,
+                                varying_degrees=False) # hardcoded for only one covariate
+                    elif layer.spline == "bernstein":
+                        output_splines[:,spline_num] = bernstein_prediction_vectorized(
+                                layer.params[:, spline_num].unsqueeze(1),
+                                data_span_vec[:, col_indices].unsqueeze(1),
+                                #layer.knots,
+                                layer.degree, 
+                                layer.spline_range[:, 0], 
+                                derivativ=0, 
+                                return_penalties=False,
+                                binom_n=layer.binom_n,
+                                binom_n1=layer.binom_n1,
+                                binom_n2=layer.binom_n2) # hardcoded for only one covariate
                     results = results._append(pd.DataFrame({"y": data_span_vec.detach().numpy()[:, col_indices],
                                                            "z_tilde": output_splines.detach().numpy()[:, spline_num],
                                                            "covariate": cov_value,
@@ -125,16 +149,38 @@ def plot_splines(layer, y_train=None, covariate_exists=False, affine=False):
                 else:
                     params =  layer.params[:, spline_num]
                     degree = layer.degree
-                output_splines[:, spline_num] = bspline_prediction(params,#layer.params[:, spline_num],
-                                                            data_span_vec[:, col_indices],
-                                                            degree=degree,#layer.degree,
-                                                            spline_range=torch.FloatTensor(layer.spline_range)[:, 0],
-                                                            # assume same polly range across variables
-                                                            monotonically_increasing=False,
-                                                            derivativ=0,
-                                                            covariate=False,
-                                                            params_covariate=False,
-                                                            calc_method="deBoor")  # hardcoded for only one covariate
+                #output_splines[:, spline_num] = bspline_prediction(params,#layer.params[:, spline_num],
+                #                                            data_span_vec[:, col_indices],
+                #                                            degree=degree,#layer.degree,
+                #                                            spline_range=torch.FloatTensor(layer.spline_range)[:, 0],
+                #                                            # assume same polly range across variables
+                #                                            monotonically_increasing=False,
+                #                                            derivativ=0,
+                #                                            covariate=False,
+                #                                            params_covariate=False,
+                #                                            calc_method="deBoor")  # hardcoded for only one covariate
+                if layer.spline == "bspline":
+                    output_splines[:,spline_num] = bspline_prediction_vectorized(
+                                layer.params[:, spline_num].unsqueeze(1),
+                                data_span_vec[:, col_indices].unsqueeze(1),
+                                layer.knots,
+                                layer.degree, 
+                                layer.spline_range[:, 0], 
+                                derivativ=0, 
+                                return_penalties=False,
+                                varying_degrees=False) # hardcoded for only one covariate
+                elif layer.spline == "bernstein":
+                    output_splines[:,spline_num] = bernstein_prediction_vectorized(
+                                layer.params[:, spline_num].unsqueeze(1),
+                                data_span_vec[:, col_indices].unsqueeze(1),
+                                #layer.knots,
+                                layer.degree, 
+                                layer.spline_range[:, 0], 
+                                derivativ=0, 
+                                return_penalties=False,
+                                binom_n=layer.binom_n,
+                                binom_n1=layer.binom_n1,
+                                binom_n2=layer.binom_n2) # hardcoded for only one covariate
                 results = results._append(pd.DataFrame({"y": data_span_vec.detach().numpy()[:, col_indices],
                                                        "z_tilde": output_splines.detach().numpy()[:, spline_num],
                                                        "spline_num": spline_num}), ignore_index=True)
@@ -194,6 +240,9 @@ def plot_splines(layer, y_train=None, covariate_exists=False, affine=False):
             sns.lineplot(x="y", y="z_tilde", hue="covariate", data=results, ax = ax)
         else:
             sns.lineplot(x="y", y="z_tilde", data=results, ax = ax)
+            if layer.type == "transformation":
+                sns.lineplot(x="y", y="z_tilde_derivativ", data=results, ax=ax)
+                sns.lineplot(x="y_estimated", y="z_tilde", linestyle='--', data=results, ax=ax)
         ax.set_ylim(results["z_tilde"].min(), results["z_tilde"].max())
         ax.set_xlim(results["y"].min(), results["y"].max())
 

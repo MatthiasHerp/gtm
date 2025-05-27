@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from gtm.gtm_splines.splines_utils import adjust_ploynomial_range, ReLULeR, custom_sigmoid
+from gtm.gtm_splines.bernstein_basis import kron
 
 
 ################################################################################################################################################################################################################## 
@@ -127,7 +128,7 @@ def Naive_varying_degree(x, t, c, p, d
 ##################################################################################################################################################################################################################
  
 
-def Naive_Basis(x, spline_range, degree, span_factor,derivativ=0,order=3):
+def Naive_Basis(x, spline_range, degree, span_factor, knots, derivativ=0,order=3):
     #print("Naive_Basis spline_range", spline_range)
     #basic order is 3 (cubic spline) so that the third derivative is nonzero for score matching
     p = order
@@ -138,9 +139,9 @@ def Naive_Basis(x, spline_range, degree, span_factor,derivativ=0,order=3):
 
     distance_between_knots = (spline_range[1] - spline_range[0]) * (1+span_factor) / (n - 1)
 
-    knots = torch.linspace(spline_range[0] * (1+span_factor) - order * distance_between_knots,
-                           spline_range[1] * (1+span_factor) + order * distance_between_knots,
-                                     n + 4, dtype=torch.float32, device=x.device)
+    #knots = torch.linspace(spline_range[0] * (1+span_factor) - order * distance_between_knots,
+    #                       spline_range[1] * (1+span_factor) + order * distance_between_knots,
+    #                                 n + 4, dtype=torch.float32, device=x.device)
 
     t = knots
 
@@ -148,12 +149,13 @@ def Naive_Basis(x, spline_range, degree, span_factor,derivativ=0,order=3):
     return torch.vstack([B_derivativ_fixed_degree(x, p, i, t, derivativ=derivativ) for i in range(n)]).T
 
 
-def compute_multivariate_bspline_basis(input, degree, spline_range, span_factor, covariate=False, derivativ=0): 
+def compute_multivariate_bspline_basis(input, degree, spline_range, span_factor, knots, covariate=False, derivativ=0): 
     # We essentially do a tensor prodcut of two splines! : https://en.wikipedia.org/wiki/Bernstein_polynomial#Generalizations_to_higher_dimension
        
     bspline_basis_list = []
     for var_num in range(input.size(1)):
-        input_basis = Naive_Basis(x=input[:, var_num], degree=degree[var_num], spline_range=spline_range[:, var_num], span_factor=span_factor, derivativ=derivativ)
+        input_basis = Naive_Basis(x=input[:, var_num], degree=degree[var_num], spline_range=spline_range[:, var_num], knots=knots,#[:, var_num], 
+                                  span_factor=span_factor, derivativ=derivativ)
         if covariate is not False:
             #covariate are transformed between 0 and 1 before inputting into the model
             # dont take the derivativ w.r.t to the covariate when computing jacobian of the transformation
@@ -374,10 +376,10 @@ def run_deBoor_fixed_degrees(x, t, c, p, d):
 # Bspline Prediction using the deBoor algorithm
 def bspline_prediction_vectorized(params_a, input_a, knots,
                        degree, spline_range, monotonically_increasing=False, 
-                       derivativ=0, return_penalties=False, calc_method="Naive_Basis",#'Naive_Basis', #before: deBoor 
+                       derivativ=0, return_penalties=False, calc_method="deBoor",#'Naive_Basis', #before: deBoor 
                        span_factor=0.1, span_restriction="reluler",
                        covariate=False, params_covariate=False, covaraite_effect="multiplicativ",
-                       penalize_towards=0, order=3, varying_degrees=True,params_a_mask=None): #device=None
+                       penalize_towards=0, order=3, varying_degrees=True, params_a_mask=None): #device=None
 
     input_a_clone = input_a
     

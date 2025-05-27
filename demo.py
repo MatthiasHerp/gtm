@@ -1,7 +1,6 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
 from gtm.gtm_model.gtm import GTM
-from gtm.gtm_model.tm import TM
 
 
 if __name__ == "__main__":
@@ -31,14 +30,19 @@ if __name__ == "__main__":
     
     ###### 1. Data Driven manner to find the optimal degrees for the trransformation layer splines ######
     model = GTM(
-                transformation_spline_range=list([[-10], [10]]), 
-                degree_decorrelation=10,
-                degree_transformations=10,
-                num_decorr_layers=3,
-                num_trans_layers=1,
-                number_variables=3,
-                calc_method_bspline="deBoor",
-                device="cpu") 
+        transformation_spline_range=list([[-10], [10]]), 
+        decorrelation_spline_range=list([[-10], [10]]), 
+        degree_decorrelation=20,
+        degree_transformations=15,
+        num_decorr_layers=4,
+        num_trans_layers=1,
+        number_variables=3,
+        calc_method_bspline="deBoor",
+        spline_decorrelation="bernstein", #"bspline", #"bernstein",
+        spline_transformation="bernstein", #"bspline", #"bernstein",
+        affine_decorr_layer=False,
+        span_restriction="reluler",
+        device="cpu") 
     # somehow the model with the vectorised version only works with 3 dimensions minimum due to the vectorisation (makes sense) TODO: need to solve that
     
     varying_degree_transformation = True
@@ -63,7 +67,7 @@ if __name__ == "__main__":
     
 
     ###### 2. Hyperparameter Tune the models penalties ######
-    hyperparameter_tune = True
+    hyperparameter_tune = False
     if hyperparameter_tune == True:
         study = model.hyperparameter_tune_penalties( 
                                         train_dataloader=dataloader, 
@@ -126,14 +130,19 @@ if __name__ == "__main__":
     
     # Create the same model structure
     model2 = GTM(
-                transformation_spline_range=list([[-10], [10]]), 
-                degree_decorrelation=10,
-                degree_transformations=optimal_degrees_transformation,
-                num_decorr_layers=3,
-                num_trans_layers=1,
-                number_variables=3,
-                calc_method_bspline="deBoor",
-                device="cpu") 
+    transformation_spline_range=list([[-10], [10]]), 
+    decorrelation_spline_range=list([[-10], [10]]), 
+    degree_decorrelation=20,
+    degree_transformations=15,
+    num_decorr_layers=4,
+    num_trans_layers=1,
+    number_variables=3,
+    calc_method_bspline="deBoor",
+    spline_decorrelation="bernstein", #"bspline", #"bernstein",
+    spline_transformation="bernstein", #"bspline", #"bernstein",
+    affine_decorr_layer=False,
+    span_restriction="reluler",
+    device="cpu") 
 
     # Load saved weights
     model2 = torch.load("./model_state_dict.pth")
