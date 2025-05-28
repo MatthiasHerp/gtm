@@ -84,7 +84,8 @@ class GTM(nn.Module):
                                      initial_log_transform=self.initial_log_transform,
                                      calc_method_bspline=self.calc_method_bspline,
                                      span_restriction=self.span_restriction,
-                                     spline_order = self.spline_order) 
+                                     spline_order = self.spline_order,
+                                     device=device) 
             
         if self.num_trans_layers == 2:
             warnings.warn("Warning: model is only implemented to have one transformation layer.")
@@ -101,7 +102,8 @@ class GTM(nn.Module):
                                     calc_method_bspline = self.calc_method_bspline,
                                     spline_order = self.spline_order,
                                     affine_layer = self.affine_decorr_layer,
-                                    degree_multi = self.degree_multi
+                                    degree_multi = self.degree_multi,
+                                    device=device
                                                                     ) for i in range(self.number_decorrelation_layers)])
             
         self.subset_dimension=None

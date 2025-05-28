@@ -11,21 +11,23 @@ from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction
 class Decorrelation(nn.Module):
     def __init__(self, degree, number_variables, spline_range, spline="bspline", span_factor=torch.tensor(0.1), span_restriction="reluler",
                  number_covariates=False, covaraite_effect="multiplicativ", calc_method_bspline="deBoor",
-                 affine_layer=False, degree_multi=False, spline_order=3):
+                 affine_layer=False, degree_multi=False, spline_order=3, device="cpu"):
         super().__init__()
         self.type = "decorrelation"
         self.degree  = degree
         self.number_variables = number_variables
         self.spline_range = torch.FloatTensor(spline_range)
+        
+        self.device = device
 
         self.num_lambdas = number_variables * (number_variables-1) / 2
         self.spline = spline
         if spline == "bernstein":
             warnings.warn("Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct")
             n = self.degree + 1
-            self.binom_n  = binomial_coeffs(n)#, device=self.device)
-            self.binom_n1 = binomial_coeffs(n-1)#, device=self.device)
-            self.binom_n2 = binomial_coeffs(n-2)#, device=self.device)
+            self.binom_n  = binomial_coeffs(n, device=self.device)
+            self.binom_n1 = binomial_coeffs(n-1, device=self.device)
+            self.binom_n2 = binomial_coeffs(n-2, device=self.device)
 
         self.span_factor = span_factor
 
@@ -85,6 +87,8 @@ class Decorrelation(nn.Module):
                             self.spline_range[1,0] + number_of_bound_knots_per_side * distance_between_knots_in_bounds,
                             self.degree + 2 * number_of_bound_knots_per_side, # 2* because of two sides
                             dtype=torch.float32)
+        
+        self.knots = self.knots.to(self.device)
         
         ##### Update
         #if self.spline_order == 2:

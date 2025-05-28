@@ -8,7 +8,7 @@ setup(
     author='Matthias Herp',
     install_requires=[
         "matplotlib==3.8.0",
-        "numpy==2.2.6",
+        "numpy>=1.22,<2.0",
         "optuna==3.5.0",
         "pandas==2.2.3",
         "scipy==1.15.3",

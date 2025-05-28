@@ -17,13 +17,17 @@ from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction
 
 class Transformation(nn.Module):
     def __init__(self, degree, number_variables, spline_range, monotonically_increasing=True, spline="bspline", span_factor=torch.tensor(0.1),
-                 number_covariates=False, initial_log_transform=False, calc_method_bspline="deBoor",span_restriction="reluler", spline_order=3): #device=None
+                 number_covariates=False, initial_log_transform=False, calc_method_bspline="deBoor",span_restriction="reluler", spline_order=3, device="cpu"): #device=None
         super().__init__()
+        
+        self.device = device
+        
         self.type = "transformation"
         self.degree  = degree
         self.number_variables = number_variables
-        self.spline_range = torch.FloatTensor(spline_range)
+        self.spline_range = torch.FloatTensor(spline_range) if isinstance(spline_range, list) else spline_range.cpu()
         self.monotonically_increasing = monotonically_increasing
+    
         
         # For padding!
         self.max_degree = max(self.degree)
@@ -61,9 +65,9 @@ class Transformation(nn.Module):
         if spline == "bernstein":
             warnings.warn("Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct")
             n = self.max_degree + 1
-            self.binom_n  = binomial_coeffs(n)#, device=self.device)
-            self.binom_n1 = binomial_coeffs(n-1)#, device=self.device)
-            self.binom_n2 = binomial_coeffs(n-2)#, device=self.device)
+            self.binom_n  = binomial_coeffs(n, device=self.device)
+            self.binom_n1 = binomial_coeffs(n-1, device=self.device)
+            self.binom_n2 = binomial_coeffs(n-2, device=self.device)
         
         ### Old
         # The following code ensures that:
@@ -92,6 +96,13 @@ class Transformation(nn.Module):
         self.padded_knots = torch.vstack(
             self.knots_list
             ).T
+        
+        # Move all to GPU
+        self.knots_list = [t.cuda() for t in self.knots_list]
+        
+        self.padded_knots = self.padded_knots.to(self.device)
+        
+        self.spline_range = self.spline_range.to(self.device)
         
         ##### Update
         ## Defining knots for vectorized compute
@@ -265,13 +276,13 @@ class Transformation(nn.Module):
 
         if not inverse:
             span_factor = self.span_factor
-            spline_range = torch.FloatTensor(self.spline_range).to(input.device)
+            #spline_range = torch.FloatTensor(self.spline_range).to(input.device)
             #degree = self.degree
             degree = self.degree[0]
             spline = self.spline
         else:
             span_factor = self.span_factor_inverse
-            spline_range = torch.FloatTensor(self.spline_range_inverse).to(input.device)
+            #spline_range = torch.FloatTensor(self.spline_range_inverse).to(input.device)
             #degree = self.degree_inverse
             degree = self.degree_inverse[0]
             spline = self.spline_inverse
@@ -607,19 +618,22 @@ class Transformation(nn.Module):
 
         inv_trans = Transformation(degree=self.number_variables * [degree_inverse],
                                    number_variables=self.number_variables,
-                                   spline_range=spline_range_inverse,
+                                   spline_range=spline_range_inverse.clone(),
                                    monotonically_increasing=self.monotonically_increasing_inverse,
                                    spline=spline_inverse,
                                    number_covariates=self.number_covariates,
-                                   span_restriction=self.span_restriction_inverse)
+                                   span_restriction=self.span_restriction_inverse,
+                                   device=device)
 
         inv_trans.generate_basis(input=output_space.detach(),covariate=covariate_space,inverse=False)
         
         params_tensor = inv_trans.params
         
         for num_var in range(len(inv_trans.params)):
-            res = np.linalg.lstsq(inv_trans.multivariate_basis[:,:,num_var].detach().numpy(), input_space[:,num_var].detach().numpy(), rcond=None)
+            res = np.linalg.lstsq(inv_trans.multivariate_basis[:,:,num_var].cpu().detach().numpy(), input_space[:,num_var].cpu().detach().numpy(), rcond=None)
             params_tensor[num_var] = nn.Parameter(torch.tensor(res[0], dtype=torch.float32))
+            
+        params_tensor = params_tensor.to(device)
 
         self.spline_range_inverse = spline_range_inverse
         self.params_inverse = nn.ParameterList(params_tensor)
