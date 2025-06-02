@@ -274,7 +274,7 @@ class GTM(nn.Module):
     def __train__(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), adaptive_lasso_weights_matrix = False,
                   lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=False, patience=5, min_delta=1e-7,
           optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", ema_decay=False, seperate_copula_training=False,
-          max_batches_per_iter=None):
+          max_batches_per_iter=False):
 
         if lambda_penalty_params is not False:
             lambda_penalty_params = lambda_penalty_params.to(self.device)
@@ -304,7 +304,7 @@ class GTM(nn.Module):
         return return_dict_model_training
     
     def pretrain_tranformation_layer(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=False, patience=5, min_delta=1e-7, return_plot=True,
-          optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", max_batches_per_iter=None):
+          optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", max_batches_per_iter=False):
         
         optimizer='LBFGS'
         warnings.warn("Optimiser for pretrain_tranformation_layer is always LBFGS. If this is an issue change the code.")

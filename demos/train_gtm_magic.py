@@ -81,9 +81,6 @@ if __name__ == "__main__":
                 # train the joint model
                 _ = model.__train__(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, 
                                     iterations=1000, optimizer="LBFGS",
-                                    penalty_params=penalty_params, max_batches_per_iter=False)
+                                    penalty_params=penalty_params)
                 
-                torch.save(model, 
-                        "magic_" + "group_" 
-                        + group + "decorr_" 
-                        + num_decorr_layers + "_gtm_state_dict.pth")
+                torch.save(model, "magic_" + "group_" + group + "decorr_" + str(num_decorr_layers) + "_gtm_state_dict.pth")
