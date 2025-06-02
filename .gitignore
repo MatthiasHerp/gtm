@@ -5,9 +5,9 @@ __pycache__/
 .idea
 *.pyc
 *.db
-*.pth
 demos/bspline_testing.ipynb
 demos/bernstein_polynomial_testing.ipynb
 *Dockerfile_torch_gtm
 *shell_push_backup_to_scratch_hydra.zsh
+*shell_pull_scratch_to_backup_hydra.zsh
 **/*copy*

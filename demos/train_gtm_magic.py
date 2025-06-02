@@ -2,6 +2,7 @@ from gtm import *
 from demos.load_magic_data_helpers import *
 from demos.dataset_helpers import Generic_Dataset
 from torch.utils.data import DataLoader
+import os
 
 if __name__ == "__main__":
     
@@ -80,4 +81,4 @@ if __name__ == "__main__":
                                     iterations=1000, optimizer="LBFGS",
                                     penalty_params=penalty_params)
                 
-                torch.save(model, "magic_" + "group_" + group + "decorr_" + str(num_decorr_layers) + "_gtm_state_dict.pth")
+                torch.save(model, os.path.join("demos", "models", f"magic_group_{group}_decorr_{num_decorr_layers}_gtm_state_dict.pth"))
