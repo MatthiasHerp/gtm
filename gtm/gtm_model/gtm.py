@@ -527,7 +527,7 @@ class GTM(nn.Module):
                   adaptive_lasso_weights_matrix = False,
                   lambda_penalty_param=False, learning_rate=1, iterations=2000, patience=5, min_delta=1e-7,
           optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", seperate_copula_training=False,
-          max_batches_per_iter=None, pretrained_transformation_layer=False, cross_validation_folds=False):
+          max_batches_per_iter=False, pretrained_transformation_layer=False, cross_validation_folds=False):
     
         import copy
         
