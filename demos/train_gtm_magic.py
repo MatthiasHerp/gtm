@@ -38,9 +38,9 @@ if __name__ == "__main__":
                 model = GTM(
                             transformation_spline_range=list([[-poly_span_abs], [poly_span_abs]]), 
                             decorrelation_spline_range=list([[-poly_span_abs], [poly_span_abs]]), 
-                            degree_decorrelation=[40],
-                            degree_transformations=[variable_degree_list],
-                            num_decorr_layers=[num_decorr_layers],
+                            degree_decorrelation=40,
+                            degree_transformations=variable_degree_list,
+                            num_decorr_layers=num_decorr_layers,
                             num_trans_layers=1,
                             number_variables=10,
                             spline_decorrelation="bspline",

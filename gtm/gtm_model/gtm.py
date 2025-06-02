@@ -527,7 +527,7 @@ class GTM(nn.Module):
                   adaptive_lasso_weights_matrix = False,
                   lambda_penalty_param=False, learning_rate=1, iterations=2000, patience=5, min_delta=1e-7,
           optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", seperate_copula_training=False,
-          max_batches_per_iter=None, pretrained_transformation_layer=False):
+          max_batches_per_iter=None, pretrained_transformation_layer=False, cross_validation_folds=False):
     
         import copy
         
@@ -564,7 +564,7 @@ class GTM(nn.Module):
                                                     objective_type=objective_type,
                                                     max_batches_per_iter=max_batches_per_iter)
                 
-                if self.cross_validation_folds == False:
+                if cross_validation_folds == False:
                     #self.pretrained_transformation_layer_model = copy.deepcopy(gtm_tuning)
                     self.pretrained_transformation_layer_model_state_dict = gtm_tuning.state_dict()
                 
@@ -633,7 +633,7 @@ class GTM(nn.Module):
                                       lambda_penalty_mode="square", 
                                       objective_type="negloglik", 
                                       seperate_copula_training=False,
-                                      max_batches_per_iter=None,
+                                      max_batches_per_iter=False,
                                         tuning_mode="optuna",
                               cross_validation_folds=False,
                               random_state_KFold=42,
@@ -727,11 +727,11 @@ class GTM(nn.Module):
                                                                         adaptive_lasso_weights_matrix,
                                                                         lambda_penalty_params_opt, learning_rate, iterations, patience, min_delta, 
                                                                         optimizer, lambda_penalty_mode, objective_type, seperate_copula_training, max_batches_per_iter,
-                                                                        pretrained_transformation_layer)
+                                                                        pretrained_transformation_layer, cross_validation_folds)
                     
                     return target
                 else:
-                    warnings.warn("cross validation based hyperparameter tuning is not oimplemented yet based on dataloaders")
+                    warnings.warn("cross validation based hyperparameter tuning is not implemented yet based on dataloaders")
                     ## Perform cross-validation
                     #for fold, (train_idx, val_idx) in enumerate(kf.split(dataset)):
                     #    print(f"Fold {fold + 1}: Train size = {len(train_idx)}, Val size = {len(val_idx)}")
