@@ -378,13 +378,17 @@ class GTM(nn.Module):
                     #print(pv)
                     #plt.hist(y_train_all,bins=100)
                     #plt.hist(z_tilde,bins=100)
+                    #plt.show()
                     #plt.hist(z_tilde,bins=100)
-                    if pv >= 0.01:
+                    if pv >= 0.05:
                     
                         print("pvalue is ",pv," for data dim ",dimension," with degrees of ",degree)
                         
                         optimal_degree.append(degree)
                         optimal_degree_pvalue.append(pv)
+                        
+                        plt.hist(z_tilde,bins=100)
+                        plt.show()
                         
                         # for next loop iteration to not always plot
                         pv = 0 

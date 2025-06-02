@@ -12,16 +12,14 @@ if __name__ == "__main__":
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 
                 if group == "h":
-                    variable_degree_list = [60, 60, 60, 60, 45, 105, 105, 60, 60, 75]
+                    variable_degree_list = [20, 35, 10, 10, 5, 30, 30, 40, 40, 10]
                 elif group == "g":
-                    variable_degree_list = [150, 150, 30, 45, 60, 60, 45, 60, 75, 30]
-
-                poly_span_abs= 15
+                    variable_degree_list = [145, 150, 15, 5, 10, 30, 55, 60, 150, 10]
                 
                 y_train, y_validate, y_test = load_magic_data(group=group,
                                                             train_portion=2/3,
                                                             data_dims=10,
-                                                            poly_span_abs=poly_span_abs,
+                                                            poly_span_abs=12,
                                                             cross_validation_folds=5,
                                                             validation_fold_index=4,
                                                             split_random_state=25)
@@ -36,8 +34,7 @@ if __name__ == "__main__":
                 dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
                 
                 model = GTM(
-                            transformation_spline_range=list([[-poly_span_abs], [poly_span_abs]]), 
-                            decorrelation_spline_range=list([[-poly_span_abs], [poly_span_abs]]), 
+                            transformation_spline_range=list([[-15], [15]]), 
                             degree_decorrelation=40,
                             degree_transformations=variable_degree_list,
                             num_decorr_layers=num_decorr_layers,
@@ -60,8 +57,8 @@ if __name__ == "__main__":
                                             lambda_penalty_params = [0],
                                             adaptive_lasso_weights_matrix=False,
                                             iterations=1000, 
-                                            patience=5, 
-                                            min_delta=1e-7, 
+                                            patience=20, 
+                                            min_delta=1e-8, 
                                             optimizer='LBFGS', 
                                             tuning_mode="optuna",
                                             device=device,

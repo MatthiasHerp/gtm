@@ -98,7 +98,7 @@ class Transformation(nn.Module):
             ).T
         
         # Move all to GPU
-        self.knots_list = [t.cuda() for t in self.knots_list]
+        self.knots_list = [t.to(self.device) for t in self.knots_list]
         
         self.padded_knots = self.padded_knots.to(self.device)
         
