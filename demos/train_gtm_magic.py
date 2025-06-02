@@ -5,12 +5,9 @@ from torch.utils.data import DataLoader
 
 if __name__ == "__main__":
     
-    num_decorr_layers = 3
-    group="h"
-    
-    for depth in [3, 4, 5, 6, 7, 8, 9]:
+    for num_decorr_layers in [3, 4, 5, 6, 7, 8, 9]:
         for group in ["h", "g"]:
-                print("Running with depth:", depth, "group:", group, "num_decorr_layers:", num_decorr_layers)
+                print("Running for group:", group, " with num_decorr_layers:", num_decorr_layers)
                 
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 
@@ -43,7 +40,7 @@ if __name__ == "__main__":
                             decorrelation_spline_range=list([[-poly_span_abs], [poly_span_abs]]), 
                             degree_decorrelation=[40],
                             degree_transformations=[variable_degree_list],
-                            num_decorr_layers=num_decorr_layers,
+                            num_decorr_layers=[num_decorr_layers],
                             num_trans_layers=1,
                             number_variables=10,
                             spline_decorrelation="bspline",
