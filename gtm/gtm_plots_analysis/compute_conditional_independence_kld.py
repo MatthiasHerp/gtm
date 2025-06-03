@@ -32,7 +32,7 @@ def compute_conditional_independence_kld(self,
         elif evaluation_data_type == "samples_from_model":
             evaluation_data = self.sample(sample_size).detach()
             if copula_only == True:
-                evaluation_data = self.after_transformation(evaluation_data)
+                evaluation_data = self.after_transformation(evaluation_data).detach()
                 
 
         if copula_only == True:
@@ -140,6 +140,9 @@ def compute_conditional_independence_kld(self,
         
         if copula_only == True:
             self.num_trans_layers = 1
+        
+        sub_kld_summary_statistics.reset_index(inplace=True)
+        
         
         return sub_kld_summary_statistics
             
