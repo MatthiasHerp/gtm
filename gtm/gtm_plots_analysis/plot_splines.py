@@ -9,7 +9,7 @@ import pandas as pd
 from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
 from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction_vectorized
 
-def plot_splines(layer, y_train=None, covariate_exists=False, affine=False):
+def plot_splines(layer, covariate_exists=False, affine=False):
 
     #num_variables = layer.number_variables
     #num_splines = int(num_variables * (num_variables-1) / 2)
@@ -17,8 +17,8 @@ def plot_splines(layer, y_train=None, covariate_exists=False, affine=False):
     #num_variables = layer.number_variables
 
     if layer.type == "transformation":
-        poly_min = y_train.min(0).values
-        poly_max = y_train.max(0).values
+        poly_min = torch.FloatTensor(layer.spline_range)[0,:] #y_train.min(0).values
+        poly_max = torch.FloatTensor(layer.spline_range)[1,:] #y_train.max(0).values
 
         num_variables = layer.number_variables
         num_splines = num_variables

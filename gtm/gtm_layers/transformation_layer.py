@@ -155,6 +155,8 @@ class Transformation(nn.Module):
         #self.store_basis = True
         self.store_basis_training = False
         #self.calc_method_bspline = "deBoor" #"deBoor" #"deBoor" #"Naive"
+        
+        self.params_inverse = None
 
     def compute_starting_values(self):
         """

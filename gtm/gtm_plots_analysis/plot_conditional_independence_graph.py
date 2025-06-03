@@ -2,7 +2,8 @@ import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 
-def plot_graph_conditional_independencies(abs_array, gene_names, min_abs_mean=0.1, storge=None):
+def plot_graph_conditional_independencies(abs_array, gene_names, min_abs_mean=0.1, storge=None, 
+                                          pos_list=None, pos_tuple_list=None, k=1.5, seed_graph=42):
     edge_array = np.tril(abs_array,-1)
     edge_array[edge_array < min_abs_mean] = 0
 
@@ -24,7 +25,14 @@ def plot_graph_conditional_independencies(abs_array, gene_names, min_abs_mean=0.
     #Old
     plt.figure(figsize=(12,8))
 
-    pos = nx.spring_layout(G) #shell, spectral, spring layout as alternative
+    pos = nx.spring_layout(G, weight="weight",  seed=seed_graph,
+                           k=k
+                           )
+    
+    if pos_list is not None:
+        for i in range(len(pos_list)):
+            pos[pos_list[i]] = pos_tuple_list[i]
+    
     nx.draw_networkx_nodes(G,pos,
                            nodelist=nodelist,
                            node_size=5000,

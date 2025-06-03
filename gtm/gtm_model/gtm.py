@@ -16,6 +16,15 @@ import itertools
 import scipy
 
 
+from gtm.gtm_plots_analysis.plot_densities import plot_densities
+from gtm.gtm_plots_analysis.plot_marginals import plot_marginals
+from gtm.gtm_plots_analysis.plot_metric_hist import plot_metric_hist
+from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
+from gtm.gtm_plots_analysis.plot_splines import plot_splines
+from gtm.gtm_plots_analysis.plot_conditional_independence_graph import plot_graph_conditional_independencies
+from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import plot_graph_conditional_independencies_with_pairplots
+
+
 class GTM(nn.Module):
     def __init__(self, 
                  number_variables,
@@ -442,6 +451,11 @@ class GTM(nn.Module):
 
     def sample(self, n_samples, covariate=False):
         
+        # check if transformation contains params_inverse
+        if self.transformation.params_inverse is None:
+            warnings.warn("Transformation layer does not have an inverse. Inverse is approximated")
+            self..approximate_transformation_inverse()
+        
         with torch.no_grad():
             
             z = torch.distributions.Normal(0, 1).sample((n_samples, self.number_variables)).to(device=self.device)
@@ -802,4 +816,128 @@ class GTM(nn.Module):
                                         copula_only,
                                         min_val,
                                         max_val)
-                
+        
+    def plot_densities(self,data,covariate=False,x_lim=None,y_lim=None,density_plot=True):
+        plot_densities(data=data, 
+                       covariate=covariate, 
+                       x_lim=x_lim, 
+                       y_lim=y_lim, 
+                       density_plot=density_plot)
+        
+    def plot_marginals(self, data, covariate=False, names=False, y_lim=False):
+        plot_marginals(data, covariate=covariate, names=names, y_lim=y_lim)
+        
+    def plot_splines(self,layer_type="transformation",decorrelation_layer_number=0):
+        if layer_type == "transformation":
+            layer = self.transformation
+        elif layer_type == "decorrelation":
+            if decorrelation_layer_number >= self.number_decorrelation_layers:
+                raise ValueError("decorrelation_layer_number exceeds the number of decorrelation layers.")
+            layer = self.decorrelation_layers[decorrelation_layer_number]
+        else:
+            raise ValueError("layer_type must be either 'transformation' or 'decorrelation'.")
+        
+        plot_splines(layer, covariate_exists=False, affine=False)
+        
+    def plot_conditional_dependence_structure(self, 
+                                              data, 
+                                              dependence_metric_plotting="pseudo_conditional_correlation", 
+                                              conditional_independence_table=False,
+                                              dependence_metric_threshholding=False,
+                                              minimum_dependence_threshold=0, 
+                                              after_marginal_transformation=False,
+                                              show_colorbar=True,
+                                              hide_axis_info=False,
+                                              sub_title_fontsize=10,
+                                              x_lim=None, 
+                                              y_lim=None):
+        if dependence_metric_plotting == "pseudo_conditional_correlation":
+            metric = self.compute_correlation_matrix(data)
+            metric_type = "matrix"
+            label_metric="Pseudo Conditional Correlation"
+        elif dependence_metric_plotting == "offdiagonal_precision_matrix":
+            metric = self.compute_precision_matrix(data)
+            metric_type = "matrix"
+            label_metric="Off-Diagonal Precision Matrix"
+        else:
+            raise ValueError("Unknown dependence metric. Please use 'pseudo_conditional_correlation' or 'offdiagonal_precision_matrix'.")
+        
+        if minimum_dependence_threshold > 0 and conditional_independence_table is not False and dependence_metric_threshholding is not False:
+            significant_dependence_pairs = []
+            threshholding_metric_values = []
+            
+            significant_subset = conditional_independence_table[conditional_independence_table[dependence_metric_threshholding] > minimum_dependence_threshold]
+            significant_subset = significant_subset.sort_values(dependence_metric_threshholding,ascending=False)
+
+            for index, row in significant_subset.iterrows():
+                significant_dependence_pairs.append([int(row["var_col"]), int(row["var_row"])])
+                threshholding_metric_values.append(row[dependence_metric_threshholding])
+            strength_name = dependence_metric_threshholding
+        else:
+            significant_dependence_pairs = False
+            threshholding_metric_values = False
+            strength_name = ""
+            
+        if after_marginal_transformation == True:
+            data_plotting = self.after_transformation(data).detach()
+        else:
+            data_plotting = data
+        
+        plot_metric_scatter(data=data_plotting, metric=metric, covariate=False, x_lim=x_lim, y_lim=y_lim, metric_type=metric_type, 
+                        pairs=significant_dependence_pairs, strength_value=threshholding_metric_values, 
+                        strength_name=strength_name, show_colorbar=show_colorbar, hide_axis_info=hide_axis_info, sub_title_fontsize=sub_title_fontsize,
+                        after_marginal_transformation=after_marginal_transformation, label_metric=label_metric)
+        
+    def plot_conditional_dependence_graph(self, conditional_independence_table, 
+                                              dependence_metric="iae", 
+                                              minimum_dependence_threshold=0, 
+                                              pair_plots=False,
+                                              dependence_metric_plotting="pseudo_conditional_correlation", 
+                                              data=False, 
+                                              after_marginal_transformation=False,
+                                              names=False,
+                                              lim_axis_pairplots=[-18, 18],
+                                              pos_list=None, 
+                                              pos_tuple_list=None, 
+                                              k=1.5, 
+                                              seed_graph=42
+                                              ):
+        if names is False:
+            names = list(range(self.number_variables))
+        
+        ci_matrix = torch.zeros([10,10])
+        for row in conditional_independence_table.iterrows():
+            row = row[1]
+            ci_matrix[int(row["var_row"]),int(row["var_col"])] = row[dependence_metric]
+
+        if pair_plots is False:
+
+            plot_graph_conditional_independencies(ci_matrix, 
+                                                gene_names=names, 
+                                                min_abs_mean=minimum_dependence_threshold,
+                                                pos_list=pos_list, pos_tuple_list=pos_tuple_list, k=k, seed_graph=seed_graph)
+        
+        elif pair_plots is True:
+            
+            if after_marginal_transformation == True:
+                data_plotting = self.after_transformation(data).detach().numpy()
+            else:
+                data_plotting = data
+
+            if dependence_metric_plotting == "pseudo_conditional_correlation":
+                metric = self.compute_correlation_matrix(data)
+            elif dependence_metric_plotting == "offdiagonal_precision_matrix":
+                metric = self.compute_precision_matrix(data)
+            else:
+                raise ValueError("Unknown dependence metric. Please use 'pseudo_conditional_correlation' or 'offdiagonal_precision_matrix'.")
+            
+            plot_graph_conditional_independencies_with_pairplots(ci_matrix, 
+                                                                gene_names=names, 
+                                                data = data_plotting,
+                                                metric = metric.numpy(),
+                                                min_abs_mean=minimum_dependence_threshold,
+                                                lim_axis=lim_axis_pairplots,
+                                                pos_list=pos_list,
+                                                pos_tuple_list=pos_tuple_list,
+                                                k=k,
+                                                seed_graph=seed_graph)
