@@ -109,6 +109,15 @@ class GTM(nn.Module):
         self.subset_dimension=None
         
     
+    def to(self, device):
+        self.device = device
+        self.transformation.device = device
+        for decorrelation_layer in self.decorrelation_layers:
+            decorrelation_layer.device = device
+
+        return super().to(device)
+        
+    
     def create_return_dict_nf_mctm(self, input):
         return {"output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
                 "log_d": torch.zeros(input.size() if input.dim() > 1 else input.unsqueeze(1).size()).to(self.device),
