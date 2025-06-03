@@ -36,7 +36,7 @@ def compute_conditional_independence_kld(self,
         
         if copula_only == True:
             self.num_trans_layers = 0
-        ll_evaluation_data = self.log_likelihood(evaluation_data).detach().numpy()
+        ll_evaluation_data = self.log_likelihood(evaluation_data).detach().cpu()
         
         precision_matrix = self.compute_precision_matrix(evaluation_data).detach().cpu()
         correlation_matrix = self.compute_correlation_matrix(evaluation_data).detach().cpu()
