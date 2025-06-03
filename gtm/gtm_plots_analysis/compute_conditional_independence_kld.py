@@ -36,6 +36,7 @@ def compute_conditional_independence_kld(self,
         
         if copula_only == True:
             self.num_trans_layers = 0
+        ll_evaluation_data = self.log_likelihood(evaluation_data).detach().numpy()
         
         precision_matrix = self.compute_precision_matrix(evaluation_data).detach().cpu()
         correlation_matrix = self.compute_correlation_matrix(evaluation_data).detach().cpu()
@@ -86,20 +87,34 @@ def compute_conditional_independence_kld(self,
             
             actual_log_distribution_glq = actual_log_distribution_glq_list[row_num]
             under_ci_assumption_log_distribution_glq = under_ci_assumption_log_distribution_glq_list[row_num]
+            under_ci_assumption_log_distribution_glq_full_data = under_ci_assumption_log_distribution_glq_full_data_list[row_num]
             
             # in case of gpu cuda compute
             if evaluation_data_type == "data" or evaluation_data_type == "samples_from_model":
                 ll_dev = actual_log_distribution_glq - under_ci_assumption_log_distribution_glq
                 ll_dev = ll_dev[~torch.isnan(ll_dev)]
                 ll_dev = ll_dev[~torch.isinf(ll_dev)]
-                ll_dev = ll_dev[ll_dev.abs() < ll_dev.abs().quantile(0.98)]
+                ll_dev = ll_dev[ll_dev.abs() < ll_dev.abs().quantile(0.99)]
                 kld = ll_dev.mean()
                 
-                ll_dev2 = torch.abs(torch.exp(actual_log_distribution_glq) - torch.exp(under_ci_assumption_log_distribution_glq)) / torch.exp(actual_log_distribution_glq)
+                # p4_glq + p5_glq + p2_glq - (p4_glq+p5_glq) = p2_glq
+                # p2_glq: # compute p2 = log(f(Y_{/ij}))
+                actual_conditioning_set_log_distribution_glq = under_ci_assumption_log_distribution_glq_full_data - under_ci_assumption_log_distribution_glq 
+                weights = torch.exp(actual_conditioning_set_log_distribution_glq - ll_evaluation_data) # p4_glq + p5_glq + p2_glq - (p4_glq+p5_glq) = p2_glq
+                ll_dev2 = torch.abs(torch.exp(actual_log_distribution_glq) - torch.exp(under_ci_assumption_log_distribution_glq)) 
                 ll_dev2 = ll_dev2[~torch.isnan(ll_dev2)]
                 ll_dev2 = ll_dev2[~torch.isinf(ll_dev2)]
-                ll_dev2 = ll_dev2[ll_dev2.abs() < ll_dev2.abs().quantile(0.98)]
-                iae = ll_dev2.mean()
+                # correct
+                iae = ll_dev2 * weights
+                iae = iae[iae < iae.quantile(0.99)]
+                iae = iae.mean() / 2
+                
+                # old
+                #ll_dev2 = torch.abs(torch.exp(actual_log_distribution_glq) - torch.exp(under_ci_assumption_log_distribution_glq)) / torch.exp(actual_log_distribution_glq)
+                #ll_dev2 = ll_dev2[~torch.isnan(ll_dev2)]
+                #ll_dev2 = ll_dev2[~torch.isinf(ll_dev2)]
+                #ll_dev2 = ll_dev2[ll_dev2.abs() < ll_dev2.abs().quantile(0.98)]
+                #iae = ll_dev2.mean()
                 
             elif evaluation_data_type == "uniform_random_samples":
                 ll_dev = torch.exp(actual_log_distribution_glq) * (actual_log_distribution_glq - under_ci_assumption_log_distribution_glq)
@@ -110,7 +125,9 @@ def compute_conditional_independence_kld(self,
                 ll_dev2 = torch.abs(torch.exp(actual_log_distribution_glq) - torch.exp(under_ci_assumption_log_distribution_glq))
                 ll_dev2 = ll_dev2[~torch.isnan(ll_dev2)]
                 ll_dev2 = ll_dev2[~torch.isinf(ll_dev2)]
-                iae = ll_dev2.mean()
+                iae = ll_dev2
+                iae = iae[iae < iae.quantile(0.99)]
+                iae = iae.mean() / 2
             
             precision_abs_mean_list.append(precision_abs_mean.item())
             precision_square_mean_list.append(precision_square_mean.item())
