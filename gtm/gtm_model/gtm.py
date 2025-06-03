@@ -149,7 +149,7 @@ class GTM(nn.Module):
                     return_dict_nf_mctm["log_d"] = return_dict_transformation["log_d"]
                 else:
                     return_dict_nf_mctm["output"] = y.clone()
-                    return_dict_nf_mctm["log_d"] = torch.zeros(y.size()).float()
+                    return_dict_nf_mctm["log_d"] = torch.zeros(y.size(), device=self.device).float()
                     
 
             elif evaluate:
@@ -161,7 +161,7 @@ class GTM(nn.Module):
                     return_dict_nf_mctm["log_d"] = return_dict_transformation["log_d"]
                 else:
                     return_dict_nf_mctm["output"] = y.clone()
-                    return_dict_nf_mctm["log_d"] = torch.zeros(y.size()).float()
+                    return_dict_nf_mctm["log_d"] = torch.zeros(y.size(), device=self.device).float()
             
             if self.transform_only == True:
                 return return_dict_nf_mctm
@@ -421,7 +421,7 @@ class GTM(nn.Module):
         def p_to_corr(matrix):
             d = matrix.size(0)
             diag_sqrt = torch.diag(matrix) ** 0.5
-            matrix_std_multiplied = np.matmul(torch.reshape(diag_sqrt, (d, 1)), torch.reshape(diag_sqrt, (1, d)))
+            matrix_std_multiplied = torch.matmul(torch.reshape(diag_sqrt, (d, 1)), torch.reshape(diag_sqrt, (1, d)))
             return -1 * matrix / matrix_std_multiplied
 
         with torch.no_grad():

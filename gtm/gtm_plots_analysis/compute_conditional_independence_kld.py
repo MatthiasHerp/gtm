@@ -28,13 +28,12 @@ def compute_conditional_independence_kld(self,
             if copula_only == True:
                 evaluation_data = self.after_transformation(evaluation_data)
         elif evaluation_data_type == "uniform_random_samples":
-            evaluation_data = torch.distributions.Uniform(-3,3).sample([sample_size, self.y_train.size(1)])
+            evaluation_data = torch.distributions.Uniform(min_val,max_val).sample([sample_size, self.y_train.size(1)])
         elif evaluation_data_type == "samples_from_model":
             evaluation_data = self.sample(sample_size).detach()
             if copula_only == True:
                 evaluation_data = self.after_transformation(evaluation_data).detach()
-                
-
+        
         if copula_only == True:
             self.num_trans_layers = 0
         

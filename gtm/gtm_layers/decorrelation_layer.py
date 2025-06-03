@@ -109,7 +109,7 @@ class Decorrelation(nn.Module):
     def create_return_dict_decorrelation(self, input):
         lambda_matrix_general = torch.eye(self.number_variables, device=input.device).expand(input.size()[0],self.number_variables,self.number_variables).requires_grad_(True)
         return {"output": input.clone(), #.requires_grad_(True),
-                "log_d": torch.zeros(input.size(),device=input.device), #.requires_grad_(True),
+                "log_d": torch.zeros(input.size(),device=self.device), #.requires_grad_(True),
                 "transformation_second_order_ridge_pen_sum": 0,
                 "second_order_ridge_pen_sum": 0,
                 "first_order_ridge_pen_sum": 0,
