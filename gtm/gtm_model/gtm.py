@@ -32,7 +32,7 @@ class GTM(nn.Module):
                  transformation_spline_range=list([[-15], [15]]), 
                  decorrelation_spline_range=list([[-15], [15]]), 
                  spline_transformation="bspline", spline_decorrelation="bspline", # bernstein bernstein bspline
-                 degree_transformations=15, degree_decorrelation=20, span_factor=torch.tensor(0.1), span_restriction="reluler", #span_factor=torch.tensor(0.1)
+                 degree_transformations=15, degree_decorrelation=30, span_factor=torch.tensor(0.1), span_restriction="reluler", #span_factor=torch.tensor(0.1)
                  number_covariates=False,
                  num_trans_layers=1,
                  num_decorr_layers=3, initial_log_transform=False,
@@ -117,6 +117,7 @@ class GTM(nn.Module):
                                                                     ) for i in range(self.number_decorrelation_layers)])
             
         self.subset_dimension=None
+        self.conditional_independence_table=None
         
     
     def to(self, device):
@@ -290,7 +291,7 @@ class GTM(nn.Module):
                                   avg = avg, lambda_penalty_mode = lambda_penalty_mode, objective_type = objective_type)
     
     
-    def __train__(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), adaptive_lasso_weights_matrix = False,
+    def train(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), adaptive_lasso_weights_matrix = False,
                   lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=False, patience=5, min_delta=1e-7,
           optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", ema_decay=False, seperate_copula_training=False,
           max_batches_per_iter=False):
@@ -325,8 +326,8 @@ class GTM(nn.Module):
     def pretrain_tranformation_layer(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=False, patience=5, min_delta=1e-7, return_plot=True,
           optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", max_batches_per_iter=False):
         
-        optimizer='LBFGS'
-        warnings.warn("Optimiser for pretrain_tranformation_layer is always LBFGS. If this is an issue change the code.")
+        #optimizer='LBFGS'
+        #warnings.warn("Optimiser for pretrain_tranformation_layer is always LBFGS. If this is an issue change the code.")
         
         self.transform_only = True
         lambda_penalty_params = False # makes objective not check lambda matrix
@@ -379,7 +380,7 @@ class GTM(nn.Module):
                     #                                        self.transformation_spline_range[1][dimension]])
                     tm_model.subset_dimension = dimension
             
-                    train_dict = tm_model.__train__(train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, iterations=iterations, optimizer="LBFGS",
+                    train_dict = tm_model.train(train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, iterations=iterations, optimizer="LBFGS",
                                     penalty_params=[0,0,0,0], adaptive_lasso_weights_matrix=False, lambda_penalty_params=False, 
                                     max_batches_per_iter=max_batches_per_iter)
                     
@@ -424,7 +425,7 @@ class GTM(nn.Module):
         
     
 
-    def compute_precision_matrix(self, y, covariate=False):
+    def compute_pseudo_precision_matrix(self, y, covariate=False):
 
         with torch.no_grad():
             return_dict = self.forward(y, covariate=covariate, evaluate=True, train=False, return_lambda_matrix=True)
@@ -435,7 +436,7 @@ class GTM(nn.Module):
         return precision_matrix
     
     
-    def compute_correlation_matrix(self, y, covariate=False):
+    def compute_pseudo_correlation_matrix(self, y, covariate=False):
         
         def p_to_corr(matrix):
             d = matrix.size(0)
@@ -444,7 +445,7 @@ class GTM(nn.Module):
             return -1 * matrix / matrix_std_multiplied
 
         with torch.no_grad():
-            precision_matrix = self.compute_precision_matrix( y, covariate=False)
+            precision_matrix = self.compute_pseudo_precision_matrix( y, covariate=False)
             correlation_matrix_train = torch.stack([p_to_corr(precision_matrix[obs_num,:,:]) for obs_num in range(precision_matrix.size(0))])
 
         return correlation_matrix_train
@@ -586,7 +587,7 @@ class GTM(nn.Module):
                     self.pretrained_transformation_layer_model_state_dict = gtm_tuning.state_dict()
                 
         
-        gtm_tuning.__train__(train_dataloader=train_dataloader,
+        gtm_tuning.train(train_dataloader=train_dataloader,
                 validate_dataloader=validate_dataloader, 
                 train_covariates=train_covariates,
                 validate_covariates=validate_covariates,
@@ -634,11 +635,11 @@ class GTM(nn.Module):
     def hyperparameter_tune_penalties(self, 
                                       train_dataloader, 
                                       validate_dataloader, 
-                                      penvalueridge: list,
-                                      penfirstridge: list,
-                                      pensecondridge: list,
-                                      ctm_pensecondridge: list,
-                                      lambda_penalty_params: list,
+                                      penvalueridge, #: list,
+                                      penfirstridge, #: list,
+                                      pensecondridge, #: list,
+                                      ctm_pensecondridge, #: list,
+                                      lambda_penalty_params, #: list,
                                       train_covariates=False, 
                                       validate_covariates=False, 
                                       adaptive_lasso_weights_matrix = False,
@@ -647,24 +648,32 @@ class GTM(nn.Module):
                                       patience=5, 
                                       min_delta=1e-7, 
                                       optimizer='LBFGS', 
-                                      lambda_penalty_mode="square", 
-                                      objective_type="negloglik", 
+                                      #lambda_penalty_mode="square", 
+                                      #objective_type="negloglik", 
                                       seperate_copula_training=False,
                                       max_batches_per_iter=False,
-                                        tuning_mode="optuna",
-                              cross_validation_folds=False,
-                              random_state_KFold=42,
-                              device=None,
+                                      #tuning_mode="optuna",
+                              #cross_validation_folds=False,
+                              #random_state_KFold=42,
+                              #device=None,
                               pretrained_transformation_layer=False,
                               n_trials=15,
                               temp_folder=".", 
                               study_name=None):
         
+        # All for now fixed parameters
+        lambda_penalty_mode="square"
+        objective_type="negloglik"
+        tuning_mode="optuna"
+        cross_validation_folds=False
+        random_state_KFold=42
+        device=None
         
-        list_of_lists = [penvalueridge, penfirstridge, pensecondridge, 
-                         ctm_pensecondridge,
-                         lambda_penalty_params]
-        hyperparameter_combinations_list = list(itertools.product(*list_of_lists))
+        # From Old version where one could pass lists to do tuning using list of hyperparameters passed
+        #list_of_lists = [penvalueridge, penfirstridge, pensecondridge, 
+                         #ctm_pensecondridge,
+                        # lambda_penalty_params]
+        #hyperparameter_combinations_list = list(itertools.product(*list_of_lists))
         
         if train_covariates is False:
             number_covariates = 0
@@ -672,7 +681,8 @@ class GTM(nn.Module):
             number_covariates = 1
 
         if tuning_mode == "optuna":
-            penvalueridge, penfirstridge, pensecondridge, ctm_pensecondridge, lambda_penalty_params  = hyperparameter_combinations_list[0]
+            # From Old version where one could pass lists to do tuning using list of hyperparameters passed
+            #penvalueridge, penfirstridge, pensecondridge, ctm_pensecondridge, lambda_penalty_params  = hyperparameter_combinations_list[0]
             
             # so model has no marginal part
             if seperate_copula_training == True:
@@ -726,12 +736,12 @@ class GTM(nn.Module):
                 else:
                     warnings.warn("lambda_penalty_params not understood. Please provide a float, int None, or the string \"sample\".")
                     
-                print("This Trial has the Hyperparameters:", 
-                    "penvalueridge_opt:", penvalueridge_opt, " ", 
-                    "penfirstridge_opt:", penfirstridge_opt, " ", 
-                    "pensecondridge_opt:", pensecondridge_opt, " ", 
-                    "ctm_pensecondridge_opt:", ctm_pensecondridge_opt, " ",
-                    "lambda_penalty_params_opt:", lambda_penalty_params_opt)
+                #print("This Trial has the Hyperparameters:", 
+                #    "penvalueridge_opt:", penvalueridge_opt, " ", 
+                #    "penfirstridge_opt:", penfirstridge_opt, " ", 
+                #    "pensecondridge_opt:", pensecondridge_opt, " ", 
+                #    "ctm_pensecondridge_opt:", ctm_pensecondridge_opt, " ",
+                #    "lambda_penalty_params_opt:", lambda_penalty_params_opt)
                 lambda_penalty_params_opt = if_float_create_lambda_penalisation_matrix(lambda_penalty_params_opt, num_vars=self.number_variables)
                 penalty_params_opt = torch.tensor([penvalueridge_opt,
                                             penfirstridge_opt,
@@ -793,9 +803,10 @@ class GTM(nn.Module):
                                         optimized=False,
                                         copula_only=False,
                                         min_val=-5, 
-                                        max_val=5):
+                                        max_val=5,
+                                        likelihood_based_metrics=True):
         
-        return compute_conditional_independence_kld(self,
+        self.conditional_independence_table = compute_conditional_independence_kld(self,
                                         y,
                                         x,
                                         evaluation_data_type,
@@ -805,7 +816,10 @@ class GTM(nn.Module):
                                         optimized,
                                         copula_only,
                                         min_val,
-                                        max_val)
+                                        max_val,
+                                        likelihood_based_metrics)
+        
+        return self.conditional_independence_table
         
     def plot_densities(self,data,covariate=False,x_lim=None,y_lim=None,density_plot=True):
         plot_densities(data=data, 
@@ -841,12 +855,23 @@ class GTM(nn.Module):
                                               sub_title_fontsize=10,
                                               x_lim=None, 
                                               y_lim=None):
+        
+        # Taking internally stored one from last run
+        if conditional_independence_table is False:
+            if self.conditional_independence_table is None:
+                conditional_independence_table = False
+                if minimum_dependence_threshold > 0:
+                    raise ValueError("No conditional independence table found. Please compute it first using compute_conditional_independence_table() in order to be able to set a minimum_dependence_threshold > 0.")
+            else:
+                # Use the stored conditional independence table
+                conditional_independence_table = self.conditional_independence_table
+        
         if dependence_metric_plotting == "pseudo_conditional_correlation":
-            metric = self.compute_correlation_matrix(data)
+            metric = self.compute_pseudo_correlation_matrix(data)
             metric_type = "matrix"
             label_metric="Pseudo Conditional Correlation"
         elif dependence_metric_plotting == "offdiagonal_precision_matrix":
-            metric = self.compute_precision_matrix(data)
+            metric = self.compute_pseudo_precision_matrix(data)
             metric_type = "matrix"
             label_metric="Off-Diagonal Precision Matrix"
         else:
@@ -878,7 +903,8 @@ class GTM(nn.Module):
                         strength_name=strength_name, show_colorbar=show_colorbar, hide_axis_info=hide_axis_info, sub_title_fontsize=sub_title_fontsize,
                         after_marginal_transformation=after_marginal_transformation, label_metric=label_metric)
         
-    def plot_conditional_dependence_graph(self, conditional_independence_table, 
+    def plot_conditional_dependence_graph(self, 
+                                              conditional_independence_table=False, 
                                               dependence_metric="iae", 
                                               minimum_dependence_threshold=0, 
                                               pair_plots=False,
@@ -892,6 +918,15 @@ class GTM(nn.Module):
                                               k=1.5, 
                                               seed_graph=42
                                               ):
+        
+        # Taking internally stored one from last run
+        if conditional_independence_table is False:
+            if self.conditional_independence_table is None:
+                raise ValueError("No conditional independence table found. Please compute it first using compute_conditional_independence_table().")
+            else:
+                # Use the stored conditional independence table
+                conditional_independence_table = self.conditional_independence_table
+        
         if names is False:
             names = list(range(self.number_variables))
         
@@ -915,9 +950,9 @@ class GTM(nn.Module):
                 data_plotting = data
 
             if dependence_metric_plotting == "pseudo_conditional_correlation":
-                metric = self.compute_correlation_matrix(data)
+                metric = self.compute_pseudo_precision_matrix(data)
             elif dependence_metric_plotting == "offdiagonal_precision_matrix":
-                metric = self.compute_precision_matrix(data)
+                metric = self.compute_pseudo_precision_matrix(data)
             else:
                 raise ValueError("Unknown dependence metric. Please use 'pseudo_conditional_correlation' or 'offdiagonal_precision_matrix'.")
             

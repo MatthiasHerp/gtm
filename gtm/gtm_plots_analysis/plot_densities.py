@@ -46,7 +46,9 @@ def plot_densities(data,covariate=False,x_lim=None,y_lim=None,density_plot=True)
                     #TODO:  got ValueError: Contour levels must be increasing
                     # suggestion on whre it came from: https://stackoverflow.com/questions/62233779/valueerror-contour-levels-must-be-increasing-contour-plot-in-python
                     if density_plot==True:
-                        clean_data = data[~np.isnan(data).any(axis=1) & ~np.isinf(data).any(axis=1)]
+                        #clean_data = data[~np.isnan(data).any(axis=1) & ~np.isinf(data).any(axis=1)]
+                        mask = ~(torch.isnan(data).any(dim=1) | torch.isinf(data).any(dim=1))
+                        clean_data = data[mask]
                         sns.kdeplot(x=clean_data[:, i], y=clean_data[:, j], fill=True, alpha=0.9, ax=axs[row,col])
 
                     axs[row, col].set_xlabel("y_" + str(i))

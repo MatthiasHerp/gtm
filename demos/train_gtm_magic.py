@@ -51,18 +51,16 @@ if __name__ == "__main__":
                 study = model.hyperparameter_tune_penalties( 
                                             train_dataloader=dataloader_train, 
                                             validate_dataloader=dataloader_validate, 
-                                            penvalueridge = [0],
-                                            penfirstridge = ["sample"],
-                                            pensecondridge = ["sample"],
-                                            ctm_pensecondridge = ["sample"],
-                                            lambda_penalty_params = [0],
+                                            penvalueridge = 0,
+                                            penfirstridge = "sample",
+                                            pensecondridge = "sample",
+                                            ctm_pensecondridge = "sample",
+                                            lambda_penalty_params = 0,
                                             adaptive_lasso_weights_matrix=False,
                                             iterations=1000, 
                                             patience=20, 
                                             min_delta=1e-8, 
                                             optimizer='LBFGS', 
-                                            tuning_mode="optuna",
-                                            device=device,
                                             pretrained_transformation_layer=True,
                                             n_trials=40)
                 
@@ -77,7 +75,7 @@ if __name__ == "__main__":
                 _ = model.pretrain_tranformation_layer(dataloader_train, iterations=1000)
                 
                 # train the joint model
-                _ = model.__train__(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, 
+                _ = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, 
                                     iterations=1000, optimizer="LBFGS",
                                     penalty_params=penalty_params)
                 

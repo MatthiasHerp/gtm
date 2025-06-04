@@ -201,17 +201,23 @@ def plot_splines(layer, covariate_exists=False, affine=False):
             row = int(spline_num // 3)  # Get the row index
             col = int(spline_num % 3)  # Get the column index
             if covariate_exists is True:
-                sns.lineplot(x="y", y="z_tilde", hue="covariate", data=subset_results, ax = axs[row, col])
+                sns.lineplot(x="y", y="z_tilde", hue="covariate", data=subset_results, ax = axs[row, col], color="blue")
                 if layer.type == "transformation":
-                    sns.lineplot(x="y", y="z_tilde_derivativ", hue="covariate", data=subset_results, ax=axs[row, col])
+                    sns.lineplot(x="y", y="z_tilde_derivativ", hue="covariate", data=subset_results, ax=axs[row, col], color="orange")
                     sns.lineplot(x="y_estimated", y="z_tilde", hue="covariate", linestyle='--', data=subset_results,
-                                 ax=axs[row, col])
+                                 ax=axs[row, col], color="green")
             else:
                 sns.lineplot(x="y", y="z_tilde", data=subset_results, ax = axs[row, col])
                 if layer.type == "transformation":
-                    sns.lineplot(x="y", y="z_tilde_derivativ", data=subset_results, ax=axs[row, col])
+                    sns.lineplot(x="y", y="z_tilde_derivativ", data=subset_results, ax=axs[row, col], color="orange")
                     sns.lineplot(x="y_estimated", y="z_tilde", linestyle='--', data=subset_results,
-                                 ax=axs[row, col])
+                                 ax=axs[row, col], color="green")
+                    
+                    if spline_num == 0:
+                        axs[row, col].plot([], [], color='blue', label='spline')
+                        axs[row, col].plot([], [], color='orange', label='derivative')
+                        axs[row, col].plot([], [], color='green', linestyle='--', label='inverse')
+                        axs[row, col].legend()
             #TODO: solve this issue, somehow the min() max() in the comment below does not span all possible values
             #if layer.type == "transformation":
             #    axs[a].set_ylim(subset_results["z_tilde"].min(), subset_results["z_tilde"].max())
@@ -237,17 +243,22 @@ def plot_splines(layer, covariate_exists=False, affine=False):
     else:
         fig, ax = plt.subplots(figsize=(6, 6))
         if covariate_exists is True:
-            sns.lineplot(x="y", y="z_tilde", hue="covariate", data=results, ax = ax)
+            sns.lineplot(x="y", y="z_tilde", hue="covariate", data=results, ax = ax, color="blue")
         else:
             sns.lineplot(x="y", y="z_tilde", data=results, ax = ax)
             if layer.type == "transformation":
-                sns.lineplot(x="y", y="z_tilde_derivativ", data=results, ax=ax)
-                sns.lineplot(x="y_estimated", y="z_tilde", linestyle='--', data=results, ax=ax)
+                sns.lineplot(x="y", y="z_tilde_derivativ", data=results, ax=ax, color="orange")
+                sns.lineplot(x="y_estimated", y="z_tilde", linestyle='--', data=results, ax=ax, color="green")
         ax.set_ylim(results["z_tilde"].min(), results["z_tilde"].max())
         ax.set_xlim(results["y"].min(), results["y"].max())
 
         ax.set_xlabel("z_tilde")
         ax.set_ylabel("lambda_" + str(0))
+        if layer.type == "transformation":
+            ax.plot([], [], color='blue', label='spline')
+            ax.plot([], [], color='orange', label='derivative')
+            ax.plot([], [], color='green', linestyle='--', label='inverse')
+            ax.legend()
 
 
     return fig
