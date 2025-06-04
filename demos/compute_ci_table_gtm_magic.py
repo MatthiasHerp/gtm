@@ -1,5 +1,5 @@
 from gtm import *
-from demos.load_magic_data_helpers import *
+from demos.load_analyze_magic_data_helpers import *
 import os
 
 if __name__ == "__main__":

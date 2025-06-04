@@ -3,6 +3,7 @@ import numpy as np
 from torch.utils.data import random_split
 
 import pandas as pd
+from sklearn.metrics import roc_auc_score, roc_curve
 
 
 def load_data_magic():
@@ -103,4 +104,72 @@ def load_magic_data(group="h",
                                                              random_state=split_random_state)
 
     return y_train, y_validate, y_test
+
+def magic_classification_report(loaded_model_g,
+                                   loaded_model_h,
+                                   data_g_test_normed,
+                                   data_h_test_normed,
+                                   data_h,
+                                   data_g,
+                                phi_g=False,
+                                phi_h=False,
+                                return_auc=False):
+
+    #data_g_test_normed = torch.tensor(data_g_test_normed)
+    #data_h_test_normed = torch.tensor(data_h_test_normed)
+
+    fh_g = torch.exp(loaded_model_h.log_likelihood(data_g_test_normed)).detach()
+    fh_h = torch.exp(loaded_model_h.log_likelihood(data_h_test_normed)).detach()
+    fg_g = torch.exp(loaded_model_g.log_likelihood(data_g_test_normed)).detach()
+    fg_h = torch.exp(loaded_model_g.log_likelihood(data_h_test_normed)).detach()
+
+    likelihood_predictions = [fh_g, fh_h, fg_g, fg_h]
+    names = ["fh_g", "fh_h", "fg_g", "fg_h"]
+
+    for i in range(4):
+        likelihood = likelihood_predictions[i]
+        name = names[i]
+        if likelihood.isnan().any():
+            nan_index = (likelihood.isnan() == True).nonzero(as_tuple=True)
+            print(name,"is NAN at:", nan_index)
+            print("the observation is:", data_g_test_normed[nan_index])
+
+        if likelihood.isinf().any():
+            nan_index = (likelihood.isnan() == True).nonzero(as_tuple=True)
+            print(name,"is INF at:", nan_index)
+            print("the observation is:", data_g_test_normed[nan_index])
+
+    if phi_g == False:
+        phi_g = data_g.shape[0] / (data_h.shape[0] + data_g.shape[0])
+        phi_h = 1 - phi_g
+
+    bayes_prediction_g_g = phi_g * fg_g / (phi_g * fg_g + phi_h * fh_g)
+    bayes_prediction_h_h = phi_h * fh_h / (phi_g * fg_h + phi_h * fh_h)
+
+    if bayes_prediction_g_g.isnan().any():
+        nan_index = (bayes_prediction_g_g.isnan() == True).nonzero(as_tuple=True)
+        print("bayes_prediction_g_g is NAN at:", nan_index)
+        bayes_prediction_g_g[bayes_prediction_g_g.isnan() == True] = phi_g
+        print("Nan are replaced with prior probability phi_g", phi_g)
+
+    if bayes_prediction_h_h.isnan().any():
+        nan_index = (bayes_prediction_h_h.isnan() == True).nonzero(as_tuple=True)
+        print("bayes_prediction_h_h is NAN at:", nan_index)
+        bayes_prediction_h_h[bayes_prediction_h_h.isnan() == True] = phi_h
+        print("Nan are replaced with prior probability phi_h", phi_h)
+
+    # G=1, H=0
+    y = np.concatenate((np.array([1.] * data_g_test_normed.size(0)), np.array([0.] * data_h_test_normed.size(0))),axis=0)
+    y_pred_proba = np.concatenate((np.array(bayes_prediction_g_g), np.array(1 - bayes_prediction_h_h)), axis=0)
+
+    fpr, tpr, _ = roc_curve(y, y_pred_proba)
+
+    table_roc_curve = pd.DataFrame({"fpr": fpr, "tpr": tpr})
+    
+    if return_auc==True:
+        # Compute AUC-ROC
+        auc_roc = roc_auc_score(y, y_pred_proba)
+        return auc_roc
+        
+    return table_roc_curve
 
