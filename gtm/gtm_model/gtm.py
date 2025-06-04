@@ -23,6 +23,7 @@ from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
 from gtm.gtm_plots_analysis.plot_splines import plot_splines
 from gtm.gtm_plots_analysis.plot_conditional_independence_graph import plot_graph_conditional_independencies
 from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import plot_graph_conditional_independencies_with_pairplots
+from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import plot_conditional_dependence_pair
 
 
 class GTM(nn.Module):
@@ -454,7 +455,7 @@ class GTM(nn.Module):
         # check if transformation contains params_inverse
         if self.transformation.params_inverse is None:
             warnings.warn("Transformation layer does not have an inverse. Inverse is approximated")
-            self..approximate_transformation_inverse()
+            self.approximate_transformation_inverse()
         
         with torch.no_grad():
             
@@ -504,31 +505,22 @@ class GTM(nn.Module):
             output = y
         return output
         
-    def conditional_sample(self, n_samples, sample_indices, sample_range, fixed_values, max_attempts=False, covariate=False):
-        """
-        Perform importance sampling for conditional generation of samples.
-        
-        :param n_samples: Number of samples to generate
-        :param sample_indices: Indices of data dimensions to sample
-        :param sample_range: Tuple (min, max) for sampling range
-        :param fixed_values: Dictionary with fixed values for remaining dimensions
-        :param covariate: Boolean flag for covariate handling in likelihood
-        :return: Generated samples of shape (n_samples, data_dim)
-        """
+    def conditional_sample(self, number_proposed_samples, sample_indices, sample_ranges, fixed_values, covariate=False):
         with torch.no_grad():
             num_dim = self.number_variables
             
             # Initialize samples with fixed values
-            if max_attempts == False:
-                max_attempts = n_samples * 10  # Sample more than needed for rejection sampling
-            samples = torch.full((max_attempts, num_dim), float('nan'))
+            samples = torch.full((number_proposed_samples, num_dim), float('nan'))
             for idx, value in fixed_values.items():
                 samples[:, idx] = value  # Set fixed values
             
             # Sample the desired dimensions uniformly within sample_range
+            idx = 0
             for sample_idx in sample_indices:
-                min_val, max_val = sample_range[sample_idx]
-                samples[:, sample_idx] = torch.rand((max_attempts)) * (max_val - min_val) + min_val
+                min_val, max_val = sample_ranges[idx]
+                samples[:, sample_idx] = torch.rand((number_proposed_samples)) * (max_val - min_val) + min_val
+                
+                idx +=1
             
             # Compute acceptance probabilities using log likelihood
             log_probs = self.log_likelihood(samples, covariate=covariate)  # Shape: (max_attempts,)
@@ -536,14 +528,12 @@ class GTM(nn.Module):
             probs /= torch.max(probs)  # Scale probabilities between 0 and 1
             
             # Accept/reject samples based on computed probabilities
-            accept_mask = torch.rand(max_attempts) < probs
+            accept_mask = torch.rand(number_proposed_samples) < probs
             accepted_samples = samples[accept_mask]
             
-            # Ensure we return exactly n_samples
-            if accepted_samples.shape[0] < n_samples:
-                warnings.warn("Not enough accepted samples, increase max_attempts or adjust sampling method.")
+            print(accepted_samples.size(0),"samples where accepted.")
             
-            return accepted_samples#[:n_samples]
+            return accepted_samples
         
         
     def approximate_transformation_inverse(self):
@@ -941,3 +931,20 @@ class GTM(nn.Module):
                                                 pos_tuple_list=pos_tuple_list,
                                                 k=k,
                                                 seed_graph=seed_graph)
+            
+    def plot_conditional_dependence_pair(self, 
+                                             sample_indices,
+                                             resampled_samples,
+                                             show_colorbar=True,
+                                             title=None,
+                                             show_ticks=False,
+                                             storage=None):
+            
+        plot_conditional_dependence_pair(loaded_model=self,
+                                             sample_indices=sample_indices,
+                                             resampled_samples=resampled_samples,
+                                             show_colorbar=show_colorbar,
+                                             title=title,
+                                             storage=storage,
+                                             show_ticks=show_ticks)
+            

@@ -68,9 +68,9 @@ def plot_metric_scatter(data, metric, covariate=False, x_lim=None, y_lim=None, m
                     
                 if strength_value is not False:
                     if after_marginal_transformation == False:
-                        axs[row, col].set_title(f"({a+1}) $Y_{i}$,$Y_{j}$ " + strength_name + ": " + str(np.round(strength_value[a],3)),fontsize=sub_title_fontsize)
+                        axs[row, col].set_title(f"({a+1}) $Y_{i}$,$Y_{j}$ " + strength_name.upper() + ": " + str(np.round(strength_value[a],3)),fontsize=sub_title_fontsize)
                     elif after_marginal_transformation == True:
-                        axs[row, col].set_title(r"(%d) $\tilde{Z}_{%d}, \tilde{Z}_{%d}$ " % (a+1,i, j) + strength_name + ": " + str(np.round(strength_value[a],3)),fontsize=sub_title_fontsize)
+                        axs[row, col].set_title(r"(%d) $\tilde{Z}_{%d}, \tilde{Z}_{%d}$ " % (a+1,i, j) + strength_name.upper() + ": " + str(np.round(strength_value[a],3)),fontsize=sub_title_fontsize)
                     
                     
 
