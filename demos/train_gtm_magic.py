@@ -1,3 +1,15 @@
+####################################################################################################
+####################################### Training GTMs ##############################################
+# In this script we train GTMs for both the Hadron and Gamma classes of the MAGIC dataset.
+# The GTMs are trained with different numbers of decorrelation layers, and the best penalites
+# are selected using a validation set.
+# Hyperparameter tuning uses the optuna package to generate proposed penalites.
+# The GTM marginal degrees are based on the heuristic on demo_magic_marginal_transformations_degrees.ipynb
+# The resulting models are analyzed in demo_magic_classification.ipynb.
+# As the dataset is quite large we do not use a lasso penalty towards conditional independence
+# Due to flexible marginals we use a marginal curvature penalty
+####################################################################################################
+
 from gtm import *
 from demos.load_analyze_magic_data_helpers import *
 from demos.dataset_helpers import Generic_Dataset
