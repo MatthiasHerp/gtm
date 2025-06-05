@@ -378,27 +378,92 @@ def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
     return d[:,p]
         
 
-def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p):
-        batch_size, num_x = x.shape
-        
-        #q = torch.stack([ torch.stack( [
-        #                                  p * (c[i][j+k[i]-p+1] - c[i][j+k[i]-p]) / (t[j+k[i]+1] - t[j+k[i]-p+1])
-        #                                     for j in range(p + 1)] , dim=0) for i in range(0,batch_size) ])
-        
-        # https://stackoverflow.com/questions/57507696/b-spline-derivative-using-de-boors-algorithm
-        # range(p) not range(p+1) as in the non derivativ form
-        q = torch.stack([ torch.stack( [
-                                          p * (c[i][j+k[i]-p+1] - c[i][j+k[i]-p]) / (t[j+k[i]+1] - t[j+k[i]-p+1])
-                                             for j in range(p)] , dim=0) for i in range(0,batch_size) ])
+#def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p):
+#        batch_size, num_x = x.shape
+#        
+#        #q = torch.stack([ torch.stack( [
+#        #                                  p * (c[i][j+k[i]-p+1] - c[i][j+k[i]-p]) / (t[j+k[i]+1] - t[j+k[i]-p+1])
+#        #                                     for j in range(p + 1)] , dim=0) for i in range(0,batch_size) ])
+#        
+#        # https://stackoverflow.com/questions/57507696/b-spline-derivative-using-de-boors-algorithm
+#        # range(p) not range(p+1) as in the non derivativ form
+#        q = torch.stack([ torch.stack( [
+#                                          p * (c[i][j+k[i]-p+1] - c[i][j+k[i]-p]) / (t[j+k[i]+1] - t[j+k[i]-p+1])
+#                                             for j in range(p)] , dim=0) for i in range(0,batch_size) ])
+#
+#        for r in range(1, p):
+#            for j in range(p-1, r-1, -1):
+#                right = j+1+k-r
+#                left = j+k-(p-1)
+#                alpha = (x - t[left]) / (t[right] - t[left]) 
+#                q[:,j] = (1.0 - alpha) * q[:,j-1] + alpha * q[:,j]
+#                
+#        return q[:,p-1]
 
-        for r in range(1, p):
-            for j in range(p-1, r-1, -1):
-                right = j+1+k-r
-                left = j+k-(p-1)
-                alpha = (x - t[left]) / (t[right] - t[left]) 
-                q[:,j] = (1.0 - alpha) * q[:,j-1] + alpha * q[:,j]
-                
-        return q[:,p-1]
+def compute_update_alpha_frist_derivativ(x, t, k, 
+                         r, q, j, 
+                         p=3):
+    
+    right = j+1+k-r
+    left = j+k-(p-1)
+    alpha = (x - t[left]) / (t[right] - t[left]) 
+    q[:,j] = (1.0 - alpha) * q[:,j-1] + alpha * q[:,j]
+    return q
+
+def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p=3):
+    
+    # Constants
+    B, N = k.shape
+
+    # Step 1: Build the j-offsets for j in [0, 1, 2]
+    j_offsets = torch.arange(p, device=k.device).view(1, 1, p)  # shape (1, 1, 3)
+
+    # Step 2: Compute control point indices
+    idx_1 = k.unsqueeze(-1) - p + j_offsets     # shape (B, N, 3)
+    idx_2 = idx_1 + 1                            # shape (B, N, 3)
+
+    # Clamp to valid range for control point indexing
+    #idx_1 = idx_1.clamp(0, c.shape[1] - 1)
+    #idx_2 = idx_2.clamp(0, c.shape[1] - 1)
+
+    # Step 3: Gather control point differences
+    c_expanded = c.unsqueeze(1).expand(-1, N, -1)  # shape (B, N, M)
+    delta_c = torch.gather(c_expanded, 2, idx_2) - torch.gather(c_expanded, 2, idx_1)
+
+    # Step 4: Compute knot indices
+    t_idx_1 = k.unsqueeze(-1) + j_offsets + 1        # shape (B, N, 3)
+    t_idx_2 = k.unsqueeze(-1) - p + j_offsets + 1    # shape (B, N, 3)
+
+    # Clamp to valid range for knot indexing
+    #t_idx_1 = t_idx_1.clamp(0, t.shape[0] - 1)
+    #t_idx_2 = t_idx_2.clamp(0, t.shape[0] - 1)
+
+    # Step 5: Get knot differences
+    t_diff = t[t_idx_1] - t[t_idx_2]  # shape (B, N, 3)
+
+    # Step 6: Compute final q values
+    q = p * delta_c / (t_diff + 1e-9)
+    q = q.mT
+    
+    r = 1
+    j = 2
+    q = compute_update_alpha_frist_derivativ(x, t, k, 
+                         r, q, j, 
+                         p=3)
+    
+    j = 1
+    q = compute_update_alpha_frist_derivativ(x, t, k, 
+                         r, q, j, 
+                         p=3)
+    
+    r = 2
+    j = 2
+    q = compute_update_alpha_frist_derivativ(x, t, k, 
+                         r, q, j, 
+                         p=3)
+
+    return q[:,p-1]
+    
 
 
 def run_deBoor_fixed_degrees(x, t, c, p, d):
