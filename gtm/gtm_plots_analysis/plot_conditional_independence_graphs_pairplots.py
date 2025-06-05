@@ -4,7 +4,7 @@ import networkx as nx
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, data, metric, min_abs_mean=0.1, storage=None, lim_axis=[-18, 18],
-                                                         pos_list=None, pos_tuple_list=None, k=1.5, seed_graph=42):
+                                                         pos_list=None, pos_tuple_list=None, k=1.5, seed_graph=42, show_plot=True):
     """
     Plots a network graph of conditional independencies and overlays small scatter plots on edges.
 
@@ -109,11 +109,14 @@ def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, 
 
     #plt.box(False)
     plt.axis("off")
+    plt.draw()
 
     if storage:
         plt.savefig(storage, bbox_inches="tight")
     
-    plt.draw()
-    plt.show()
+    if show_plot == True:
+        plt.show()
+    else:
+        plt.close(fig)
     
             

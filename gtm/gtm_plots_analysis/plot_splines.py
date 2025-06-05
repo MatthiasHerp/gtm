@@ -9,7 +9,7 @@ import pandas as pd
 from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
 from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction_vectorized
 
-def plot_splines(layer, covariate_exists=False, affine=False):
+def plot_splines(layer, covariate_exists=False, affine=False, storage=None, show_plot=True):
 
     #num_variables = layer.number_variables
     #num_splines = int(num_variables * (num_variables-1) / 2)
@@ -260,5 +260,10 @@ def plot_splines(layer, covariate_exists=False, affine=False):
             ax.plot([], [], color='green', linestyle='--', label='inverse')
             ax.legend()
 
-
-    return fig
+    if storage:
+        plt.savefig(storage, bbox_inches="tight")
+    if show_plot == True:
+        plt.show()
+    else:
+        plt.close(fig)
+        

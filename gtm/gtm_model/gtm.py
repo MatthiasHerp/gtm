@@ -820,18 +820,23 @@ class GTM(nn.Module):
                                         likelihood_based_metrics)
         
         return self.conditional_independence_table
-        
-    def plot_densities(self,data,covariate=False,x_lim=None,y_lim=None,density_plot=True):
+
+    def plot_densities(self,data,covariate=False,x_lim=None,y_lim=None,density_plot=True, storage=None, show_plot=True):
         plot_densities(data=data, 
                        covariate=covariate, 
                        x_lim=x_lim, 
                        y_lim=y_lim, 
-                       density_plot=density_plot)
-        
-    def plot_marginals(self, data, covariate=False, names=False, y_lim=False):
-        plot_marginals(data, covariate=covariate, names=names, y_lim=y_lim)
-        
-    def plot_splines(self,layer_type="transformation",decorrelation_layer_number=0):
+                       density_plot=density_plot, 
+                       storage=storage,
+                       show_plot=show_plot)
+
+    def plot_marginals(self, data, covariate=False, names=False, y_lim=False, storage=None,
+                                             show_plot=True):
+        plot_marginals(data, covariate=covariate, names=names, y_lim=y_lim, storage=storage,
+                       show_plot=show_plot)
+
+    def plot_splines(self,layer_type="transformation",decorrelation_layer_number=0, storage=None,
+                                             show_plot=True):
         if layer_type == "transformation":
             layer = self.transformation
         elif layer_type == "decorrelation":
@@ -840,8 +845,9 @@ class GTM(nn.Module):
             layer = self.decorrelation_layers[decorrelation_layer_number]
         else:
             raise ValueError("layer_type must be either 'transformation' or 'decorrelation'.")
-        
-        plot_splines(layer, covariate_exists=False, affine=False)
+
+        plot_splines(layer, covariate_exists=False, affine=False, storage=storage,
+                     show_plot=show_plot)
         
     def plot_conditional_dependence_structure(self, 
                                               data, 
@@ -854,7 +860,9 @@ class GTM(nn.Module):
                                               hide_axis_info=False,
                                               sub_title_fontsize=10,
                                               x_lim=None, 
-                                              y_lim=None):
+                                              y_lim=None,
+                                              storage=None,
+                                             show_plot=True):
         
         # Taking internally stored one from last run
         if conditional_independence_table is False:
@@ -901,8 +909,9 @@ class GTM(nn.Module):
         plot_metric_scatter(data=data_plotting, metric=metric, covariate=False, x_lim=x_lim, y_lim=y_lim, metric_type=metric_type, 
                         pairs=significant_dependence_pairs, strength_value=threshholding_metric_values, 
                         strength_name=strength_name, show_colorbar=show_colorbar, hide_axis_info=hide_axis_info, sub_title_fontsize=sub_title_fontsize,
-                        after_marginal_transformation=after_marginal_transformation, label_metric=label_metric)
-        
+                        after_marginal_transformation=after_marginal_transformation, label_metric=label_metric, storage=storage,
+                        show_plot=show_plot)
+
     def plot_conditional_dependence_graph(self, 
                                               conditional_independence_table=False, 
                                               dependence_metric="iae", 
@@ -916,7 +925,9 @@ class GTM(nn.Module):
                                               pos_list=None, 
                                               pos_tuple_list=None, 
                                               k=1.5, 
-                                              seed_graph=42
+                                              seed_graph=42,
+                                              storage=None,
+                                              show_plot=True
                                               ):
         
         # Taking internally stored one from last run
@@ -940,10 +951,11 @@ class GTM(nn.Module):
             plot_graph_conditional_independencies(ci_matrix, 
                                                 gene_names=names, 
                                                 min_abs_mean=minimum_dependence_threshold,
-                                                pos_list=pos_list, pos_tuple_list=pos_tuple_list, k=k, seed_graph=seed_graph)
-        
+                                                pos_list=pos_list, pos_tuple_list=pos_tuple_list, k=k, seed_graph=seed_graph, storage=storage,
+                                                show_plot=show_plot)
+
         elif pair_plots is True:
-            
+
             if after_marginal_transformation == True:
                 data_plotting = self.after_transformation(data).detach().numpy()
             else:
@@ -965,15 +977,18 @@ class GTM(nn.Module):
                                                 pos_list=pos_list,
                                                 pos_tuple_list=pos_tuple_list,
                                                 k=k,
-                                                seed_graph=seed_graph)
-            
+                                                seed_graph=seed_graph,
+                                                storage=storage,
+                                                show_plot=show_plot)
+
     def plot_conditional_dependence_pair(self, 
                                              sample_indices,
                                              resampled_samples,
                                              show_colorbar=True,
                                              title=None,
                                              show_ticks=False,
-                                             storage=None):
+                                             storage=None,
+                                             show_plot=True):
             
         plot_conditional_dependence_pair(loaded_model=self,
                                              sample_indices=sample_indices,
@@ -981,5 +996,6 @@ class GTM(nn.Module):
                                              show_colorbar=show_colorbar,
                                              title=title,
                                              storage=storage,
-                                             show_ticks=show_ticks)
+                                             show_ticks=show_ticks,
+                                             show_plot=show_plot)
             

@@ -7,7 +7,7 @@ import numpy as np
 
 def plot_metric_scatter(data, metric, covariate=False, x_lim=None, y_lim=None, metric_type="matrix", 
                         pairs=False, strength_value=False, strength_name="", show_colorbar=True, hide_axis_info=False, sub_title_fontsize=10,
-                        after_marginal_transformation=False, label_metric="Pseudo Conditional Correlation"):
+                        after_marginal_transformation=False, label_metric="Pseudo Conditional Correlation", storage=None, show_plot=True):
     # Ensures that by default all points are in the plot and axis have the same span (not distortion, can see distribution clearly)
     if x_lim is None:
         x_lim = [data.min(), data.max()]
@@ -112,4 +112,9 @@ def plot_metric_scatter(data, metric, covariate=False, x_lim=None, y_lim=None, m
     # Remove the last (9th) empty plot
     #fig.delaxes(axs[2,2])
 
-    return fig
+    if storage:
+        plt.savefig(storage, bbox_inches="tight")
+    if show_plot == True:
+        plt.show()
+    else:
+        plt.close(fig)

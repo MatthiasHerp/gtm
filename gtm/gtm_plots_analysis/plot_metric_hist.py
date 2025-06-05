@@ -5,7 +5,7 @@ from itertools import combinations
 import warnings
 import numpy as np
 
-def plot_metric_hist(metric, covariate=False, bins=20):
+def plot_metric_hist(metric, covariate=False, bins=20, storage=None, show_plot=True):
 
     if torch.is_tensor(metric):
         metric = metric.detach().numpy()
@@ -54,4 +54,9 @@ def plot_metric_hist(metric, covariate=False, bins=20):
         ax.set_xlabel("y_" + str(0))
         ax.set_ylabel("y_" + str(1))
 
-    return fig
+    if storage:
+        plt.savefig(storage, bbox_inches="tight")
+    if show_plot == True:
+        plt.show()
+    else:
+        plt.close(fig)

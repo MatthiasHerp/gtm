@@ -6,7 +6,7 @@ import warnings
 import numpy as np
 
 
-def plot_densities(data,covariate=False,x_lim=None,y_lim=None,density_plot=True):
+def plot_densities(data,covariate=False,x_lim=None,y_lim=None,density_plot=True, storage=None, show_plot=True):
 
     # Ensures that by default all points are in the plot and axis have the same span (not distortion, can see distribution clearly)
     if x_lim is None:
@@ -99,5 +99,10 @@ def plot_densities(data,covariate=False,x_lim=None,y_lim=None,density_plot=True)
             ax.set_xlim(x_lim)
         if y_lim is not None:
             ax.set_ylim(y_lim)
-
-    return fig
+            
+    if storage:
+        plt.savefig(storage, bbox_inches="tight")
+    if show_plot == True:
+        plt.show()
+    else:
+        plt.close(fig)

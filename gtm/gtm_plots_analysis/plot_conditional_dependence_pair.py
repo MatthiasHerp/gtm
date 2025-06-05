@@ -10,6 +10,7 @@ def plot_conditional_dependence_pair(
     show_colorbar=True,
     title=None,
     storage=None,
+    show_plot=True,
     show_ticks=False  # <-- New argument
 ):
     # Define figure and custom gridspec
@@ -91,9 +92,15 @@ def plot_conditional_dependence_pair(
     # ----------- Title and saving -----------
     if title is not None:
         fig.suptitle(title)
+        
+    plt.tight_layout(rect=[0, 0, 0.98, 0.96])
 
     if storage:
         plt.savefig(storage, bbox_inches="tight")
 
-    plt.tight_layout(rect=[0, 0, 0.98, 0.96])
-    plt.show()
+    
+    if show_plot == True:
+        plt.show()
+    else:
+        plt.close(fig)
+    

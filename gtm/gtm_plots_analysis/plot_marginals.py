@@ -5,7 +5,7 @@ from itertools import combinations
 import warnings
 import numpy as np
 
-def plot_marginals(data,covariate=False,names=False, y_lim=False):
+def plot_marginals(data,covariate=False,names=False, y_lim=False, storage=None, show_plot=True):
     """
     function takes data and creates a grid of histograms of each column in the data tensor
 
@@ -45,4 +45,9 @@ def plot_marginals(data,covariate=False,names=False, y_lim=False):
         if y_lim is not False:
             axs[row, col].set_ylim(y_lim)
 
-    return fig
+    if storage:
+        plt.savefig(storage, bbox_inches="tight")
+    if show_plot == True:
+        plt.show()
+    else:
+        plt.close(fig)

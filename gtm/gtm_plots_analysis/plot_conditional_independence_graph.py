@@ -2,8 +2,8 @@ import networkx as nx
 import numpy as np
 import matplotlib.pyplot as plt
 
-def plot_graph_conditional_independencies(abs_array, gene_names, min_abs_mean=0.1, storge=None, 
-                                          pos_list=None, pos_tuple_list=None, k=1.5, seed_graph=42):
+def plot_graph_conditional_independencies(abs_array, gene_names, min_abs_mean=0.1, storage=None, 
+                                          pos_list=None, pos_tuple_list=None, k=1.5, seed_graph=42, show_plot=True):
     edge_array = np.tril(abs_array,-1)
     edge_array[edge_array < min_abs_mean] = 0
 
@@ -48,6 +48,10 @@ def plot_graph_conditional_independencies(abs_array, gene_names, min_abs_mean=0.
                             font_color='white')
     nx.draw_networkx_edge_labels(G,pos,edge_labels=edge_labels,font_size=10)
     plt.box(False)
-    if storge is not None:
-        plt.savefig(storge)
-    plt.show()
+    if storage is not None:
+        plt.savefig(storage)
+    if show_plot == True:
+        plt.show()
+    else:
+        plt.close(fig)
+    
