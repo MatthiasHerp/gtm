@@ -290,35 +290,89 @@ def compute_k_fixed_degrees(x, t#, n
     k = torch.searchsorted(t, x.contiguous()) - 1
     return k
 
+#def deboor_algorithm_fixed_degrees(x, k, t, c, p):
+#    """
+#    Vectorized De Boor algorithm for B-spline evaluation.
+#    
+#    Args:
+#        x: (batch, num_x) - Input values
+#        k: (batch, num_x) - Knot interval indices
+#        t: (num_knots) - Knot positions
+#        c: (batch, num_control, output_dim) - Control points for each spline
+#        p: (scalar) - Degree of the B-spline
+#    
+#    Returns:
+#        y: (batch, num_x, output_dim) - Evaluated spline values
+#    """
+#    batch_size, num_x = x.shape
+#
+#    d = torch.stack([ torch.stack( [c[i][j + k[i] - p] for j in range(p + 1)] , dim=0) for i in range(0,batch_size) ])
+#
+#    # Recursive De Boor iterations
+#    for r in range(1, p + 1):
+#        for j in range(p, r - 1, -1):
+#            alpha = (x - t[j + k - p]) / (t[j + 1 + k - r] - t[j + k - p] + 1e-9)  # Avoid div by zero
+#            
+#            new_d = d.clone()
+#            new_d[:, j] = (1 - alpha) * d[:,j - 1] + alpha * d[:,j]
+#            d = new_d 
+#
+#
+#    return d[:,p]  # Final evaluated values
+#
+
 def deboor_algorithm_fixed_degrees(x, k, t, c, p):
     """
-    Vectorized De Boor algorithm for B-spline evaluation.
-    
+    Loop-free, vectorized De Boor algorithm for cubic B-splines.
+
     Args:
-        x: (batch, num_x) - Input values
-        k: (batch, num_x) - Knot interval indices
-        t: (num_knots) - Knot positions
-        c: (batch, num_control, output_dim) - Control points for each spline
-        p: (scalar) - Degree of the B-spline
+        x: (B, N) - Input values
+        k: (B, N) - Knot interval indices (integers)
+        t: (T,) - Knot vector (1D tensor of floats)
+        c: (B, M, D) - Control points (batch of control point sequences)
     
     Returns:
-        y: (batch, num_x, output_dim) - Evaluated spline values
+        y: (B, N, D) - Evaluated spline values
     """
-    batch_size, num_x = x.shape
+    c = c.unsqueeze(-1)
+    
+    B, N = x.shape
+    _, M, D = c.shape
 
-    d = torch.stack([ torch.stack( [c[i][j + k[i] - p] for j in range(p + 1)] , dim=0) for i in range(0,batch_size) ])
+    # Helper to extract d_i = c[:, k - offset]
+    def get_di(offset):
+        idx = (k - offset).clamp(min=0, max=M-1)  # (B, N)
+        return torch.gather(c, 1, idx.unsqueeze(-1).expand(-1, -1, D))  # (B, N, D)
 
-    # Recursive De Boor iterations
-    for r in range(1, p + 1):
-        for j in range(p, r - 1, -1):
-            alpha = (x - t[j + k - p]) / (t[j + 1 + k - r] - t[j + k - p] + 1e-9)  # Avoid div by zero
-            
-            new_d = d.clone()
-            new_d[:, j] = (1 - alpha) * d[:,j - 1] + alpha * d[:,j]
-            d = new_d 
+    d0 = get_di(3)
+    d1 = get_di(2)
+    d2 = get_di(1)
+    d3 = get_di(0)
 
+    def alpha(x, i, j, r):
+        denom = (t[j + k - r] - t[i + k - 3] + 1e-9)
+        return ((x - t[i + k - 3]) / denom).clamp(0.0, 1.0)
 
-    return d[:,p]  # Final evaluated values
+    a1 = alpha(x, 0, 1, 3)
+    a2 = alpha(x, 1, 2, 2)
+    a3 = alpha(x, 2, 3, 1)
+
+    d10 = (1 - a1).unsqueeze(-1) * d0 + a1.unsqueeze(-1) * d1
+    d11 = (1 - a2).unsqueeze(-1) * d1 + a2.unsqueeze(-1) * d2
+    d12 = (1 - a3).unsqueeze(-1) * d2 + a3.unsqueeze(-1) * d3
+
+    a4 = alpha(x, 0, 2, 2)
+    a5 = alpha(x, 1, 3, 1)
+
+    d20 = (1 - a4).unsqueeze(-1) * d10 + a4.unsqueeze(-1) * d11
+    d21 = (1 - a5).unsqueeze(-1) * d11 + a5.unsqueeze(-1) * d12
+
+    a6 = alpha(x, 0, 3, 1)
+
+    d30 = (1 - a6).unsqueeze(-1) * d20 + a6.unsqueeze(-1) * d21
+
+    return d30  # (B, N, D)
+
 
 
 def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p):
