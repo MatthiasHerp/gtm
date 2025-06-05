@@ -67,3 +67,15 @@ This code is released under a custom Non-Commercial Use License. You are free to
 For commercial use, please contact: Matthias Herp [matthias.herp@bioinf.med.uni-goettingen.de]
 
 See the [LICENSE](LICENSE) file for details.
+
+## ToDos:
+- clean code with automatic software for that
+
+## Scalability
+
+We run our model training with an Adam optimizer on 100 Dimensional R-Vine with 10000 observations in both the training and validation sets on one hydra GPU.
+Using Bernstein Polynomials of degree 10 for both the transformation and the decorrelation layers we take around 1/6 seconds per iteration in the pretraining and 1.05 second per iteration in the joint training.
+Using Bsplines Polynomials of degree 15 for the transformation and of degree 20 for the decorrelation layers we take around 0.12 seconds per iteration in the pretraining and 2.5 seconds per iteration in the joint training. 
+Due to the deBoor implementation the Bspline training is not so much affected by the degree of the splines compared to the bernstein polynomials.
+Using LBFGS for Bernstein Polynomials of degree 10 for both the transformation and the decorrelation layers we take around 1/3 seconds per iteration in the pretraining and 2.95 second per iteration in the joint training.
+Using LBFGS for Bsplines Polynomials of degree 15 for the transformation and of degree 20 for the decorrelation layers we take around 1/3 seconds per iteration in the pretraining and 6.8 seconds per iteration in the joint training. 
