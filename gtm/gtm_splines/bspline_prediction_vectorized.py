@@ -319,61 +319,64 @@ def compute_k_fixed_degrees(x, t#, n
 #
 #
 #    return d[:,p]  # Final evaluated values
-#
 
-def deboor_algorithm_fixed_degrees(x, k, t, c, p):
-    """
-    Loop-free, vectorized De Boor algorithm for cubic B-splines.
 
-    Args:
-        x: (B, N) - Input values
-        k: (B, N) - Knot interval indices (integers)
-        t: (T,) - Knot vector (1D tensor of floats)
-        c: (B, M, D) - Control points (batch of control point sequences)
+def compute_update_alpha(x, t, k, 
+                         r, d, j, 
+                         p=3):
     
-    Returns:
-        y: (B, N, D) - Evaluated spline values
-    """
-    c = c.unsqueeze(-1)
+    alpha = (x - t[j + k - p]) / (t[j + 1 + k - r] - t[j + k - p] + 1e-9)  # Avoid div by zero
+    new_d = d.clone()
+    new_d[:, j] = (1 - alpha) * d[:,j - 1] + alpha * d[:,j]
+    return new_d
+
+def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
     
-    B, N = x.shape
-    _, M, D = c.shape
+    #batch_size, num_x = x.shape
+    
+    offsets = torch.arange(0, p + 1, device=k.device).view(1, 1, p + 1)  # shape (1, 1, 4)
+    ctrl_idx = k.unsqueeze(-1) - p + offsets  # shape (B, N, 4)
+    #ctrl_idx = ctrl_idx.clamp(0, c.shape[1] - 1)  # prevent indexing out of bounds
 
-    # Helper to extract d_i = c[:, k - offset]
-    def get_di(offset):
-        idx = (k - offset).clamp(min=0, max=M-1)  # (B, N)
-        return torch.gather(c, 1, idx.unsqueeze(-1).expand(-1, -1, D))  # (B, N, D)
-
-    d0 = get_di(3)
-    d1 = get_di(2)
-    d2 = get_di(1)
-    d3 = get_di(0)
-
-    def alpha(x, i, j, r):
-        denom = (t[j + k - r] - t[i + k - 3] + 1e-9)
-        return ((x - t[i + k - 3]) / denom).clamp(0.0, 1.0)
-
-    a1 = alpha(x, 0, 1, 3)
-    a2 = alpha(x, 1, 2, 2)
-    a3 = alpha(x, 2, 3, 1)
-
-    d10 = (1 - a1).unsqueeze(-1) * d0 + a1.unsqueeze(-1) * d1
-    d11 = (1 - a2).unsqueeze(-1) * d1 + a2.unsqueeze(-1) * d2
-    d12 = (1 - a3).unsqueeze(-1) * d2 + a3.unsqueeze(-1) * d3
-
-    a4 = alpha(x, 0, 2, 2)
-    a5 = alpha(x, 1, 3, 1)
-
-    d20 = (1 - a4).unsqueeze(-1) * d10 + a4.unsqueeze(-1) * d11
-    d21 = (1 - a5).unsqueeze(-1) * d11 + a5.unsqueeze(-1) * d12
-
-    a6 = alpha(x, 0, 3, 1)
-
-    d30 = (1 - a6).unsqueeze(-1) * d20 + a6.unsqueeze(-1) * d21
-
-    return d30  # (B, N, D)
-
-
+    # Expand `c` to gather control points for each (B, N, 4)
+    d = torch.gather(
+        c.unsqueeze(1).expand(-1, k.shape[1], -1),  # shape (B, N, M)
+        2,
+        ctrl_idx  # shape (B, N, 4)
+    ).mT
+    
+    r = 1
+    j = 3
+    d = compute_update_alpha(x, t, k, 
+                         r, d, j, 
+                         p=3)
+    j = 2
+    d = compute_update_alpha(x, t, k, 
+                         r, d, j, 
+                         p=3)
+    j = 1
+    d = compute_update_alpha(x, t, k, 
+                         r, d, j, 
+                         p=3)
+    
+    r = 2
+    j = 3
+    d = compute_update_alpha(x, t, k, 
+                         r, d, j, 
+                         p=3)
+    j = 2
+    d = compute_update_alpha(x, t, k, 
+                         r, d, j, 
+                         p=3)
+     
+    r = 3
+    j = 3
+    d = compute_update_alpha(x, t, k, 
+                         r, d, j, 
+                         p=3)
+    
+    return d[:,p]
+        
 
 def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p):
         batch_size, num_x = x.shape
