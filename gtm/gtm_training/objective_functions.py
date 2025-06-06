@@ -1,9 +1,10 @@
 import torch
 from torch.distributions import Normal
 
-def log_likelihood(model, samples, train_covariates=False, train=True, evaluate=True, mean_loss=False):
+def log_likelihood(model, samples, mean_loss=False):
+    # train_covariates=False, train=True, evaluate=True,
 
-    return_dict_nf_mctm = model.forward(samples, covariate=train_covariates, train=train, evaluate=evaluate)
+    return_dict_nf_mctm = model.forward(samples) #, covariate=train_covariates, train=train, evaluate=evaluate)
 
     log_likelihood_latent = Normal(0, 1).log_prob(return_dict_nf_mctm["output"])
 

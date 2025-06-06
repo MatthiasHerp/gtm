@@ -87,7 +87,7 @@ def bernstein_prediction_vectorized(params_a, input_a,
                        degree, spline_range, knots=None, monotonically_increasing=False, 
                        derivativ=0, return_penalties=False, calc_method="does_not_matter",
                        span_factor=0.1, span_restriction="reluler",
-                       covariate=False, params_covariate=False, covaraite_effect="multiplicativ",
+                       covariate=False, params_covariate=False, covariate_effect="multiplicativ",
                        penalize_towards=0, order=3, varying_degrees=True,params_a_mask=None, binom_n=None, binom_n1=None, binom_n2=None): #device=None
 
     input_a_clone = input_a

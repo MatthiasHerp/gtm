@@ -569,7 +569,7 @@ def train(model, train_dataloader, validate_dataloader=False, train_covariates=F
 
     def closure():
         opt.zero_grad()
-        return_dict_model_objective  = model.training_objective(y_train, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=train_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix) # use the `objective` function
+        return_dict_model_objective  = model.__training_objective__(y_train, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=train_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix) # use the `objective` function
         
         loss = return_dict_model_objective["loss_with_penalties"].mean()
         
@@ -593,6 +593,7 @@ def train(model, train_dataloader, validate_dataloader=False, train_covariates=F
         scheduler = get_cosine_schedule_with_warmup(opt, num_warmup_steps=5, num_training_steps=iterations, num_cycles=0.5, last_epoch=-1) ##3,4,5 warmup steps machen 
 
     loss_list = []
+    loss_list_val = []
 
     if validate_dataloader is not False:
         with open("model.pkl", "wb") as f:
@@ -614,7 +615,7 @@ def train(model, train_dataloader, validate_dataloader=False, train_covariates=F
             
             if optimizer == "Adam":
                 opt.zero_grad()
-                return_dict_model_objective  = model.training_objective(y_train, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=train_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix) # use the `objective` function
+                return_dict_model_objective  = model.__training_objective__(y_train, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=train_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix) # use the `objective` function
                 
                 loss = return_dict_model_objective["loss_with_penalties"].mean()
                 loss.backward()
@@ -641,12 +642,14 @@ def train(model, train_dataloader, validate_dataloader=False, train_covariates=F
             
             if objective_type is "negloglik":
                 with torch.no_grad():
-                    return_dict_model_objective_val  = model_val.training_objective(y_validate, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=validate_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix)
+                    return_dict_model_objective_val  = model_val.__training_objective__(y_validate, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=validate_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix)
                     current_loss_val = return_dict_model_objective_val["loss_without_penalties"].mean() # No penalties as on validation set
             else:
-                return_dict_model_objective_val  = model.training_objective(y_validate, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=validate_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix)
+                return_dict_model_objective_val  = model.__training_objective__(y_validate, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=validate_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix)
                 current_loss_val = return_dict_model_objective_val["loss_without_penalties"].mean() # No penalties as on validation set
 
+            loss_list_val.append(current_loss_val.item())
+            
             if verbose:
                 print("current_loss_val: ",current_loss_val.item())
 
@@ -670,8 +673,9 @@ def train(model, train_dataloader, validate_dataloader=False, train_covariates=F
     model.load_state_dict(early_stopper.best_model_state)
     
     # Rerun model at the end to get final penalties
-    return_dict_model_training  = model.training_objective(y_train, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=train_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix)
+    return_dict_model_training  = model.__training_objective__(y_train, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=train_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix)
     return_dict_model_training["loss_list_training"] = loss_list
+    return_dict_model_training["loss_list_validation"] = loss_list_val
     return_dict_model_training["number_iterations"] = number_iterations
     
     end = time.time()

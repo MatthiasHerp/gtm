@@ -40,7 +40,7 @@ def compute_conditional_independence_kld(self,
         ll_evaluation_data = self.log_likelihood(evaluation_data).detach().cpu()
         
         precision_matrix = self.compute_pseudo_precision_matrix(evaluation_data).detach().cpu()
-        correlation_matrix = self.compute_pseudo_correlation_matrix(evaluation_data).detach().cpu()
+        correlation_matrix = self.compute_pseudo_conditional_correlation_matrix(evaluation_data).detach().cpu()
         
         
         precision_matrix_summary_statistics = compute_precision_matrix_summary_statistics(precision_matrix)

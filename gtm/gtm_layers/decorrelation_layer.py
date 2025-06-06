@@ -10,7 +10,7 @@ from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction
 
 class Decorrelation(nn.Module):
     def __init__(self, degree, number_variables, spline_range, spline="bspline", span_factor=torch.tensor(0.1), span_restriction="reluler",
-                 number_covariates=False, covaraite_effect="multiplicativ", calc_method_bspline="deBoor",
+                 number_covariates=False, covariate_effect="multiplicativ", calc_method_bspline="deBoor",
                  affine_layer=False, degree_multi=False, spline_order=3, device="cpu"):
         super().__init__()
         self.type = "decorrelation"
@@ -61,7 +61,7 @@ class Decorrelation(nn.Module):
         else:
             self.params_multiplier = False
 
-        self.covaraite_effect = covaraite_effect
+        self.covariate_effect = covariate_effect
         
         self.calc_method_bspline = calc_method_bspline
         
@@ -146,7 +146,7 @@ class Decorrelation(nn.Module):
         #                    span_restriction=self.span_restriction,
         #                    covariate=covariate,
         #                    params_covariate=False, #self.params_covariate[:, covar_num],
-        #                    covaraite_effect=self.covaraite_effect,
+        #                    covariate_effect=self.covariate_effect,
         #                    calc_method=self.calc_method_bspline,
         #                    order = self.spline_order)  
         
@@ -163,7 +163,7 @@ class Decorrelation(nn.Module):
                             span_restriction=self.span_restriction,
                             covariate=covariate, 
                             params_covariate=self.params_covariate, 
-                            covaraite_effect=self.covaraite_effect,
+                            covariate_effect=self.covariate_effect,
                             penalize_towards=0, 
                             order=self.spline_order,
                             varying_degrees=False,
@@ -210,7 +210,7 @@ class Decorrelation(nn.Module):
                             span_restriction=self.span_restriction,
                             covariate=covariate, 
                             params_covariate=self.params_covariate, 
-                            covaraite_effect=self.covaraite_effect,
+                            covariate_effect=self.covariate_effect,
                             penalize_towards=0, 
                             order=self.spline_order,
                             varying_degrees=False,
@@ -229,7 +229,7 @@ class Decorrelation(nn.Module):
                             span_restriction=self.span_restriction,
                             covariate=covariate, 
                             params_covariate=self.params_covariate, 
-                            covaraite_effect=self.covaraite_effect,
+                            covariate_effect=self.covariate_effect,
                             penalize_towards=0, 
                             order=self.spline_order,
                             varying_degrees=False,

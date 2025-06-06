@@ -264,6 +264,4 @@ def plot_splines(layer, covariate_exists=False, affine=False, storage=None, show
         plt.savefig(storage, bbox_inches="tight")
     if show_plot == True:
         plt.show()
-    else:
-        plt.close(fig)
         

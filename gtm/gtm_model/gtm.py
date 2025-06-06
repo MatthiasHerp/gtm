@@ -25,33 +25,127 @@ from gtm.gtm_plots_analysis.plot_conditional_independence_graph import plot_grap
 from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import plot_graph_conditional_independencies_with_pairplots
 from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import plot_conditional_dependence_pair
 
+from typing import Literal, List, Tuple  # Still needed
 
 class GTM(nn.Module):
-    def __init__(self, 
-                 number_variables,
-                 transformation_spline_range=list([[-15], [15]]), 
-                 decorrelation_spline_range=list([[-15], [15]]), 
-                 spline_transformation="bspline", spline_decorrelation="bspline", # bernstein bernstein bspline
-                 degree_transformations=15, degree_decorrelation=30, span_factor=torch.tensor(0.1), span_restriction="reluler", #span_factor=torch.tensor(0.1)
-                 number_covariates=False,
-                 num_trans_layers=1,
-                 num_decorr_layers=3, initial_log_transform=False,
-                 covaraite_effect="multiplicativ",
-                 calc_method_bspline="deBoor",
-                 affine_decorr_layer=False,
-                 degree_multi=False,
-                 spline_order=3,
-                 device="cpu",
-                 transform_only=False):
+    """
+        Graphical Transformation Model (GTM).
+        
+        GTMs are highly flexible density estimation models. The combine marginal transformations, named the transfomation layer,
+        with a sequence normalizing flow like layers, named decorrelation layers.
+        The main advantage of GTMs is that they combine high flexibility in learning complex marginals and dependency structures with
+        interpretability of the conditional dependency structure between the varaibles.
+        The interpretability stems from the GTMs decorrelation layers that can be interpreted as creating a pseudo correlation matrix.
+        This means that at each point in the pace of the data, the GTM returns a local pseudo correlation matrix and hence local pseudo conditional correlations.
+
+        Parameters
+        ----------
+        number_variables : int
+            The number of variables in the data.
+        number_transformation_layers : Literal[0, 1] = 1, optional
+            The number of transformation layers. Either 0 or 1. Default is 1.
+        number_decorrelation_layers : int, optional
+            The number of decorrelation layers. Default is 3. a Minimum of 3 is recommended to ensure that variable ordering does not influence the results.
+        degree_transformations : int | list[int] = 15, optional
+            The degree of the transformation layer splines. One can either pass an integer which is then used as the degree for all variables or a
+            list of integers as long as the number of variables, which then results in varying degrees across variables.
+            Varying degrees make sense if different dimensions have marginals that vary strongly in their deviation from a standard gaussian distribution.
+            Default is 15.
+        degree_decorrelation : int = 30, optional
+            The degree of the decorrelation layer splines. The degree is the same for every spline across every decorrelation layer. Default is 30.
+        spline_transformation : Literal["bspline", "bernstein"] = "bspline", optional
+            The type of spline used in the transformation layer. Either "bspline" or "bernstein". Default is "bspline".
+            Bsplines tend to be more flexible and due to the implementation via de Boor's algorithm they do increase compute time to much when increasing the degree.
+            Bernstein polynomials on the other hand are faster a smaller degrees and require less penalization for smoothness at lower degrees.
+        spline_decorrelation : Literal["bspline", "bernstein"] = "bspline", optional
+            The type of spline used in the decorrelation layer. Either "bspline" or "bernstein". Default is "bspline".
+            Bsplines tend to be more flexible and due to the implementation via de Boor's algorithm they do increase compute time to much when increasing the degree.
+            Bernstein polynomials on the other hand are faster a smaller degrees and require less penalization for smoothness at lower degrees.
+            The decorrelation layers require most of the computational, hence for high dimensional data and not to complex dependencies Bernstein polynomials can be more efficient.
+        transformation_spline_range : List[float, float] = [-15, 15], optional
+            The range of the transformation splines, hence the minimum and maximum value across all variables. 
+            This is the range in which the transformation layer is defined. 
+            Therefor it is recommended to scale the data to a common range before training the model.
+            A further recommendation is to set the spline range 10-20% larger than the range of the data to allow for better out of sample prediction in validation and test sets.
+            Outside of the range the transformation layer uses a span restriction which results the border case prediction.
+            The same is true for the decorrelation layer.
+            Default spline range is [-15, 15].
+        device : str | torch.device = "cpu", optional
+            The device on which the model is trained. Default is "cpu". Can also be a torch.device object such as a torch.device("cuda:0") for GPU training.
+        -----------
+    """
+    def __init__(
+        self,
+        number_variables: int,
+        number_transformation_layers: Literal[0, 1] = 1,
+        number_decorrelation_layers: int = 3,
+        degree_transformations: int | list[int] = 15,
+        degree_decorrelation: int = 30,
+        spline_transformation: Literal["bspline", "bernstein"] = "bspline",
+        spline_decorrelation: Literal["bspline", "bernstein"] = "bspline",
+        transformation_spline_range: Tuple[float, float] = (-15, 15),
+        device: str | torch.device = "cpu"
+    ):
+        """
+        Parameters
+        ----------
+        number_variables : int
+            The number of variables in the data.
+        number_transformation_layers : Literal[0, 1] = 1, optional
+            The number of transformation layers. Either 0 or 1. Default is 1.
+        number_decorrelation_layers : int, optional
+            The number of decorrelation layers. Default is 3. a Minimum of 3 is recommended to ensure that variable ordering does not influence the results.
+        degree_transformations : int | list[int] = 15, optional
+            The degree of the transformation layer splines. One can either pass an integer which is then used as the degree for all variables or a
+            list of integers as long as the number of variables, which then results in varying degrees across variables.
+            Varying degrees make sense if different dimensions have marginals that vary strongly in their deviation from a standard gaussian distribution.
+            Default is 15.
+        degree_decorrelation : int = 30, optional
+            The degree of the decorrelation layer splines. The degree is the same for every spline across every decorrelation layer. Default is 30.
+        spline_transformation : Literal["bspline", "bernstein"] = "bspline", optional
+            The type of spline used in the transformation layer. Either "bspline" or "bernstein". Default is "bspline".
+            Bsplines tend to be more flexible and due to the implementation via de Boor's algorithm they do increase compute time to much when increasing the degree.
+            Bernstein polynomials on the other hand are faster a smaller degrees and require less penalization for smoothness at lower degrees.
+        spline_decorrelation : Literal["bspline", "bernstein"] = "bspline", optional
+            The type of spline used in the decorrelation layer. Either "bspline" or "bernstein". Default is "bspline".
+            Bsplines tend to be more flexible and due to the implementation via de Boor's algorithm they do increase compute time to much when increasing the degree.
+            Bernstein polynomials on the other hand are faster a smaller degrees and require less penalization for smoothness at lower degrees.
+            The decorrelation layers require most of the computational, hence for high dimensional data and not to complex dependencies Bernstein polynomials can be more efficient.
+        transformation_spline_range : List[float, float] = [-15, 15], optional
+            The range of the transformation splines, hence the minimum and maximum value across all variables. 
+            This is the range in which the transformation layer is defined. 
+            Therefor it is recommended to scale the data to a common range before training the model.
+            A further recommendation is to set the spline range 10-20% larger than the range of the data to allow for better out of sample prediction in validation and test sets.
+            Outside of the range the transformation layer uses a span restriction which results the border case prediction.
+            The same is true for the decorrelation layer.
+            Default spline range is [-15, 15].
+        device : str | torch.device = "cpu", optional
+            The device on which the model is trained. Default is "cpu". Can also be a torch.device object such as a torch.device("cuda:0") for GPU training.
+        -----------
+        """
         super(GTM, self).__init__()
+        
+        # Parameters below are left out of init for the initial package release
+        decorrelation_spline_range: List[List[float]] = [[-15], [15]]
+        span_factor: torch.Tensor = torch.tensor(0.1)
+        span_restriction: str = "reluler"
+        number_covariates: bool | int = False  #False means no covariates, or its the count
+        initial_log_transform: bool = False
+        covariate_effect: str = "multiplicativ" 
+        calc_method_bspline: str = "deBoor"
+        affine_decorr_layer: bool = False
+        degree_multi: bool | int = False
+        spline_order: int = 3
+        transform_only: bool = False
+        
         
         self.transform_only = transform_only
         
         self.number_variables = number_variables
 
         # Repeat polynomial ranges for all variables as this is the range for the bsplines essentially
-        self.transformation_spline_range = list([transformation_spline_range[0] * self.number_variables,
-                                                transformation_spline_range[1] * self.number_variables])
+        self.transformation_spline_range = list([[transformation_spline_range[0]] * self.number_variables,
+                                                [transformation_spline_range[1]] * self.number_variables])
         self.decorrelation_spline_range = list([decorrelation_spline_range[0] * self.number_variables,
                                                 decorrelation_spline_range[1] * self.number_variables])
   
@@ -73,11 +167,11 @@ class GTM(nn.Module):
 
         self.number_covariates = number_covariates
 
-        self.num_trans_layers = num_trans_layers
+        self.num_trans_layers = number_transformation_layers
 
         self.initial_log_transform = initial_log_transform
 
-        self.covaraite_effect = covaraite_effect
+        self.covariate_effect = covariate_effect
         
         self.calc_method_bspline = calc_method_bspline
         
@@ -97,18 +191,18 @@ class GTM(nn.Module):
                                      spline_order = self.spline_order,
                                      device=device) 
             
-        if self.num_trans_layers == 2:
-            warnings.warn("Warning: model is only implemented to have one transformation layer.")
+        if self.num_trans_layers > 1:
+            raise NotImplementedError("Model is only implemented to have 0 or 1 transformation layer. This is enough as a TM with enough degrees can model any arbitrary continious distribution.")
 
         self.flip_matrix = generate_diagonal_matrix(self.number_variables).to(self.device)
 
-        self.number_decorrelation_layers = num_decorr_layers
+        self.number_decorrelation_layers = number_decorrelation_layers
         if self.number_decorrelation_layers > 0:
             self.decorrelation_layers = nn.ModuleList([Decorrelation(degree=self.degree_decorrelation, number_variables=self.number_variables,
                                     spline_range=self.decorrelation_spline_range, span_factor=self.span_factor,
                                     span_restriction=self.span_restriction, spline=self.spline_decorrelation,
                                     number_covariates=self.number_covariates,
-                                    covaraite_effect = self.covaraite_effect,
+                                    covariate_effect = self.covariate_effect,
                                     calc_method_bspline = self.calc_method_bspline,
                                     spline_order = self.spline_order,
                                     affine_layer = self.affine_decorr_layer,
@@ -120,7 +214,20 @@ class GTM(nn.Module):
         self.conditional_independence_table=None
         
     
-    def to(self, device):
+    def to(self, 
+           device: str | torch.device ):
+        """
+        Pushes GTM and its layers to the reuired device.
+
+        Parameters
+        ----------
+        device : str | torch.device
+            The device on which the model is trained. Default is "cpu". Can also be a torch.device object such as a torch.device("cuda:0") for GPU training.
+        
+        Returns
+        -------
+        GTM pushed to device
+        """
         self.device = device
         self.transformation.device = device
         for decorrelation_layer in self.decorrelation_layers:
@@ -129,7 +236,7 @@ class GTM(nn.Module):
         return super().to(device)
         
     
-    def create_return_dict_nf_mctm(self, input):
+    def __create_return_dict_nf_mctm__(self, input):
         return {"output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
                 "log_d": torch.zeros(input.size() if input.dim() > 1 else input.unsqueeze(1).size()).to(self.device),
                 "transformation_second_order_ridge_pen_global": 0,
@@ -142,9 +249,32 @@ class GTM(nn.Module):
                 }
     
         
-    def forward(self, y, covariate=False, train=True, evaluate=True, return_scores_hessian=False, return_lambda_matrix = True):
+    def forward(self, y, return_lambda_matrix = True):
+        """
+        GTM forward pass.
+
+        Parameters
+        ----------
+        y : torch.FloatTensor 
+            The input data to pass through the model foward pass.
+        return_lambda_matrix: bool = True
+            Wether to compute the global lambda matrix in the forward pass or not. To not do it save a bit of compute.
         
-        return_dict_nf_mctm = self.create_return_dict_nf_mctm(y)
+        Returns
+        -------
+        A dictionary containing the latent space named "output", the log determinant "log_d", the differences for thes spline penalites 
+        "transformation_second_order_ridge_pen_global", "second_order_ridge_pen_global", "second_order_ridge_pen_global", "param_ridge_pen_global"
+        and the full model, hence global, lambda matrix "lambda_matrix_global".
+        """
+        # Some left out arguements for the first release version
+        # evaluate and train do not make sense anymore as we do not store basis in transformation layer
+        # a main reason is that we now allow training bathwise which prevents this
+        covariate=False
+        return_scores_hessian=False
+        train=True
+        evaluate=True
+    
+        return_dict_nf_mctm = self.__create_return_dict_nf_mctm__(y)
         
         if self.subset_dimension is not None:
             # if subset dimension is set then only use this dimension
@@ -265,24 +395,57 @@ class GTM(nn.Module):
             return return_dict_nf_mctm
 
 
-    def latent_space_representation(self, y, covariate=False):
-        return_dict = self.forward(y, covariate, train=False, evaluate=True)
+    def latent_space_representation(self, y):
+        """
+        Returns the fully transformed latent space Z for a given input Y. Z is distributed as a Gaussian N(0,I).
+
+        Parameters
+        ----------
+        y : torch.FloatTensor 
+            The input data to pass through the model foward pass.
+        return_lambda_matrix: bool = True
+            Wether to compute the global lambda matrix in the forward pass or not. To not do it save a bit of compute.
+        
+        Returns
+        -------
+        A dictionary containing the latent space named "output", the log determinant "log_d", the differences for thes spline penalites 
+        "transformation_second_order_ridge_pen_global", "second_order_ridge_pen_global", "second_order_ridge_pen_global", "param_ridge_pen_global"
+        and the full model, hence global, lambda matrix "lambda_matrix_global".
+        """
+        #covariate=False
+        return_dict = self.forward(y)#, covariate) #, train=False, evaluate=True)
         return return_dict["output"]
 
 
-    def log_likelihood_loss(self, y, covariate=False, train=True, evaluate=True, mean_loss=True):
+    def __log_likelihood_loss__(self, y, mean_loss=True):
+        # covariate=False, train=True, evaluate=True,
 
-        return_dict_nf_mctm = log_likelihood(model=self, samples=y, train_covariates=covariate, train=train, evaluate=evaluate, mean_loss=mean_loss)
+        return_dict_nf_mctm = log_likelihood(model=self, samples=y, mean_loss=mean_loss) # train_covariates=covariate, train=train, evaluate=evaluate,
 
         return_dict_nf_mctm["negative_log_likelihood_data"] = -1 * return_dict_nf_mctm["log_likelihood_data"]
             
         return return_dict_nf_mctm
     
     
-    def log_likelihood(self, samples, covariate=False, mean_loss=False):
-        return self.log_likelihood_loss(samples, covariate=False, mean_loss=mean_loss, train=False, evaluate=True)["log_likelihood_data"] #.sum(1)
+    def log_likelihood(self, y, mean_loss=False): #covariate=False, 
+        """
+        Returns the the log likelihood per sample for input Y. 
+
+        Parameters
+        ----------
+        y : torch.FloatTensor 
+            The input data for which to compute the log likelihood.
+        mean_loss: bool = False
+            Whether to return the mean of the log likelihood or not.
+        
+        Returns
+        -------
+        Returns the the log likelihood per sample for input Y. 
+        """
+        return self.__log_likelihood_loss__(y, covariate=False, mean_loss=mean_loss)["log_likelihood_data"] # covariate=False, train=False, evaluate=True
     
-    def training_objective(self, samples, penalty_params, train_covariates=False, lambda_penalty_params: torch.Tensor =False, 
+    
+    def __training_objective__(self, samples, penalty_params, train_covariates=False, lambda_penalty_params: torch.Tensor =False, 
                            adaptive_lasso_weights_matrix: torch.Tensor =False, 
                            avg = True, lambda_penalty_mode="square", objective_type = "negloglik"):
         
@@ -290,14 +453,95 @@ class GTM(nn.Module):
                                   adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix,
                                   avg = avg, lambda_penalty_mode = lambda_penalty_mode, objective_type = objective_type)
     
-    
-    def train(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), adaptive_lasso_weights_matrix = False,
-                  lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=False, patience=5, min_delta=1e-7,
-          optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", ema_decay=False, seperate_copula_training=False,
-          max_batches_per_iter=False):
 
-        if lambda_penalty_params is not False:
-            lambda_penalty_params = lambda_penalty_params.to(self.device)
+    def train(
+        self,
+        train_dataloader: torch.utils.data.DataLoader,
+        validate_dataloader: torch.utils.data.DataLoader | bool = False,
+        #train_covariates: torch.Tensor | bool = False,
+        #validate_covariates: torch.Tensor | bool = False,
+        penalty_splines_params: torch.FloatTensor = torch.FloatTensor([0, 0, 0, 0]),
+        penalty_lasso_conditional_independence: float | bool = False,
+        adaptive_lasso_weights_matrix: torch.Tensor | bool = False,
+        optimizer: Literal["LBFGS", "Adam"] = "LBFGS",
+        learning_rate: float = 1,
+        iterations: int = 1000,
+        patience: int = 5,
+        min_delta: float = 1e-7,
+        seperate_copula_training: bool = False,
+        max_batches_per_iter: int | bool = False):
+        """
+        Trains the GTM iteratively using gradient-based optimization.
+
+        Parameters
+        ----------
+        train_dataloader : DataLoader
+            DataLoader containing the training data.
+
+        validate_dataloader : DataLoader or bool, optional
+            DataLoader for validation data. If set to False, no validation based early stopping is performed. Default is False.
+
+        penalty_splines_params : torch.FloatTensor, optional
+            A tensor of shape (4,) specifying regularization strengths for different spline penalties:
+            (0) Ridge penalty on decorrelation layer spline parameters.
+            (1) First derivative ridge penalty (via first-order differencing) for decorrelation layer splines.
+            (2) Second derivative ridge penalty (via second-order differencing) for decorrelation layer splines.
+            (3) Second derivative ridge penalty (via second-order differencing) for transformation layer splines.
+            Default is zero for all components.
+
+        penalty_lasso_conditional_independence : float or bool, optional
+            Lasso penalty applied to encourage conditional independence based on the pseudo-correlation matrix of the training data.
+            If set to a float, standard Lasso is applied. If set to True and `adaptive_lasso_weights_matrix` is provided,
+            adaptive Lasso is applied. If False, Lasso is disabled.
+
+        adaptive_lasso_weights_matrix : torch.Tensor or bool, optional
+            Tensor specifying adaptive Lasso weights. Should be a square matrix of shape (d, d), where `d` is the number of variables.
+            Only the lower triangular part is used. A common approach is to first train without adaptive Lasso and then
+            retrain using weights based on the previous run, e.g., `1 / pseudo_corr_matrix.mean().abs()`.
+            If False or `penalty_lasso_param` is False, adaptive Lasso is not applied.
+
+        optimizer : {"LBFGS", "Adam"}, optional
+            Optimizer used for training. Default is "LBFGS".
+
+        learning_rate : float, optional
+            Learning rate for the optimizer. Default is 1.0.
+            Has no effect for "LBFGS", as a Wolfe line search is used instead.
+
+        iterations : int, optional
+            Maximum number of training iterations. Default is 1000.
+
+        patience : int, optional
+            Number of validation steps with no improvement before early stopping. Default is 5.
+
+        min_delta : float, optional
+            Minimum required change in validation loss to qualify as improvement. Default is 1e-7.
+
+        seperate_copula_training : bool, optional
+            If True, the copula (decorrelation layers) is trained separately after the transformation layers.
+            This may help ensure Gaussian marginals in the latent space after transformation. Default is False.
+
+        max_batches_per_iter : int or bool, optional
+            If set to an integer, limits the number of batches used per training iteration. If False, all batches are used. Default is False.
+
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - "loss_list_training": list of training losses per iteration
+            - "loss_list_validation": list of validation losses per iteration (if validation used)
+            - "number_iterations": total number of iterations performed
+            - "training_time": total time spent in training (seconds)
+            - All additional outputs from the final model's forward pass
+        """
+        objective_type="negloglik"
+        train_covariates = False
+        validate_covariates = False
+        verbose = False
+        lambda_penalty_mode = "square" #Literal["square", "absolute"]
+        #ema_decay: float | bool = False, used to have ema_decay in training
+
+        if penalty_lasso_conditional_independence is not False:
+            penalty_lasso_conditional_independence = penalty_lasso_conditional_independence.to(self.device)
             
         if adaptive_lasso_weights_matrix is not False:
             adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix.to(self.device)
@@ -315,7 +559,7 @@ class GTM(nn.Module):
                 self.transformation.binom_n1 = self.transformation.binom_n1.to(self.device) 
                 self.transformation.binom_n2 = self.transformation.binom_n2.to(self.device)      
         
-        return_dict_model_training = train(self, train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, train_covariates=train_covariates, validate_covariates=validate_covariates, penalty_params=penalty_params, lambda_penalty_params=lambda_penalty_params, learning_rate=learning_rate, 
+        return_dict_model_training = train(self, train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, train_covariates=train_covariates, validate_covariates=validate_covariates, penalty_params=penalty_splines_params, lambda_penalty_params=penalty_lasso_conditional_independence, learning_rate=learning_rate, 
                      iterations=iterations, verbose=verbose, patience=patience, min_delta=min_delta, optimizer=optimizer, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix, max_batches_per_iter=max_batches_per_iter)
         
         if seperate_copula_training==True:
@@ -323,26 +567,84 @@ class GTM(nn.Module):
         
         return return_dict_model_training
     
-    def pretrain_tranformation_layer(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=False, patience=5, min_delta=1e-7, return_plot=True,
-          optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", max_batches_per_iter=False):
+
+    def pretrain_transformation_layer(
+        self,
+        train_dataloader: torch.utils.data.DataLoader,
+        validate_dataloader: torch.utils.data.DataLoader | bool = False,
+        penalty_splines_params: torch.FloatTensor = torch.FloatTensor([0, 0, 0, 0]),
+        penalty_lasso_param: float | bool = False,
+        learning_rate: float = 1,
+        iterations: int = 2000,
+        patience: int = 5,
+        min_delta: float = 1e-7,
+        optimizer: Literal["LBFGS", "Adam"] = "LBFGS",
+        max_batches_per_iter: int | bool = False):
+        """
+        Pretrains only the transformation layer of the GTM using gradient-based optimization.
+
+        Parameters
+        ----------
+        train_dataloader : DataLoader
+            DataLoader containing the training data.
+        validate_dataloader : DataLoader or bool, optional
+            DataLoader for validation data. If False, no validation based early stopping is performed. Default is False.
+        penalty_splines_params : torch.FloatTensor, optional
+            A tensor of shape (4,) specifying regularization strengths for different model spline regularizations:
+            (0) decorrelation layer splines parameter ridge penalty (`penalty_decorrelation_ridge_param`),
+            (1) decorrelation layer splines first derivative ridge penalty (`penalty_decorrelation_ridge_first_difference`),
+            (2) decorrelation layer splines second derivative ridge penalty (`penalty_decorrelation_ridge_second_difference`),
+            (3) transformation layer splines second derivative ridge penalty (`penalty_transformation_ridge_second_difference`).
+            Only the fourth component is used during transformation pretraining. Default is zero.
+        penalty_lasso_param : float or bool, optional
+            Lasso penalty towards conditional independence applied to the pseudo correlation matrix.
+            Usually not relevant during transformation-only training, but included for flexibility.
+            If False, no Lasso is applied.
+        learning_rate : float, optional
+            Learning rate for the optimizer. Default is 1.0.
+            Has no effect for "LBFGS", as a Wolfe line search is used instead.
+        iterations : int, optional
+            Maximum number of training iterations. Default is 2000.
+        patience : int, optional
+            Number of validation steps with no improvement before early stopping. Default is 5.
+        min_delta : float, optional
+            Minimum change in validation loss to qualify as an improvement. Default is 1e-7.
+        optimizer : {"LBFGS", "Adam"}, optional
+            Optimizer to use for training. Default is "LBFGS".
+        max_batches_per_iter : int or bool, optional
+            If set, limits the number of batches used per training iteration. Default is False (use all batches).
+
+        Returns
+        -------
+        dict
+            Dictionary with training information, including:
+            - "loss_list_training": list of training loss values
+            - "loss_list_validation": list of validation loss values (if validation used)
+            - "number_iterations": total number of iterations performed
+            - "training_time": total training time in seconds
+            - other output keys from the forward pass of the final model state.
+        """
+        objective_type="negloglik"
+        train_covariates = False
+        validate_covariates = False
+        verbose = False
+        lambda_penalty_mode = "square" #Literal["square", "absolute"]
+        #ema_decay: float | bool = False, used to have ema_decay in training
+
         
         #optimizer='LBFGS'
         #warnings.warn("Optimiser for pretrain_tranformation_layer is always LBFGS. If this is an issue change the code.")
         
         self.transform_only = True
-        lambda_penalty_params = False # makes objective not check lambda matrix
+        penalty_lasso_conditional_independence = False # makes objective not check lambda matrix
     
-        if lambda_penalty_params is not False:
-            # set to false because this is the pretraining of the transformation layer
-            lambda_penalty_params = False
-            
         return_dict_model_training = train(self, 
                                            train_dataloader=train_dataloader, 
                                            validate_dataloader=validate_dataloader, 
                                            train_covariates=train_covariates, 
                                            validate_covariates=validate_covariates, 
-                                           penalty_params=penalty_params, 
-                                           lambda_penalty_params=lambda_penalty_params, 
+                                           penalty_params=penalty_splines_params, 
+                                           lambda_penalty_params=penalty_lasso_conditional_independence, 
                                            learning_rate=learning_rate, 
                                            iterations=iterations, 
                                            verbose=verbose, 
@@ -358,8 +660,41 @@ class GTM(nn.Module):
         return return_dict_model_training
     
     
-    def find_minimal_transformation_degrees(self,train_dataloader, validate_dataloader, iterations=100, degrees_try_list=list(range(5,155,5)), max_batches_per_iter=False):
-        
+    def find_minimal_transformation_degrees(
+        self,
+        train_dataloader: torch.utils.data.DataLoader,
+        iterations: int = 100,
+        degrees_try_list: list[int] = list(range(5, 155, 5)),
+        max_batches_per_iter: int | bool = False):
+        """
+        Searches for the smallest transformation spline degree that is enough to transform the training data into standard Gaussian space for each data dimension individually.
+
+        For each data dimension, this method iteratively trains the transformation layer using spline degrees from the provided list, starting at the smallest and increasing.
+        It then perorms a shapiro wilk test on the latent space after transformation to evaluate if the current degree was enough to transform the data into a gaussian.
+        If the P-value > 0.05 then the degree is enough, stored and the process continues with the next data dimension.
+
+        Parameters
+        ----------
+        train_dataloader : DataLoader
+            DataLoader containing the training data.
+
+        iterations : int, optional
+            Number of training iterations per spline degree tested. Default is 100.
+
+        degrees_try_list : list of int, optional
+            List of spline degrees to try for the transformation layer. The method will test each and select the best.
+            If a custom list is passed make sure it is increasing in value.
+            Default is `list(range(5, 155, 5))`.
+
+        max_batches_per_iter : int or bool, optional
+            If set to an integer, limits the number of batches used in each training iteration. If False, all batches are used.
+            Default is False.
+
+        Returns
+        -------
+        The chosen degrees as a list and the respective p-values as a list.
+        """
+
         optimal_degree = []
         optimal_degree_pvalue = []
         for dimension in range(self.number_variables):
@@ -380,13 +715,13 @@ class GTM(nn.Module):
                     #                                        self.transformation_spline_range[1][dimension]])
                     tm_model.subset_dimension = dimension
             
-                    train_dict = tm_model.train(train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, iterations=iterations, optimizer="LBFGS",
+                    train_dict = tm_model.train(train_dataloader=train_dataloader, validate_dataloader=train_dataloader, iterations=iterations, optimizer="LBFGS",
                                     penalty_params=[0,0,0,0], adaptive_lasso_weights_matrix=False, lambda_penalty_params=False, 
                                     max_batches_per_iter=max_batches_per_iter)
                     
                     z_tilde = []
                     #y_train_all = []
-                    for y_train in validate_dataloader:
+                    for y_train in train_dataloader:
                         y_train_sub = y_train[:,tm_model.subset_dimension].unsqueeze(1)
                         z_tilde.append(tm_model.after_transformation(y_train_sub).squeeze())
                         #y_train_all.append(y_train_sub)
@@ -425,10 +760,23 @@ class GTM(nn.Module):
         
     
 
-    def compute_pseudo_precision_matrix(self, y, covariate=False):
+    def compute_pseudo_precision_matrix(self, y: torch.Tensor) -> torch.Tensor: #, covariate=False):
+        """
+        Computes the pseudo precision matrix from the data `y` based on the lambda matrices of the full GTM model.
+
+        Parameters
+        ----------
+        y : torch.Tensor
+            A 2D tensor of shape (n_samples, n_variables).
+
+        Returns
+        -------
+        torch.Tensor
+            A tensor of shape (n_samples, n_variables, n_variables) representing the pseudo precision matrix.
+        """
 
         with torch.no_grad():
-            return_dict = self.forward(y, covariate=covariate, evaluate=True, train=False, return_lambda_matrix=True)
+            return_dict = self.forward(y, return_lambda_matrix=True) #covariate=covariate, evaluate=True, train=False, return_lambda_matrix=True)
 
             precision_matrix = torch.matmul(torch.transpose(return_dict["lambda_matrix_global"], 1, 2),
                                             return_dict["lambda_matrix_global"])
@@ -436,7 +784,21 @@ class GTM(nn.Module):
         return precision_matrix
     
     
-    def compute_pseudo_correlation_matrix(self, y, covariate=False):
+    def compute_pseudo_conditional_correlation_matrix(self, y: torch.Tensor) -> torch.Tensor: #, covariate=False): #TODO: is pseudo conditional indepednence matrix! standardisted p matrix
+        """
+        Computes the pseudo conditional correlation matrix from the data `y` based on the lambda matrices of the full GTM model.
+        This is essentially the standardised precision matrix, that way off diagonal elements represent the pseudo conditional correlations between the different dimensions.
+
+        Parameters
+        ----------
+        y : torch.Tensor
+            A 2D tensor of shape (n_samples, n_variables).
+
+        Returns
+        -------
+        torch.Tensor
+            A tensor of shape (n_samples, n_variables, n_variables) representing the pseudo conditional correlation matrix.
+        """
         
         def p_to_corr(matrix):
             d = matrix.size(0)
@@ -445,13 +807,32 @@ class GTM(nn.Module):
             return -1 * matrix / matrix_std_multiplied
 
         with torch.no_grad():
-            precision_matrix = self.compute_pseudo_precision_matrix( y, covariate=False)
+            precision_matrix = self.compute_pseudo_precision_matrix( y) #, covariate=False)
             correlation_matrix_train = torch.stack([p_to_corr(precision_matrix[obs_num,:,:]) for obs_num in range(precision_matrix.size(0))])
 
         return correlation_matrix_train
 
 
-    def sample(self, n_samples, covariate=False):
+    def sample(self, n_samples: int) -> torch.Tensor:
+        """
+        Generates samples from the fitted Graphical Transformation Model (GTM).
+
+        This method draws samples from the latent standard Gaussian space,
+        passes them through the learned inverse decorrelation layers and then the approximated inverse transformation layer,
+        and returns them in the original data space.
+
+        Parameters
+        ----------
+        n_samples : int
+            Number of samples to generate.
+
+        Returns
+        -------
+        torch.Tensor
+            A tensor of shape (n_samples, n_variables) containing the generated samples.
+        """
+
+        covariate=False
         
         # check if transformation contains params_inverse
         if self.transformation.params_inverse is None:
@@ -537,11 +918,23 @@ class GTM(nn.Module):
             return accepted_samples
         
         
-    def approximate_transformation_inverse(self):
+    def approximate_transformation_inverse(self) -> None:
+        """
+        Approximates the inverse of the transformation layer splines and stores the result.
+
+        This method computes an approximate inverse for each univariate transformation
+        spline in the transformation layer. The resulting parameters are cached within 
+        the model and used during sampling to transform latent Gaussian samples back 
+        to the original data space.
+
+        Returns
+        -------
+        None
+        """
         self.transformation.approximate_inverse(device=self.device)
         
         
-    def return_objective_for_hyperparameters(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), 
+    def __return_objective_for_hyperparameters__(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), 
                   adaptive_lasso_weights_matrix = False,
                   lambda_penalty_param=False, learning_rate=1, iterations=2000, patience=5, min_delta=1e-7,
           optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", seperate_copula_training=False,
@@ -631,48 +1024,122 @@ class GTM(nn.Module):
             torch.cuda.empty_cache()
         
         return target
+    
         
-    def hyperparameter_tune_penalties(self, 
-                                      train_dataloader, 
-                                      validate_dataloader, 
-                                      penvalueridge, #: list,
-                                      penfirstridge, #: list,
-                                      pensecondridge, #: list,
-                                      ctm_pensecondridge, #: list,
-                                      lambda_penalty_params, #: list,
-                                      train_covariates=False, 
-                                      validate_covariates=False, 
-                                      adaptive_lasso_weights_matrix = False,
-                                      learning_rate=1, 
-                                      iterations=2000, 
-                                      patience=5, 
-                                      min_delta=1e-7, 
-                                      optimizer='LBFGS', 
-                                      #lambda_penalty_mode="square", 
-                                      #objective_type="negloglik", 
-                                      seperate_copula_training=False,
-                                      max_batches_per_iter=False,
-                                      #tuning_mode="optuna",
-                              #cross_validation_folds=False,
-                              #random_state_KFold=42,
-                              #device=None,
-                              pretrained_transformation_layer=False,
-                              n_trials=15,
-                              temp_folder=".", 
-                              study_name=None):
+    def hyperparameter_tune_penalties(
+        self,
+        train_dataloader,
+        validate_dataloader,
+        penalty_decorrelation_ridge_param: float | str | None = None,
+        penalty_decorrelation_ridge_first_difference: float | str | None = None,
+        penalty_decorrelation_ridge_second_difference: float | str | None = None,
+        penalty_transformation_ridge_second_difference: float | str | None = None,
+        penalty_lasso_conditional_independence: float | str | None = None,
+        adaptive_lasso_weights_matrix=False,
+        optimizer="LBFGS",
+        learning_rate=1,
+        iterations=2000,
+        patience=5,
+        min_delta=1e-7,
+        seperate_copula_training=False,
+        max_batches_per_iter=False,
+        pretrained_transformation_layer=False,
+        n_trials=15,
+        temp_folder=".",
+        study_name=None):
+        """
+        Tunes the regularization hyperparameters of the GTM model using Optuna.
+
+        This method allows either manual specification of penalty values (as floats),
+        turning off a penalty by passing None (interpreted as zero),
+        or enabling Optuna to sample the penalty using the string "sample".
         
+        The penalties tuned or set include:
+        - Ridge penalty on decorrelation layer splines parameters (`penalty_decorrelation_ridge_param`)
+        - First derivative ridge penalty on decorrelation splines via finite differencing (`penalty_decorrelation_ridge_first_difference`)
+        - Second derivative ridge penalty on decorrelation splines (`penalty_decorrelation_ridge_second_difference`)
+        - Second derivative ridge penalty on transformation splines (`penalty_transformation_ridge_second_difference`)
+        - Lasso penalty encouraging sparsity in the pseudo precision matrix (`penalty_lasso_conditional_independence`)
+
+        Parameters
+        ----------
+        train_dataloader : DataLoader
+            The training data.
+        validate_dataloader : DataLoader
+            The validation data used to evaluate candidate hyperparameters.
+        penalty_decorrelation_ridge_param : float, str, or None
+            Penalty on decorrelation layer spline parameters.
+            - Float: fixed penalty value.
+            - None: no penalty (interpreted as 0).
+            - "sample": Optuna samples a value during tuning.
+        penalty_decorrelation_ridge_first_difference : float, str, or None
+            Penalty on first derivative of decorrelation splines.
+            Same conventions as above.
+        penalty_decorrelation_ridge_second_difference : float, str, or None
+            Penalty on second derivative of decorrelation splines.
+            Same conventions as above.
+        penalty_transformation_ridge_second_difference : float, str, or None
+            Penalty on second derivative of transformation splines.
+            Same conventions as above.
+        penalty_lasso_conditional_independence : float, str, or None
+            Lasso penalty applied to encourage conditional independence in the pseudo precision matrix.
+            If "sample", Optuna selects the penalty value.
+        train_covariates : torch.Tensor or bool, optional
+            Optional covariates associated with training data. Default is False.
+        validate_covariates : torch.Tensor or bool, optional
+            Optional covariates associated with validation data. Default is False.
+        adaptive_lasso_weights_matrix : torch.Tensor or bool, optional
+            Square matrix of adaptive Lasso weights (lower triangular part used).
+            Set to False to disable adaptive Lasso.
+        optimizer : {"LBFGS", "Adam"}, optional
+            Optimizer used for training. Default is "LBFGS".
+        learning_rate : float, optional
+            Learning rate for the optimizer. Default is 1.0.
+            Has no effect for "LBFGS", as a Wolfe line search is used instead.
+        iterations : int, optional
+            Maximum number of training iterations for each trial. Default is 2000.
+        patience : int, optional
+            Number of validation rounds without improvement before early stopping. Default is 5.
+        min_delta : float, optional
+            Minimum improvement in validation loss to qualify as a better model. Default is 1e-7.
+        seperate_copula_training : bool, optional
+            If True, the decorrelation layers (copula) are trained after the transformation layers. Default is False.
+        max_batches_per_iter : int or bool, optional
+            If set to an integer, limits number of batches used in each training iteration. Default is False (use all).
+        pretrained_transformation_layer : bool, optional
+            If True, pretrains the transformation layers before the tuning. Default is False.
+        n_trials : int, optional
+            Number of Optuna trials (i.e., hyperparameter configurations) to evaluate. Default is 15.
+        temp_folder : str, optional
+            Path to temporary directory used for Optuna study storage. Default is current directory. Is deleted once tuning is over.
+        study_name : str or None, optional
+            Name of the Optuna study (used for resuming or caching tuning). Default is None.
+
+        Returns
+        -------
+        optuna.study.Study
+            The Optuna study object containing all trial results, including best hyperparameter configuration. 
+            The study contains the optimal penalties identified as keys. These are:
+            - study[`penalty_decorrelation_ridge_param`]
+            - study[`penalty_decorrelation_ridge_first_difference`]
+            - study[`penalty_decorrelation_ridge_second_difference`]
+            - study[`penalty_transformation_ridge_second_difference`]
+            - study[`penalty_lasso_conditional_independence`]
+        """
         # All for now fixed parameters
         lambda_penalty_mode="square"
         objective_type="negloglik"
         tuning_mode="optuna"
         cross_validation_folds=False
-        random_state_KFold=42
-        device=None
+        train_covariates=False
+        validate_covariates=False
+        #random_state_KFold=42
+        #device=None
         
         # From Old version where one could pass lists to do tuning using list of hyperparameters passed
-        #list_of_lists = [penvalueridge, penfirstridge, pensecondridge, 
-                         #ctm_pensecondridge,
-                        # lambda_penalty_params]
+        #list_of_lists = [penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference, 
+                         #penalty_transformation_ridge_second_difference,
+                        # penalty_lasso_conditional_independence]
         #hyperparameter_combinations_list = list(itertools.product(*list_of_lists))
         
         if train_covariates is False:
@@ -682,77 +1149,73 @@ class GTM(nn.Module):
 
         if tuning_mode == "optuna":
             # From Old version where one could pass lists to do tuning using list of hyperparameters passed
-            #penvalueridge, penfirstridge, pensecondridge, ctm_pensecondridge, lambda_penalty_params  = hyperparameter_combinations_list[0]
-            
-            # so model has no marginal part
-            if seperate_copula_training == True:
-                num_trans_layers = 0
+            #penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference, penalty_transformation_ridge_second_difference, penalty_lasso_conditional_independence  = hyperparameter_combinations_list[0]
                 
             def optuna_objective(trial, train_dataloader=train_dataloader, 
                                       validate_dataloader=validate_dataloader ): 
                 
-                if penvalueridge == None:
-                    penvalueridge_opt = 0
-                elif isinstance(penvalueridge, float) or isinstance(penvalueridge, int):
-                    penvalueridge_opt = penvalueridge
-                elif penvalueridge == "sample":
-                    penvalueridge_opt = trial.suggest_float("penvalueridge", 0.0000001, 30, log=False) #True
+                if penalty_decorrelation_ridge_param == None:
+                    penalty_decorrelation_ridge_param_opt = 0
+                elif isinstance(penalty_decorrelation_ridge_param, float) or isinstance(penalty_decorrelation_ridge_param, int):
+                    penalty_decorrelation_ridge_param_opt = penalty_decorrelation_ridge_param
+                elif penalty_decorrelation_ridge_param == "sample":
+                    penalty_decorrelation_ridge_param_opt = trial.suggest_float("penalty_decorrelation_ridge_param", 0.0000001, 30, log=False) #True
                 else:
-                    warnings.warn("penvalueridge not understood. Please provide a float, int None, or the string \"sample\".")
+                    warnings.warn("penalty_decorrelation_ridge_param not understood. Please provide a float, int None, or the string \"sample\".")
 
-                if penfirstridge == None:
-                    penfirstridge_opt = 0
-                elif isinstance(penfirstridge, float) or isinstance(penfirstridge, int):
-                    penfirstridge_opt = penfirstridge
-                elif penfirstridge == "sample":
-                    penfirstridge_opt = trial.suggest_float("penfirstridge", 0.0000001, 30, log=False) # True
+                if penalty_decorrelation_ridge_first_difference == None:
+                    penalty_decorrelation_ridge_first_difference_opt = 0
+                elif isinstance(penalty_decorrelation_ridge_first_difference, float) or isinstance(penalty_decorrelation_ridge_first_difference, int):
+                    penalty_decorrelation_ridge_first_difference_opt = penalty_decorrelation_ridge_first_difference
+                elif penalty_decorrelation_ridge_first_difference == "sample":
+                    penalty_decorrelation_ridge_first_difference_opt = trial.suggest_float("penalty_decorrelation_ridge_first_difference", 0.0000001, 30, log=False) # True
                 else:
-                    warnings.warn("penfirstridge not understood. Please provide a float, int None, or the string \"sample\".")
+                    warnings.warn("penalty_decorrelation_ridge_first_difference not understood. Please provide a float, int None, or the string \"sample\".")
                     
-                if pensecondridge == None:
-                    pensecondridge_opt = 0
-                elif isinstance(pensecondridge, float) or isinstance(pensecondridge, int):
-                    pensecondridge_opt = pensecondridge
-                elif pensecondridge == "sample":
-                    pensecondridge_opt = trial.suggest_float("pensecondridge", 0.0000001, 30, log=False) # True
+                if penalty_decorrelation_ridge_second_difference == None:
+                    penalty_decorrelation_ridge_second_difference_opt = 0
+                elif isinstance(penalty_decorrelation_ridge_second_difference, float) or isinstance(penalty_decorrelation_ridge_second_difference, int):
+                    penalty_decorrelation_ridge_second_difference_opt = penalty_decorrelation_ridge_second_difference
+                elif penalty_decorrelation_ridge_second_difference == "sample":
+                    penalty_decorrelation_ridge_second_difference_opt = trial.suggest_float("penalty_decorrelation_ridge_second_difference", 0.0000001, 30, log=False) # True
                 else:
-                    warnings.warn("pensecondridge not understood. Please provide a float, int None, or the string \"sample\".")
+                    warnings.warn("penalty_decorrelation_ridge_second_difference not understood. Please provide a float, int None, or the string \"sample\".")
                     
-                if ctm_pensecondridge == None:
-                    ctm_pensecondridge_opt = 0
-                elif isinstance(ctm_pensecondridge, float) or isinstance(ctm_pensecondridge, int):
-                    ctm_pensecondridge_opt = ctm_pensecondridge
-                elif ctm_pensecondridge == "sample":
-                    ctm_pensecondridge_opt = trial.suggest_float("ctm_pensecondridge", 0.0000001, 30, log=False) # True
+                if penalty_transformation_ridge_second_difference == None:
+                    penalty_transformation_ridge_second_difference_opt = 0
+                elif isinstance(penalty_transformation_ridge_second_difference, float) or isinstance(penalty_transformation_ridge_second_difference, int):
+                    penalty_transformation_ridge_second_difference_opt = penalty_transformation_ridge_second_difference
+                elif penalty_transformation_ridge_second_difference == "sample":
+                    penalty_transformation_ridge_second_difference_opt = trial.suggest_float("penalty_transformation_ridge_second_difference", 0.0000001, 30, log=False) # True
                 else:
-                    warnings.warn("ctm_pensecondridge not understood. Please provide a float, int None, or the string \"sample\".")
+                    warnings.warn("penalty_transformation_ridge_second_difference not understood. Please provide a float, int None, or the string \"sample\".")
                     
-                if lambda_penalty_params == None:
-                    lambda_penalty_params_opt = 0
-                elif isinstance(lambda_penalty_params, float) or isinstance(lambda_penalty_params, int):
-                    lambda_penalty_params_opt = lambda_penalty_params
-                elif lambda_penalty_params == "sample":
-                    lambda_penalty_params_opt = trial.suggest_float("lambda_penalty_params", 0.0000001, 1, log=True)
+                if penalty_lasso_conditional_independence == None:
+                    penalty_lasso_conditional_independence_opt = 0
+                elif isinstance(penalty_lasso_conditional_independence, float) or isinstance(penalty_lasso_conditional_independence, int):
+                    penalty_lasso_conditional_independence_opt = penalty_lasso_conditional_independence
+                elif penalty_lasso_conditional_independence == "sample":
+                    penalty_lasso_conditional_independence_opt = trial.suggest_float("penalty_lasso_conditional_independence", 0.0000001, 1, log=True)
                 else:
-                    warnings.warn("lambda_penalty_params not understood. Please provide a float, int None, or the string \"sample\".")
+                    warnings.warn("penalty_lasso_conditional_independence not understood. Please provide a float, int None, or the string \"sample\".")
                     
                 #print("This Trial has the Hyperparameters:", 
-                #    "penvalueridge_opt:", penvalueridge_opt, " ", 
-                #    "penfirstridge_opt:", penfirstridge_opt, " ", 
-                #    "pensecondridge_opt:", pensecondridge_opt, " ", 
-                #    "ctm_pensecondridge_opt:", ctm_pensecondridge_opt, " ",
-                #    "lambda_penalty_params_opt:", lambda_penalty_params_opt)
-                lambda_penalty_params_opt = if_float_create_lambda_penalisation_matrix(lambda_penalty_params_opt, num_vars=self.number_variables)
-                penalty_params_opt = torch.tensor([penvalueridge_opt,
-                                            penfirstridge_opt,
-                                            pensecondridge_opt,
-                                            ctm_pensecondridge_opt])
+                #    "penalty_decorrelation_ridge_param_opt:", penalty_decorrelation_ridge_param_opt, " ", 
+                #    "penalty_decorrelation_ridge_first_difference_opt:", penalty_decorrelation_ridge_first_difference_opt, " ", 
+                #    "penalty_decorrelation_ridge_second_difference_opt:", penalty_decorrelation_ridge_second_difference_opt, " ", 
+                #    "penalty_transformation_ridge_second_difference_opt:", penalty_transformation_ridge_second_difference_opt, " ",
+                #    "penalty_lasso_conditional_independence_opt:", penalty_lasso_conditional_independence_opt)
+                penalty_lasso_conditional_independence_opt = if_float_create_lambda_penalisation_matrix(penalty_lasso_conditional_independence_opt, num_vars=self.number_variables)
+                penalty_params_opt = torch.tensor([penalty_decorrelation_ridge_param_opt,
+                                            penalty_decorrelation_ridge_first_difference_opt,
+                                            penalty_decorrelation_ridge_second_difference_opt,
+                                            penalty_transformation_ridge_second_difference_opt])
                 
                 if cross_validation_folds == False:
                     # define model, train the model with tuning params and return the objective value on the given validation set
-                    target = self.return_objective_for_hyperparameters(train_dataloader, validate_dataloader, train_covariates, validate_covariates, penalty_params_opt, 
+                    target = self.__return_objective_for_hyperparameters__(train_dataloader, validate_dataloader, train_covariates, validate_covariates, penalty_params_opt, 
                                                                         adaptive_lasso_weights_matrix,
-                                                                        lambda_penalty_params_opt, learning_rate, iterations, patience, min_delta, 
+                                                                        penalty_lasso_conditional_independence_opt, learning_rate, iterations, patience, min_delta, 
                                                                         optimizer, lambda_penalty_mode, objective_type, seperate_copula_training, max_batches_per_iter,
                                                                         pretrained_transformation_layer, cross_validation_folds)
                     
@@ -794,17 +1257,76 @@ class GTM(nn.Module):
             return study
         
     def compute_conditional_independence_table(self,
-                                        y = None,
-                                        x = False,
-                                        evaluation_data_type = "data",
-                                        num_processes=10,
-                                        sample_size = 1000,
-                                        num_points_quad=20,
-                                        optimized=False,
-                                        copula_only=False,
-                                        min_val=-5, 
-                                        max_val=5,
-                                        likelihood_based_metrics=True):
+                                                y: torch.Tensor | None = None,
+                                                evaluation_data_type: Literal["data", "uniform_random_samples", "samples_from_model"] = "data",
+                                                num_processes: int = 10,
+                                                sample_size: int = 1000,
+                                                num_points_quad: int = 20,
+                                                copula_only: bool = False,
+                                                min_val: float = -5, 
+                                                max_val: float = 5,
+                                                likelihood_based_metrics: bool = True):
+        """
+        Computes a table of pairwise conditional dependence statistics (e.g., KLD, IAE, psuedo precision matrix, and pseudo conditional correlation)
+        to assess conditional independence relationships between variables.
+
+        For the Likelihood based KLD and IAE, this is done via approximation of conditional log-densities using numerical quadrature, comparing full model predictions
+        to models with conditional independence constraints imposed.
+
+        Parameters
+        ----------
+        y : torch.Tensor, optional
+            Input data matrix of shape (n_samples, n_variables) used for evaluation. Required if evaluation_data_type == "data".
+        
+        evaluation_data_type : {"data", "uniform_random_samples", "samples_from_model"}, default="data"
+            Defines which kind of data is used for evaluation:
+            - "data": use the passed tensor `y`.
+            - "uniform_random_samples": generate uniform samples in [min_val, max_val].
+            - "samples_from_model": generate samples from the trained model.
+        
+        num_processes : int, default=10
+            Number of parallel processes to use. If <= 1, processes run serially.
+
+        sample_size : int, default=1000
+            Number of samples to use for the evaluation if sampling, depending on `evaluation_data_type` being "uniform_random_samples" or "samples_from_model".
+
+        num_points_quad : int, default=20
+            Number of quadrature points used for evaluating integrals of conditional distributions.
+
+        copula_only : bool, default=False
+            If True, evaluates only the copula likelihood component by disregarding the transformation layer likelihood contribution.
+            Can be sensible to get more stable results if marginals are highely complex. Especialyl since the dependence is only modelled in the decorrelation layers.
+
+        min_val : float, default=-5
+            Minimum value for the quadrature bound as well as for uniform random samples when evaluation_data_type == "uniform_random_samples".
+
+        max_val : float, default=5
+            Maximum value for the quadrature bound as well as for uniform random samples when evaluation_data_type == "uniform_random_samples".
+
+        likelihood_based_metrics : bool, default=True
+            If True, computes log-likelihood based divergence metrics (KLD, IAE). These take time due to the quadratures.
+            If False, only precision and conditional correlation metrics are computed.
+
+        Returns
+        -------
+        sub_kld_summary_statistics : pandas.DataFrame
+            A table containing one row per variable pair with the following columns:
+            - var_row: index of first variable
+            - var_col: index of second variable
+            - precision_abs_mean: mean absolute entry in the pseudo-precision matrix
+            - precision_square_mean: mean squared entry in the pseudo-precision matrix
+            - cond_correlation_abs_mean: mean absolute pseudo-conditional correlation
+            - cond_correlation_square_mean: mean squared pseudo-conditional correlation
+            - kld: Kullback-Leibler divergence (only if likelihood_based_metrics is True)
+            - iae: Integrated Absolute Error (only if likelihood_based_metrics is True)
+
+        Notes 
+        -------
+        - If multiprocessing is enabled (num_processes > 1), then the rows of the summary table are computed in parallel with num_processes rows at the same time.
+        """
+        x = False
+        optimized = True
+        
         
         self.conditional_independence_table = compute_conditional_independence_kld(self,
                                         y,
@@ -821,22 +1343,130 @@ class GTM(nn.Module):
         
         return self.conditional_independence_table
 
-    def plot_densities(self,data,covariate=False,x_lim=None,y_lim=None,density_plot=True, storage=None, show_plot=True):
-        plot_densities(data=data, 
-                       covariate=covariate, 
+    #def plot_densities(self, y, x_lim=None, y_lim=None, density_plot=True, storage=None, show_plot=True):
+    def plot_densities(
+    self,
+    y: list | tuple | None,
+    x_lim: tuple[float, float] | None = None,
+    y_lim: tuple[float, float] | None = None,
+    density_plot: bool = True,
+    storage: str | None = None,
+    show_plot: bool = True) -> None:
+        """
+        Plots the densities of the given data for each pair in a grid with optional axis limits and storage options.
+
+        This method creates a density plot of the input data `y` for every pair in the data. It can optionally
+        limit the x and y axis ranges, save the plot to storage, and control whether the plot
+        is displayed immediately or merely stored.
+
+        Parameters
+        ----------
+        y : list or tuple or None
+            The data to plot densities for.
+        x_lim : tuple of float, optional
+            Limits for the x-axis as (xmin, xmax). If None, axis limits are determined automatically.
+        y_lim : tuple of float, optional
+            Limits for the y-axis as (ymin, ymax). If None, axis limits are determined automatically.
+        density_plot : bool, optional
+            If True, plots a density estimate; if False, plots scatterplot only. Default is True.
+        storage : str or None, optional
+            Path or filename to save the plot. If None, plot is not saved. Default is None.
+        show_plot : bool, optional
+            If True, displays the plot immediately. If False, the plot is created but not shown. Default is True.
+
+        Returns
+        -------
+        None
+            The method produces a plot and optionally saves or shows it, but does not return any value.
+        """
+        plot_densities(data=y, 
+                       covariate=False, 
                        x_lim=x_lim, 
                        y_lim=y_lim, 
                        density_plot=density_plot, 
                        storage=storage,
                        show_plot=show_plot)
 
-    def plot_marginals(self, data, covariate=False, names=False, y_lim=False, storage=None,
-                                             show_plot=True):
-        plot_marginals(data, covariate=covariate, names=names, y_lim=y_lim, storage=storage,
+    def plot_marginals(
+        self,
+        y: torch.FloatTensor,
+        names: bool | list = False,
+        y_lim: bool | tuple[float, float] = False,
+        storage: str | None = None,
+        show_plot: bool = True) -> None:
+        """
+        Plots the marginal distributions of the provided data in a grid.
+
+        This method visualizes the marginals of the dataset `y`. It can optionally display
+        variable names on the plot, set y-axis limits, save the plot to a specified location,
+        and control whether the plot is displayed immediately.
+
+        Parameters
+        ----------
+        y : torch.FloatTensor
+            Data for which the marginal distributions will be plotted.
+        names : bool | list = False,
+            Whether to display variable names in the plot. Default is False.
+        y_lim : bool or tuple of float, optional
+            Y-axis limits as (ymin, ymax). If False, axis limits are determined automatically. Default is False.
+        storage : str or None, optional
+            Path or filename to save the plot. If None, the plot is not saved. Default is None.
+        show_plot : bool, optional
+            If True, displays the plot immediately. If False, the plot is created but not shown. Default is True.
+
+        Returns
+        -------
+        None
+            The method generates a plot and optionally saves or displays it, but does not return a value.
+        """
+        plot_marginals(y, covariate=False, names=names, y_lim=y_lim, storage=storage,
                        show_plot=show_plot)
 
-    def plot_splines(self,layer_type="transformation",decorrelation_layer_number=0, storage=None,
-                                             show_plot=True):
+    def plot_splines(
+        self,
+        layer_type: "transformation" | "decorrelation" = "transformation",
+        decorrelation_layer_number: int = 0,
+        storage: str | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plots all spline functions for a specified model layer in a grid.
+
+        This method visualizes spline functions associated with either the 
+        transformation layer or one of the decorrelation layers of the model. It selects 
+        the layer based on `layer_type` and plots the corresponding splines using an internal
+        plotting function.
+
+        Parameters
+        ----------
+        layer_type : {"transformation", "decorrelation"}, optional
+            Specifies which layer's splines to plot.
+            - "transformation": plots the transformation layer splines.
+            - "decorrelation": plots the splines from one of the decorrelation layers.
+            Requires `decorrelation_layer_number` to specify which layer.
+            Default is "transformation".
+        decorrelation_layer_number : int, optional
+            Index of the decorrelation layer to plot when `layer_type` is "decorrelation".
+            Must be in the range `[0, self.number_decorrelation_layers - 1]`.
+            Default is 0.
+        storage : str or None, optional
+            Path or filename to save the generated plot. If None, the plot is not saved.
+            Default is None.
+        show_plot : bool, optional
+            Whether to display the plot immediately. Default is True.
+
+        Raises
+        ------
+        ValueError
+            If `layer_type` is not one of {"transformation", "decorrelation"}, or
+            if `decorrelation_layer_number` is out of valid range.
+
+        Returns
+        -------
+        None
+            The method generates a plot and optionally saves or displays it but does not return a value.
+        """
+        
         if layer_type == "transformation":
             layer = self.transformation
         elif layer_type == "decorrelation":
@@ -849,20 +1479,80 @@ class GTM(nn.Module):
         plot_splines(layer, covariate_exists=False, affine=False, storage=storage,
                      show_plot=show_plot)
         
-    def plot_conditional_dependence_structure(self, 
-                                              data, 
-                                              dependence_metric_plotting="pseudo_conditional_correlation", 
-                                              conditional_independence_table=False,
-                                              dependence_metric_threshholding=False,
-                                              minimum_dependence_threshold=0, 
-                                              after_marginal_transformation=False,
-                                              show_colorbar=True,
-                                              hide_axis_info=False,
-                                              sub_title_fontsize=10,
-                                              x_lim=None, 
-                                              y_lim=None,
-                                              storage=None,
-                                             show_plot=True):
+        
+    def plot_conditional_dependence_structure(
+        self,
+        data,
+        conditional_independence_table: bool | None = False,
+        dependence_metric_threshholding: bool | str = False,
+        minimum_dependence_threshold: float = 0,
+        after_marginal_transformation: bool = False,
+        show_colorbar: bool = True,
+        hide_axis_info: bool = False,
+        sub_title_fontsize: int = 10,
+        x_lim: tuple | None = None,
+        y_lim: tuple | None = None,
+        storage: str | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Plots the conditional dependence structure of each pair of variables in a grid based on pseudo conditional correlations.
+        It optionally filters pairs by a threshold applied to a dependence metric, which can be 
+        specified by a conditional independence table. Thus this metric can be likelihood based as well.
+
+        Parameters
+        ----------
+        data : array-like or tensor
+            The dataset on which to compute and plot the dependence structure.
+        conditional_independence_table : bool | pandas.DataFrame | None, optional
+            Table indicating conditional independence between variable pairs.
+            If False, the method tries to use a stored table `self.conditional_independence_table`.
+            Default is False.
+        dependence_metric_threshholding : bool | str, optional
+            Name of the column in the conditional independence table to threshold on:
+            - precision_abs_mean: mean absolute entry in the pseudo-precision matrix
+            - precision_square_mean: mean squared entry in the pseudo-precision matrix
+            - cond_correlation_abs_mean: mean absolute pseudo-conditional correlation
+            - cond_correlation_square_mean: mean squared pseudo-conditional correlation
+            - kld: Kullback-Leibler divergence (only if likelihood_based_metrics is True)
+            - iae: Integrated Absolute Error (only if likelihood_based_metrics is True)
+            If False, no thresholding is applied.
+            Default is False.
+        minimum_dependence_threshold : float, optional
+            Minimum threshold for the dependence metric to include a pair in the plot.
+            Default is 0.
+        after_marginal_transformation : bool, optional
+            If True, plots the dependence structure after applying the marginal transformation.
+            Default is False.
+        show_colorbar : bool, optional
+            Whether to display a colorbar alongside the plot.
+            Default is True.
+        hide_axis_info : bool, optional
+            Whether to hide axis labels and ticks in the plot.
+            Default is False.
+        sub_title_fontsize : int, optional
+            Font size for the plot subtitle.
+            Default is 10.
+        x_lim : tuple | None, optional
+            Limits for the x-axis in the plot (min, max). If None, defaults are used.
+            Default is None.
+        y_lim : tuple | None, optional
+            Limits for the y-axis in the plot (min, max). If None, defaults are used.
+            Default is None.
+        storage : str | None, optional
+            File path or name to save the generated plot. If None, the plot is not saved.
+            Default is None.
+        show_plot : bool, optional
+            Whether to display the plot or not.
+            Default is True.
+
+        Returns
+        -------
+        None
+            The method produces a plot and optionally saves or displays it but does not return a value.
+        """
+        
+        dependence_metric_plotting = "pseudo_conditional_correlation"
         
         # Taking internally stored one from last run
         if conditional_independence_table is False:
@@ -875,7 +1565,7 @@ class GTM(nn.Module):
                 conditional_independence_table = self.conditional_independence_table
         
         if dependence_metric_plotting == "pseudo_conditional_correlation":
-            metric = self.compute_pseudo_correlation_matrix(data)
+            metric = self.compute_pseudo_conditional_correlation_matrix(data)
             metric_type = "matrix"
             label_metric="Pseudo Conditional Correlation"
         elif dependence_metric_plotting == "offdiagonal_precision_matrix":
@@ -912,23 +1602,100 @@ class GTM(nn.Module):
                         after_marginal_transformation=after_marginal_transformation, label_metric=label_metric, storage=storage,
                         show_plot=show_plot)
 
-    def plot_conditional_dependence_graph(self, 
-                                              conditional_independence_table=False, 
-                                              dependence_metric="iae", 
-                                              minimum_dependence_threshold=0, 
-                                              pair_plots=False,
-                                              dependence_metric_plotting="pseudo_conditional_correlation", 
-                                              data=False, 
-                                              after_marginal_transformation=False,
-                                              names=False,
-                                              lim_axis_pairplots=[-18, 18],
-                                              pos_list=None, 
-                                              pos_tuple_list=None, 
-                                              k=1.5, 
-                                              seed_graph=42,
-                                              storage=None,
-                                              show_plot=True
-                                              ):
+    def plot_conditional_dependence_graph(
+        self,
+        conditional_independence_table: bool | None = False,
+        dependence_metric: str = "iae",
+        minimum_dependence_threshold: float = 0,
+        pair_plots: bool = False,
+        data: bool | None = False,
+        after_marginal_transformation: bool = False,
+        names: bool = False,
+        lim_axis_pairplots: list[int] = [-18, 18],
+        variables_move: list[int] | None = None,
+        variables_move_positions: list[tuple[float, float]] | None = None,
+        k: float = 1.5,
+        seed_graph: int = 42,
+        storage: str | None = None,
+        show_plot: bool = True,
+    ) -> None:
+        """
+        Creates and plots a full conditional independence graph using the network package.
+
+        Nodes ("bubbles") represent variables, and undirected edges represent conditional dependencies
+        based on the specified dependence metric. Optionally, pair plots of pseudo-conditional correlations
+        can be displayed on top of the graph.
+
+        Parameters
+        ----------
+        conditional_independence_table : bool | pandas.DataFrame | None, optional
+            Table providing conditional independence information with dependence metrics as columns.
+            If False or None, the internally stored `self.conditional_independence_table` is used.
+            Default is False.
+        dependence_metric : str, optional
+            Column name in the conditional independence table used to threshold edges in the graph.
+            Possible values include:
+            - "precision_abs_mean": Mean absolute entry in the pseudo-precision matrix.
+            - "precision_square_mean": Mean squared entry in the pseudo-precision matrix.
+            - "cond_correlation_abs_mean": Mean absolute pseudo-conditional correlation.
+            - "cond_correlation_square_mean": Mean squared pseudo-conditional correlation.
+            - "kld": Kullback-Leibler divergence (requires likelihood-based metrics).
+            - "iae": Integrated Absolute Error (requires likelihood-based metrics).
+            Default is "iae".
+        minimum_dependence_threshold : float, optional
+            Minimum threshold for the dependence metric to include edges in the graph.
+            Default is 0.
+        pair_plots : bool, optional
+            If True, plots of pseudo-conditional correlations for variable pairs are shown above the graph.
+            Requires `data` to be provided.
+            Default is False.
+        data : bool | array-like | None, optional
+            Dataset used to compute pseudo-conditional correlations for pair plots.
+            Ignored if `pair_plots` is False.
+            Default is False.
+        after_marginal_transformation : bool, optional
+            If True, plots pairplots in space after marginal transformation, hence $\tilde{Z}$ instead of Y.
+            Default is False.
+        names : bool, optional
+            If True, variable names are shown on the graph nodes.
+            Default is False.
+        lim_axis_pairplots : list[int], optional
+            Axis limits [min, max] for the pair plots.
+            Default is [-18, 18].
+        variables_move : list[int] | None, optional
+            List of variable indices ("bubbles") to reposition manually on the graph.
+            Default is None.
+        variables_move_positions : list[tuple[float, float]] | None, optional
+            List of (x, y) coordinates to place the variables in `variables_move`.
+            Must be the same length as `variables_move`.
+            Default is None.
+        k : float, optional
+            Repulsion parameter controlling node spacing in the network layout.
+            Default is 1.5.
+        seed_graph : int, optional
+            Random seed for reproducibility of the graph layout.
+            Default is 42.
+        storage : str | None, optional
+            File path to save the generated plot. If None, the plot is not saved.
+            Default is None.
+        show_plot : bool, optional
+            Whether to display the plot interactively.
+            Default is True.
+
+        Raises
+        ------
+        ValueError
+            If `minimum_dependence_threshold > 0` but no conditional independence table is available,
+            or if `variables_move` and `variables_move_positions` lengths differ.
+
+        Returns
+        -------
+        None
+            The function generates and optionally saves and/or displays the conditional dependence graph.
+        """
+    # Function body here...
+
+        dependence_metric_plotting="pseudo_conditional_correlation"
         
         # Taking internally stored one from last run
         if conditional_independence_table is False:
@@ -951,7 +1718,7 @@ class GTM(nn.Module):
             plot_graph_conditional_independencies(ci_matrix, 
                                                 gene_names=names, 
                                                 min_abs_mean=minimum_dependence_threshold,
-                                                pos_list=pos_list, pos_tuple_list=pos_tuple_list, k=k, seed_graph=seed_graph, storage=storage,
+                                                pos_list=variables_move, pos_tuple_list=variables_move_positions, k=k, seed_graph=seed_graph, storage=storage,
                                                 show_plot=show_plot)
 
         elif pair_plots is True:
@@ -974,22 +1741,55 @@ class GTM(nn.Module):
                                                 metric = metric.numpy(),
                                                 min_abs_mean=minimum_dependence_threshold,
                                                 lim_axis=lim_axis_pairplots,
-                                                pos_list=pos_list,
-                                                pos_tuple_list=pos_tuple_list,
+                                                pos_list=variables_move,
+                                                pos_tuple_list=variables_move_positions,
                                                 k=k,
                                                 seed_graph=seed_graph,
                                                 storage=storage,
                                                 show_plot=show_plot)
 
-    def plot_conditional_dependence_pair(self, 
-                                             sample_indices,
-                                             resampled_samples,
-                                             show_colorbar=True,
-                                             title=None,
-                                             show_ticks=False,
-                                             storage=None,
-                                             show_plot=True):
-            
+    def plot_conditional_dependence_pair(
+        self,
+        sample_indices: list[int, int],
+        resampled_samples: torch.FloatTensor,
+        show_colorbar: bool = True,
+        title: str | None = None,
+        show_ticks: bool = False,
+        storage: str | None = None,
+        show_plot: bool = True) -> None:
+        """
+        Plots conditional dependence between two variables as a 2x2 grid of plots.
+
+        The top row shows the joint density and pseudo conditional correlation
+        for the original resampled samples, while the bottom row shows the
+        same plots after marginal transformation.
+
+        Parameters
+        ----------
+        sample_indices : list[int, int]
+            Indices of the two variables to plot.
+        resampled_samples : Tensor | np.ndarray
+            Samples to use for plotting.
+        show_colorbar : bool, optional
+            Whether to display the colorbar for conditional correlation plots.
+            Default is True.
+        title : str | None, optional
+            Optional title for the figure.
+        show_ticks : bool, optional
+            Whether to show axis ticks and labels on the plots.
+            Default is False (ticks are hidden).
+        storage : str | None, optional
+            File path to save the figure. If None, the figure is not saved.
+            Default is None.
+        show_plot : bool, optional
+            Whether to display the plot interactively.
+            Default is True.
+
+        Returns
+        -------
+        None
+        """
+ 
         plot_conditional_dependence_pair(loaded_model=self,
                                              sample_indices=sample_indices,
                                              resampled_samples=resampled_samples,
