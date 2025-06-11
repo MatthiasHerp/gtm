@@ -1,34 +1,26 @@
 # Graphical Transformation Model
 
-Graphical Transformation Models (GTMs) are a class of probabilistic models for multivariate data that are able to:
+Graphical Transformation Models (GTMs) are a class of probabilistic models designed for multivariate data, capable of:
 
-1. capture complex nonlinear interdependencies as well as arbitrary marginals.
+1. Capturing complex nonlinear interdependencies and arbitrary marginals.
 
-2. be lasso regularized towards pairwise conditional independencies, akin to Gaussian graphical models for nonlinear dependencies. 
+2. Being lasso-regularized towards pairwise conditional independencies, similar to Gaussian graphical models for nonlinear dependencies.
 
 Read the full paper on [arXiv](https://arxiv.org/abs/2503.17845).
 
 ## 🎬 Demos 
 
-In this repository we provide demo scripts to replicate the results from our work.
-These scripts can act as tutorials and offer a good introduction into applying the model.
-They can be used as a starting point for your own data.
+In this repository, we provide demo scripts to replicate the results from our work. These scripts serve as tutorials and offer a good introduction to applying the model. They can also be used as a starting point for your own data.
 
 #### Simulations
 
-For the simulation studies we provide the [2D copula demo](demos/demo_2D_copula.ipynb) and the 
-[10D copula demo](demos/demo_10D_rvine.ipynb).
-These show how to train and evaluate the model in a simple 2D Copula example as well as on 10D Rvine data where we also show how to identify the full conditional independencie structure.
+For the simulation studies, we provide the [2D copula demo](demos/demo_2D_copula.ipynb) and the [10D copula demo](demos/demo_10D_rvine.ipynb). These demos illustrate how to train and evaluate the model using a simple 2D copula example, as well as on 10D R-vine data, where we also show how to identify the full conditional independence structure.
 
-#### Application to the Magic Data
+#### Application to the MAGIC Dataset
 
-We further provide all files required to replicate our analysis on the MAGIC dataset.
-The [training script](demos/train_gtm_magic.py) is a python which runs all models used in the analysis and works both on cpu as well as cuda. 
-The choice of marginal degrees, absed on a simple heuristic approach, is explained in this [notebook](demos/demo_magic_marginal_transformation_degrees.ipynb).
-The trained models are already stored, hence yo ucan also directly go to the analysis and run the respective notebooks.
-The [classification notebook](demos/demo_magic_classification.ipynb) shows how we chose the optimal model number of decorrelation layers and how we got the model prediction performance. It can also be used as a baseline for creating a classifier based on GTMs.
-The [Identify Conditional Independence](demos/demo_magic_conditional_independence.ipynb) shows how to analyse conditional dependencies using the GTM and how to utilise the plotting functions to create the graphs from the paper.
-Finally the [synthetic samples notebook](demos/demo_magic_simulate_synthetic_data.ipynb) illustrates how to sample synthically from the model and compare the learned distribution to the actual training data visually.
+We also provide all the files needed to replicate our analysis on the MAGIC dataset. The [training script](demos/train_gtm_magic.py) is a Python script that runs all models used in the analysis and works on both CPU and CUDA. The choice of marginal degrees, based on a simple heuristic approach, is explained in this [notebook](demos/demo_magic_marginal_transformation_degrees.ipynb). The trained models are already stored, allowing you to directly access the analysis and run the respective notebooks.
+
+The [classification notebook](demos/demo_magic_classification.ipynb) demonstrates how we selected the optimal number of decorrelation layers and how we evaluated model prediction performance. It can also serve as a baseline for creating a classifier based on GTMs. The [Identify Conditional Independence notebook](demos/demo_magic_conditional_independence.ipynb) shows how to analyze conditional dependencies using the GTM and how to utilize the plotting functions to create the graphs featured in the paper. Finally, the [synthetic samples notebook](demos/demo_magic_simulate_synthetic_data.ipynb) illustrates how to sample synthetically from the model and visually compare the learned distribution to the actual training data.
 
 ## 📥 Installation
 
@@ -115,6 +107,8 @@ synthetic_samples = model.sample(10000)
 model.plot_conditional_dependence_structure(data=synthetic_samples)
 ```
 
+![Example Plot](demos/synthetic_plots/readme_example.png)
+
 ## Scalability /Runtime Benchmark
 
 We benchmarked the GTM on a 100-dimensional R-Vine model with 10,000 observations in both the training and validation sets, using a single NVIDIA A40 GPU. Two spline basis types—Bernstein polynomials and B-splines—were tested under two optimizers (Adam and LBFGS). The table below reports the average runtime per iteration for both the pretraining and joint training phases.
@@ -158,5 +152,5 @@ For commercial use, please contact: Matthias Herp [matthias.herp@bioinf.med.uni-
 
 See the [LICENSE](LICENSE) file for details.
 
-## ToDos:
-- clean code with automatic software for that
+%## ToDos:
+%- clean code with automatic software for that
