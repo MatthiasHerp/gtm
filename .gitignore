@@ -13,3 +13,5 @@ demos/bernstein_polynomial_testing.ipynb
 **/*copy*
 bernstein_polynomials_michael.py
 demos/demo_3D_jji_rvine.ipynb
+model_state_dict.pth
+demo.py
