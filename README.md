@@ -200,4 +200,4 @@ This code is released under a custom Non-Commercial Use License. You are free to
 
 For commercial use, please contact: Matthias Herp [matthias.herp@bioinf.med.uni-goettingen.de]
 
-See the [LICENSE](LICENSE) file for details.
+See the [License](License.md) file for details.
