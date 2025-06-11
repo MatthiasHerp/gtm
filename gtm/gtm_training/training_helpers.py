@@ -1,22 +1,21 @@
-import time
-import copy
-import torch
-
-# import warnings
-# from torch import nn
-import numpy as np
-
-# from torch.distributions import Normal, Laplace
-# import matplotlib.pyplot as plt
-from torch import optim
-from tqdm import tqdm
-
 # import seaborn as sns
 # from pytorch_lbfgs.LBFGS import LBFGS, FullBatchLBFGS
 # from torch.optim import LBFGS
 import copy
-import pickle
 import os
+import pickle
+import time
+from functools import reduce
+
+# import warnings
+# from torch import nn
+import numpy as np
+import torch
+# from torch.distributions import Normal, Laplace
+# import matplotlib.pyplot as plt
+from torch import optim
+from torch.optim.optimizer import Optimizer
+from tqdm import tqdm
 
 # from torch_ema import ExponentialMovingAverage
 
@@ -28,9 +27,6 @@ import os
 # RuntimeError: view size is not compatible with input tensor's size and stride (at least one dimension spans across two contiguous subspaces). Use .reshape(...) instead.
 # (mctm_pytorch) (base)
 
-import torch
-from functools import reduce
-from torch.optim.optimizer import Optimizer
 
 __all__ = ["LBFGS"]
 

@@ -1,10 +1,9 @@
 # Sample Copulas Package
-import pyvinecopulib as pv
 import numpy as np
-
+import pyvinecopulib as pv
 # Other Stuff
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader, Dataset
 
 ####### Create Joe Dummy Dataset #######
 

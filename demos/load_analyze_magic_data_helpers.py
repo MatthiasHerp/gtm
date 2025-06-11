@@ -1,9 +1,8 @@
-import torch
 import numpy as np
-from torch.utils.data import random_split
-
 import pandas as pd
+import torch
 from sklearn.metrics import roc_auc_score, roc_curve
+from torch.utils.data import random_split
 
 
 def load_data_magic():

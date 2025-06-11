@@ -1,42 +1,39 @@
-import torch
-from torch import nn
-
-# from gtm.layers.flip import Flip
-from gtm.gtm_layers.transformation_layer import *
-from gtm.gtm_layers.decorrelation_layer import Decorrelation
-from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
-from gtm.gtm_training.objective_functions import log_likelihood, training_objective
-from gtm.gtm_training.training_helpers import (
-    train,
-    if_float_create_lambda_penalisation_matrix,
-)
-from gtm.gtm_plots_analysis.compute_conditional_independence_kld import *
-
-# from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
+import itertools
+from typing import List, Literal, Tuple  # Still needed
 
 import optuna
-from optuna.samplers import TPESampler
-import itertools
-
 import scipy
+import torch
+from optuna.samplers import TPESampler
+from torch import nn
 
-
+from gtm.gtm_layers.decorrelation_layer import Decorrelation
+from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
+# from gtm.layers.flip import Flip
+from gtm.gtm_layers.transformation_layer import *
+from gtm.gtm_plots_analysis.compute_conditional_independence_kld import *
+from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import \
+    plot_conditional_dependence_pair
+from gtm.gtm_plots_analysis.plot_conditional_independence_graph import \
+    plot_graph_conditional_independencies
+from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import \
+    plot_graph_conditional_independencies_with_pairplots
 from gtm.gtm_plots_analysis.plot_densities import plot_densities
 from gtm.gtm_plots_analysis.plot_marginals import plot_marginals
 from gtm.gtm_plots_analysis.plot_metric_hist import plot_metric_hist
 from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
 from gtm.gtm_plots_analysis.plot_splines import plot_splines
-from gtm.gtm_plots_analysis.plot_conditional_independence_graph import (
-    plot_graph_conditional_independencies,
-)
-from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import (
-    plot_graph_conditional_independencies_with_pairplots,
-)
-from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import (
-    plot_conditional_dependence_pair,
-)
+from gtm.gtm_training.objective_functions import (log_likelihood,
+                                                  training_objective)
+from gtm.gtm_training.training_helpers import (
+    if_float_create_lambda_penalisation_matrix, train)
 
-from typing import Literal, List, Tuple  # Still needed
+# from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
+
+
+
+
+
 
 
 class GTM(nn.Module):

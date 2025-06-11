@@ -1,4 +1,5 @@
 import torch
+
 from gtm.gtm_splines.splines_utils import adjust_ploynomial_range
 
 

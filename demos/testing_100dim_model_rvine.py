@@ -1,17 +1,15 @@
-from gtm import *
-
-# Sample Copulas Package
-import pyvinecopulib as pv
-
-# Helpers to generate specfific vines and analyze there conditional independencies
-from demos.pyvinecopulib_simulation_helpers import *
-
 # Other Stuff
 import numpy as np
+# Sample Copulas Package
+import pyvinecopulib as pv
 import torch
-from torch.utils.data import DataLoader
-from demos.dataset_helpers import Generic_Dataset
 from sklearn.metrics import roc_auc_score, roc_curve
+from torch.utils.data import DataLoader
+
+from demos.dataset_helpers import Generic_Dataset
+# Helpers to generate specfific vines and analyze there conditional independencies
+from demos.pyvinecopulib_simulation_helpers import *
+from gtm import *
 
 if __name__ == "__main__":
 

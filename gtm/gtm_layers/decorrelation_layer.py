@@ -1,15 +1,14 @@
 import warnings
 
+import numpy as np
 # from functorch import vmap  # Requires PyTorch 1.10+
 import torch
 from torch import nn
-import numpy as np
 
-from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
 from gtm.gtm_splines.bernstein_prediction_vectorized import (
-    bernstein_prediction_vectorized,
-    binomial_coeffs,
-)
+    bernstein_prediction_vectorized, binomial_coeffs)
+from gtm.gtm_splines.bspline_prediction_vectorized import \
+    bspline_prediction_vectorized
 
 
 class Decorrelation(nn.Module):

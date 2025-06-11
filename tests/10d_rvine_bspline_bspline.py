@@ -1,11 +1,10 @@
 # GTM Package including GTM and the plot functions
-from gtm import *
-import torch
-import numpy as np
-
-import seaborn as sns
 import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import torch
 
+from gtm import *
 
 if __name__ == "__main__":
 

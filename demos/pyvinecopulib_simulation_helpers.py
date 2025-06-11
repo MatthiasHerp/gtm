@@ -1,16 +1,16 @@
 # GTM Package including GTM and the plot functions
-from gtm import *
+import random
 
+import matplotlib.pyplot as plt
+import numpy as np
 # Sample Copulas Package
 import pyvinecopulib as pv
-import numpy as np
-
+import seaborn as sns
 # Other Stuff
 import torch
-from torch.utils.data import Dataset, DataLoader
-import seaborn as sns
-import matplotlib.pyplot as plt
-import random
+from torch.utils.data import DataLoader, Dataset
+
+from gtm import *
 
 
 def set_seeds(seed_int):
@@ -102,8 +102,9 @@ def sample_random_pair_copulas(D, Independence_tree=2):
 # vine = pv.Vinecop(structure=rvine_structure, pair_copulas=pair_copulas)
 
 
-import pandas as pd
 import re
+
+import pandas as pd
 
 
 def compute_conditional_dependence_table(vine_model):

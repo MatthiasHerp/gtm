@@ -1,6 +1,7 @@
-import numpy as np
 from itertools import product
-from typing import Callable, Tuple, List, Union
+from typing import Callable, List, Tuple, Union
+
+import numpy as np
 
 
 # Generate Legendre-Gauss('LL') quadrature points and weights

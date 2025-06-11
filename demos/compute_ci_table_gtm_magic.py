@@ -1,6 +1,7 @@
-from gtm import *
-from demos.load_analyze_magic_data_helpers import *
 import os
+
+from demos.load_analyze_magic_data_helpers import *
+from gtm import *
 
 if __name__ == "__main__":
 

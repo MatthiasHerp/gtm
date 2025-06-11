@@ -1,6 +1,7 @@
-import torch
-from torch.utils.data import Dataset, DataLoader
 import math
+
+import torch
+from torch.utils.data import DataLoader, Dataset
 
 
 def create_simulated_data_gmm():

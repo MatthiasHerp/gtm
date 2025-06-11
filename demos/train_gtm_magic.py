@@ -10,11 +10,13 @@
 # Due to flexible marginals we use a marginal curvature penalty
 ####################################################################################################
 
-from gtm import *
-from demos.load_analyze_magic_data_helpers import *
-from demos.dataset_helpers import Generic_Dataset
-from torch.utils.data import DataLoader
 import os
+
+from torch.utils.data import DataLoader
+
+from demos.dataset_helpers import Generic_Dataset
+from demos.load_analyze_magic_data_helpers import *
+from gtm import *
 
 if __name__ == "__main__":
 

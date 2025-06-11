@@ -1,6 +1,7 @@
+import warnings
+
 import torch
 from torch import nn
-import warnings
 
 
 def adjust_ploynomial_range(polynomial_range: object, span_factor: object) -> object:

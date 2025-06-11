@@ -1,9 +1,10 @@
-import torch
-import seaborn as sns
-import matplotlib.pyplot as plt
-from itertools import combinations
 import warnings
+from itertools import combinations
+
+import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
+import torch
 
 
 def plot_metric_hist(metric, covariate=False, bins=20, storage=None, show_plot=True):

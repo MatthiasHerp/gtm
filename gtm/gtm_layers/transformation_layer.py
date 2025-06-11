@@ -1,25 +1,18 @@
-import torch
-from torch import nn
-import numpy as np
-import matplotlib.pyplot as plt
-from torch import optim
-from tqdm import tqdm
-import seaborn as sns
 import warnings
 
+import matplotlib.pyplot as plt
+import numpy as np
+import seaborn as sns
+import torch
+from torch import nn, optim
+from tqdm import tqdm
 
 from gtm.gtm_splines.bernstein_basis import (
-    compute_multivariate_bernstein_basis,
-    restrict_parameters,
-)
-from gtm.gtm_splines.bspline_prediction_vectorized import (
-    bspline_prediction_vectorized,
-    compute_multivariate_bspline_basis,
-)
+    compute_multivariate_bernstein_basis, restrict_parameters)
 from gtm.gtm_splines.bernstein_prediction_vectorized import (
-    bernstein_prediction_vectorized,
-    binomial_coeffs,
-)
+    bernstein_prediction_vectorized, binomial_coeffs)
+from gtm.gtm_splines.bspline_prediction_vectorized import (
+    bspline_prediction_vectorized, compute_multivariate_bspline_basis)
 
 
 class Transformation(nn.Module):

@@ -1,7 +1,7 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
-from gtm.gtm_model.gtm import GTM
+from torch.utils.data import DataLoader, Dataset
 
+from gtm.gtm_model.gtm import GTM
 
 if __name__ == "__main__":
     # Set the random seed for reproducibility

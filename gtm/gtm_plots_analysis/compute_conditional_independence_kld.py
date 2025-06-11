@@ -1,11 +1,13 @@
-import torch
-import pandas as pd
-import time
-import pickle
 import multiprocessing
+import pickle
+import time
 import warnings
-from gtm.gtm_plots_analysis.independence_kld_process_row import *
+
+import pandas as pd
+import torch
+
 from gtm.gtm_plots_analysis.compute_precision_matrix_summary_statistics import *
+from gtm.gtm_plots_analysis.independence_kld_process_row import *
 
 
 def compute_conditional_independence_kld(
