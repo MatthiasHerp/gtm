@@ -1,35 +1,39 @@
 import time
 import copy
 import torch
-#import warnings
-#from torch import nn
+
+# import warnings
+# from torch import nn
 import numpy as np
-#from torch.distributions import Normal, Laplace
-#import matplotlib.pyplot as plt
+
+# from torch.distributions import Normal, Laplace
+# import matplotlib.pyplot as plt
 from torch import optim
 from tqdm import tqdm
-#import seaborn as sns
-#from pytorch_lbfgs.LBFGS import LBFGS, FullBatchLBFGS
-#from torch.optim import LBFGS
+
+# import seaborn as sns
+# from pytorch_lbfgs.LBFGS import LBFGS, FullBatchLBFGS
+# from torch.optim import LBFGS
 import copy
 import pickle
 import os
 
-#from torch_ema import ExponentialMovingAverage
+# from torch_ema import ExponentialMovingAverage
 
 
 ########################################################################################################################
 # Solves this error: File "/Users/matthiasherp/anaconda3/envs/mctm_pytorch/lib/python3.11/site-packages/torch/optim/lbfgs.py", line 262, in _gather_flat_grad
 #    view = p.grad.view(-1)
 #           ^^^^^^^^^^^^^^^
-#RuntimeError: view size is not compatible with input tensor's size and stride (at least one dimension spans across two contiguous subspaces). Use .reshape(...) instead.
-#(mctm_pytorch) (base) 
+# RuntimeError: view size is not compatible with input tensor's size and stride (at least one dimension spans across two contiguous subspaces). Use .reshape(...) instead.
+# (mctm_pytorch) (base)
 
 import torch
 from functools import reduce
 from torch.optim.optimizer import Optimizer
 
-__all__ = ['LBFGS']
+__all__ = ["LBFGS"]
+
 
 def _cubic_interpolate(x1, f1, g1, x2, f2, g2, bounds=None):
     # ported from https://github.com/torch/optim/blob/master/polyinterp.lua
@@ -56,20 +60,12 @@ def _cubic_interpolate(x1, f1, g1, x2, f2, g2, bounds=None):
             min_pos = x1 - (x1 - x2) * ((g1 + d2 - d1) / (g1 - g2 + 2 * d2))
         return min(max(min_pos, xmin_bound), xmax_bound)
     else:
-        return (xmin_bound + xmax_bound) / 2.
+        return (xmin_bound + xmax_bound) / 2.0
 
 
-def _strong_wolfe(obj_func,
-                  x,
-                  t,
-                  d,
-                  f,
-                  g,
-                  gtd,
-                  c1=1e-4,
-                  c2=0.9,
-                  tolerance_change=1e-9,
-                  max_ls=25):
+def _strong_wolfe(
+    obj_func, x, t, d, f, g, gtd, c1=1e-4, c2=0.9, tolerance_change=1e-9, max_ls=25
+):
     # ported from https://github.com/torch/optim/blob/master/lswolfe.lua
     d_norm = d.abs().max()
     g = g.clone(memory_format=torch.contiguous_format)
@@ -110,13 +106,8 @@ def _strong_wolfe(obj_func,
         max_step = t * 10
         tmp = t
         t = _cubic_interpolate(
-            t_prev,
-            f_prev,
-            gtd_prev,
-            t,
-            f_new,
-            gtd_new,
-            bounds=(min_step, max_step))
+            t_prev, f_prev, gtd_prev, t, f_new, gtd_new, bounds=(min_step, max_step)
+        )
 
         # next step
         t_prev = tmp
@@ -146,8 +137,14 @@ def _strong_wolfe(obj_func,
             break
 
         # compute new trial value
-        t = _cubic_interpolate(bracket[0], bracket_f[0], bracket_gtd[0],
-                               bracket[1], bracket_f[1], bracket_gtd[1])
+        t = _cubic_interpolate(
+            bracket[0],
+            bracket_f[0],
+            bracket_gtd[0],
+            bracket[1],
+            bracket_f[1],
+            bracket_gtd[1],
+        )
 
         # test that we are making sufficient progress:
         # in case `t` is so close to boundary, we mark that we are making
@@ -239,15 +236,17 @@ class LBFGS(Optimizer):
         line_search_fn (str): either 'strong_wolfe' or None (default: None).
     """
 
-    def __init__(self,
-                 params,
-                 lr=1,
-                 max_iter=20,
-                 max_eval=None,
-                 tolerance_grad=1e-7,
-                 tolerance_change=1e-9,
-                 history_size=100,
-                 line_search_fn=None):
+    def __init__(
+        self,
+        params,
+        lr=1,
+        max_iter=20,
+        max_eval=None,
+        tolerance_grad=1e-7,
+        tolerance_change=1e-9,
+        history_size=100,
+        line_search_fn=None,
+    ):
         if max_eval is None:
             max_eval = max_iter * 5 // 4
         defaults = dict(
@@ -257,19 +256,23 @@ class LBFGS(Optimizer):
             tolerance_grad=tolerance_grad,
             tolerance_change=tolerance_change,
             history_size=history_size,
-            line_search_fn=line_search_fn)
+            line_search_fn=line_search_fn,
+        )
         super(LBFGS, self).__init__(params, defaults)
 
         if len(self.param_groups) != 1:
-            raise ValueError("LBFGS doesn't support per-parameter options "
-                             "(parameter groups)")
+            raise ValueError(
+                "LBFGS doesn't support per-parameter options " "(parameter groups)"
+            )
 
-        self._params = self.param_groups[0]['params']
+        self._params = self.param_groups[0]["params"]
         self._numel_cache = None
 
     def _numel(self):
         if self._numel_cache is None:
-            self._numel_cache = reduce(lambda total, p: total + p.numel(), self._params, 0)
+            self._numel_cache = reduce(
+                lambda total, p: total + p.numel(), self._params, 0
+            )
         return self._numel_cache
 
     def _gather_flat_grad(self):
@@ -289,7 +292,7 @@ class LBFGS(Optimizer):
         for p in self._params:
             numel = p.numel()
             # view as to avoid deprecated pointwise semantics
-            p.add_(update[offset:offset + numel].view_as(p), alpha=step_size)
+            p.add_(update[offset : offset + numel].view_as(p), alpha=step_size)
             offset += numel
         assert offset == self._numel()
 
@@ -321,25 +324,25 @@ class LBFGS(Optimizer):
         closure = torch.enable_grad()(closure)
 
         group = self.param_groups[0]
-        lr = group['lr']
-        max_iter = group['max_iter']
-        max_eval = group['max_eval']
-        tolerance_grad = group['tolerance_grad']
-        tolerance_change = group['tolerance_change']
-        line_search_fn = group['line_search_fn']
-        history_size = group['history_size']
+        lr = group["lr"]
+        max_iter = group["max_iter"]
+        max_eval = group["max_eval"]
+        tolerance_grad = group["tolerance_grad"]
+        tolerance_change = group["tolerance_change"]
+        line_search_fn = group["line_search_fn"]
+        history_size = group["history_size"]
 
         # NOTE: LBFGS has only global state, but we register it as state for
         # the first param, because this helps with casting in load_state_dict
         state = self.state[self._params[0]]
-        state.setdefault('func_evals', 0)
-        state.setdefault('n_iter', 0)
+        state.setdefault("func_evals", 0)
+        state.setdefault("n_iter", 0)
 
         # evaluate initial f(x) and df/dx
         orig_loss = closure()
         loss = float(orig_loss)
         current_evals = 1
-        state['func_evals'] += 1
+        state["func_evals"] += 1
 
         flat_grad = self._gather_flat_grad()
         opt_cond = flat_grad.abs().max() <= tolerance_grad
@@ -349,26 +352,26 @@ class LBFGS(Optimizer):
             return orig_loss
 
         # tensors cached in state (for tracing)
-        d = state.get('d')
-        t = state.get('t')
-        old_dirs = state.get('old_dirs')
-        old_stps = state.get('old_stps')
-        ro = state.get('ro')
-        H_diag = state.get('H_diag')
-        prev_flat_grad = state.get('prev_flat_grad')
-        prev_loss = state.get('prev_loss')
+        d = state.get("d")
+        t = state.get("t")
+        old_dirs = state.get("old_dirs")
+        old_stps = state.get("old_stps")
+        ro = state.get("ro")
+        H_diag = state.get("H_diag")
+        prev_flat_grad = state.get("prev_flat_grad")
+        prev_loss = state.get("prev_loss")
 
         n_iter = 0
         # optimize for a max of max_iter iterations
         while n_iter < max_iter:
             # keep track of nb of iterations
             n_iter += 1
-            state['n_iter'] += 1
+            state["n_iter"] += 1
 
             ############################################################
             # compute gradient descent direction
             ############################################################
-            if state['n_iter'] == 1:
+            if state["n_iter"] == 1:
                 d = flat_grad.neg()
                 old_dirs = []
                 old_stps = []
@@ -390,7 +393,7 @@ class LBFGS(Optimizer):
                     # store new direction/step
                     old_dirs.append(y)
                     old_stps.append(s)
-                    ro.append(1. / ys)
+                    ro.append(1.0 / ys)
 
                     # update scale of initial Hessian approximation
                     H_diag = ys / y.dot(y)  # (y*y)
@@ -399,9 +402,9 @@ class LBFGS(Optimizer):
                 # multiplied by the gradient
                 num_old = len(old_dirs)
 
-                if 'al' not in state:
-                    state['al'] = [None] * history_size
-                al = state['al']
+                if "al" not in state:
+                    state["al"] = [None] * history_size
+                al = state["al"]
 
                 # iteration in L-BFGS loop collapsed to use just one buffer
                 q = flat_grad.neg()
@@ -426,8 +429,8 @@ class LBFGS(Optimizer):
             # compute step length
             ############################################################
             # reset initial guess for step size
-            if state['n_iter'] == 1:
-                t = min(1., 1. / flat_grad.abs().sum()) * lr
+            if state["n_iter"] == 1:
+                t = min(1.0, 1.0 / flat_grad.abs().sum()) * lr
             else:
                 t = lr
 
@@ -451,7 +454,8 @@ class LBFGS(Optimizer):
                         return self._directional_evaluate(closure, x, t, d)
 
                     loss, flat_grad, t, ls_func_evals = _strong_wolfe(
-                        obj_func, x_init, t, d, loss, flat_grad, gtd)
+                        obj_func, x_init, t, d, loss, flat_grad, gtd
+                    )
                 self._add_grad(t, d)
                 opt_cond = flat_grad.abs().max() <= tolerance_grad
             else:
@@ -469,7 +473,7 @@ class LBFGS(Optimizer):
 
             # update func eval
             current_evals += ls_func_evals
-            state['func_evals'] += ls_func_evals
+            state["func_evals"] += ls_func_evals
 
             ############################################################
             # check conditions
@@ -491,25 +495,23 @@ class LBFGS(Optimizer):
             if abs(loss - prev_loss) < tolerance_change:
                 break
 
-        state['d'] = d
-        state['t'] = t
-        state['old_dirs'] = old_dirs
-        state['old_stps'] = old_stps
-        state['ro'] = ro
-        state['H_diag'] = H_diag
-        state['prev_flat_grad'] = prev_flat_grad
-        state['prev_loss'] = prev_loss
+        state["d"] = d
+        state["t"] = t
+        state["old_dirs"] = old_dirs
+        state["old_stps"] = old_stps
+        state["ro"] = ro
+        state["H_diag"] = H_diag
+        state["prev_flat_grad"] = prev_flat_grad
+        state["prev_loss"] = prev_loss
 
         return orig_loss
-
 
 
 ########################################################################################################################
 
 
-
 class EarlyStopper:
-    def __init__(self, patience=1, min_delta=0., global_min_loss=-np.inf):
+    def __init__(self, patience=1, min_delta=0.0, global_min_loss=-np.inf):
         self.patience = patience
         self.min_delta = min_delta
         self.counter = 0
@@ -527,7 +529,11 @@ class EarlyStopper:
 
             if self.counter >= self.patience:
                 if verbose:
-                    print("Early stopping due to no improvement in loss for",self.patience,"iterations")
+                    print(
+                        "Early stopping due to no improvement in loss for",
+                        self.patience,
+                        "iterations",
+                    )
                 return True
 
         if current_loss < self.global_min_loss:
@@ -535,10 +541,15 @@ class EarlyStopper:
             return True
 
         return False
-    
+
+
 import math
-def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, num_cycles=0.5, last_epoch=-1):
-    """ Create a schedule with a learning rate that decreases following the
+
+
+def get_cosine_schedule_with_warmup(
+    optimizer, num_warmup_steps, num_training_steps, num_cycles=0.5, last_epoch=-1
+):
+    """Create a schedule with a learning rate that decreases following the
     values of the cosine function between 0 and ⁠ pi * cycles ⁠ after a warmup
     period during which it increases linearly between 0 and 1.
     """
@@ -546,38 +557,73 @@ def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_st
     def lr_lambda(current_step):
         if current_step < num_warmup_steps:
             return float(current_step) / float(max(1, num_warmup_steps))
-        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
-        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress)))
+        progress = float(current_step - num_warmup_steps) / float(
+            max(1, num_training_steps - num_warmup_steps)
+        )
+        return max(
+            0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))
+        )
 
     return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
 
-    
-def train(model, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), lambda_penalty_params=False, learning_rate=1, iterations=2000, verbose=True, patience=5, min_delta=1e-7, global_min_loss=-np.inf,
-          optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", #ema_decay=False, 
-          adaptive_lasso_weights_matrix=False, 
-          max_batches_per_iter = False):
-    # max_batches_per_iter infos
-    # then use random sampling data_loader  
-    # always 1 for validation data
-    
-    start = time.time()
-  
-    opt = LBFGS(model.parameters(), lr=learning_rate, history_size=1, line_search_fn="strong_wolfe", max_iter=1, max_eval=40)
 
-    #if ema_decay is not False:
+def train(
+    model,
+    train_dataloader,
+    validate_dataloader=False,
+    train_covariates=False,
+    validate_covariates=False,
+    penalty_params=torch.FloatTensor([0, 0, 0, 0]),
+    lambda_penalty_params=False,
+    learning_rate=1,
+    iterations=2000,
+    verbose=True,
+    patience=5,
+    min_delta=1e-7,
+    global_min_loss=-np.inf,
+    optimizer="LBFGS",
+    lambda_penalty_mode="square",
+    objective_type="negloglik",  # ema_decay=False,
+    adaptive_lasso_weights_matrix=False,
+    max_batches_per_iter=False,
+):
+    # max_batches_per_iter infos
+    # then use random sampling data_loader
+    # always 1 for validation data
+
+    start = time.time()
+
+    opt = LBFGS(
+        model.parameters(),
+        lr=learning_rate,
+        history_size=1,
+        line_search_fn="strong_wolfe",
+        max_iter=1,
+        max_eval=40,
+    )
+
+    # if ema_decay is not False:
     #    ema = ExponentialMovingAverage(model.parameters(), decay=ema_decay)
 
     def closure():
         opt.zero_grad()
-        return_dict_model_objective  = model.__training_objective__(y_train, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=train_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix) # use the `objective` function
-        
+        return_dict_model_objective = model.__training_objective__(
+            y_train,
+            penalty_params,
+            lambda_penalty_params=lambda_penalty_params,
+            train_covariates=train_covariates,
+            lambda_penalty_mode=lambda_penalty_mode,
+            objective_type=objective_type,
+            adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+        )  # use the `objective` function
+
         loss = return_dict_model_objective["loss_with_penalties"].mean()
-        
+
         if verbose == True:
-            print("current_loss:",loss)
+            print("current_loss:", loss)
 
         # Note to myself:
-        # retain Graph makes it much slower in negloglik training and retaining the graph increases memory usage more and more as iterations increase. 
+        # retain Graph makes it much slower in negloglik training and retaining the graph increases memory usage more and more as iterations increase.
         # Further it also seems to make the cuda usage more instable in the sense of having spikes, now it runs super smooth and with literaly no memory usage
         if objective_type == "score_matching":
 
@@ -586,11 +632,19 @@ def train(model, train_dataloader, validate_dataloader=False, train_covariates=F
             loss.backward()
         return loss
 
-    early_stopper = EarlyStopper(patience=patience, min_delta=min_delta, global_min_loss=global_min_loss)
+    early_stopper = EarlyStopper(
+        patience=patience, min_delta=min_delta, global_min_loss=global_min_loss
+    )
 
     if optimizer == "Adam":
-        opt = optim.Adam(model.parameters(), lr = learning_rate, weight_decay=0)
-        scheduler = get_cosine_schedule_with_warmup(opt, num_warmup_steps=5, num_training_steps=iterations, num_cycles=0.5, last_epoch=-1) ##3,4,5 warmup steps machen 
+        opt = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
+        scheduler = get_cosine_schedule_with_warmup(
+            opt,
+            num_warmup_steps=5,
+            num_training_steps=iterations,
+            num_cycles=0.5,
+            last_epoch=-1,
+        )  ##3,4,5 warmup steps machen
 
     loss_list = []
     loss_list_val = []
@@ -604,94 +658,153 @@ def train(model, train_dataloader, validate_dataloader=False, train_covariates=F
         if model_val.num_trans_layers > 0:
             model_val.transformation.multivariate_basis = False
             model_val.transformation.multivariate_basis_derivativ_1 = False
-            
+
     for i in tqdm(range(iterations)):
         number_iterations = i
         num_processed_batches = 0
         for y_train in train_dataloader:
             num_processed_batches += 1
-            
+
             y_train = y_train.to(model.device)
-            
+
             if optimizer == "Adam":
                 opt.zero_grad()
-                return_dict_model_objective  = model.__training_objective__(y_train, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=train_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix) # use the `objective` function
-                
+                return_dict_model_objective = model.__training_objective__(
+                    y_train,
+                    penalty_params,
+                    lambda_penalty_params=lambda_penalty_params,
+                    train_covariates=train_covariates,
+                    lambda_penalty_mode=lambda_penalty_mode,
+                    objective_type=objective_type,
+                    adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+                )  # use the `objective` function
+
                 loss = return_dict_model_objective["loss_with_penalties"].mean()
                 loss.backward()
                 opt.step()
                 scheduler.step()
                 current_loss = loss
                 if verbose == True:
-                    print("current_loss:",loss)
+                    print("current_loss:", loss)
             elif optimizer == "LBFGS":
                 current_loss = opt.step(closure)
-        
-            #if ema_decay is not False:
+
+            # if ema_decay is not False:
             #    ema.update()
-            
-            if max_batches_per_iter is not False and num_processed_batches >= max_batches_per_iter:
+
+            if (
+                max_batches_per_iter is not False
+                and num_processed_batches >= max_batches_per_iter
+            ):
                 break
-            
+
         loss_list.append(current_loss.item())
 
         if validate_dataloader is not False:
             y_validate = next(iter(validate_dataloader))
             y_validate = y_validate.to(model.device)
             model_val.load_state_dict(model.state_dict())
-            
+
             if objective_type is "negloglik":
                 with torch.no_grad():
-                    return_dict_model_objective_val  = model_val.__training_objective__(y_validate, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=validate_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix)
-                    current_loss_val = return_dict_model_objective_val["loss_without_penalties"].mean() # No penalties as on validation set
+                    return_dict_model_objective_val = model_val.__training_objective__(
+                        y_validate,
+                        penalty_params,
+                        lambda_penalty_params=lambda_penalty_params,
+                        train_covariates=validate_covariates,
+                        lambda_penalty_mode=lambda_penalty_mode,
+                        objective_type=objective_type,
+                        adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+                    )
+                    current_loss_val = return_dict_model_objective_val[
+                        "loss_without_penalties"
+                    ].mean()  # No penalties as on validation set
             else:
-                return_dict_model_objective_val  = model.__training_objective__(y_validate, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=validate_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix)
-                current_loss_val = return_dict_model_objective_val["loss_without_penalties"].mean() # No penalties as on validation set
+                return_dict_model_objective_val = model.__training_objective__(
+                    y_validate,
+                    penalty_params,
+                    lambda_penalty_params=lambda_penalty_params,
+                    train_covariates=validate_covariates,
+                    lambda_penalty_mode=lambda_penalty_mode,
+                    objective_type=objective_type,
+                    adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+                )
+                current_loss_val = return_dict_model_objective_val[
+                    "loss_without_penalties"
+                ].mean()  # No penalties as on validation set
 
             loss_list_val.append(current_loss_val.item())
-            
+
             if verbose:
-                print("current_loss_val: ",current_loss_val.item())
+                print("current_loss_val: ", current_loss_val.item())
 
             if early_stopper.early_stop(current_loss_val, model):
                 if verbose:
-                    print("Early Stop at iteration", i, "with minimal loss", early_stopper.min_loss, "and patience", patience,
-                        "and min_delta", min_delta)
+                    print(
+                        "Early Stop at iteration",
+                        i,
+                        "with minimal loss",
+                        early_stopper.min_loss,
+                        "and patience",
+                        patience,
+                        "and min_delta",
+                        min_delta,
+                    )
                 # early stop means best model was at current iteration - patience
-                number_iterations = number_iterations-patience
+                number_iterations = number_iterations - patience
                 break
         else:
             if early_stopper.early_stop(current_loss, model):
                 if verbose:
-                    print("Early Stop at iteration", i, "with minimal loss", early_stopper.min_loss, "and patience", patience,
-                        "and min_delta", min_delta)
+                    print(
+                        "Early Stop at iteration",
+                        i,
+                        "with minimal loss",
+                        early_stopper.min_loss,
+                        "and patience",
+                        patience,
+                        "and min_delta",
+                        min_delta,
+                    )
                 # early stop means best model was at current iteration - patience
                 number_iterations = number_iterations - patience
                 break
-        
+
     # Return the best model which is not necessarily the last model
     model.load_state_dict(early_stopper.best_model_state)
-    
+
     # Rerun model at the end to get final penalties
-    return_dict_model_training  = model.__training_objective__(y_train, penalty_params, lambda_penalty_params=lambda_penalty_params, train_covariates=train_covariates, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix)
+    return_dict_model_training = model.__training_objective__(
+        y_train,
+        penalty_params,
+        lambda_penalty_params=lambda_penalty_params,
+        train_covariates=train_covariates,
+        lambda_penalty_mode=lambda_penalty_mode,
+        objective_type=objective_type,
+        adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+    )
     return_dict_model_training["loss_list_training"] = loss_list
     return_dict_model_training["loss_list_validation"] = loss_list_val
     return_dict_model_training["number_iterations"] = number_iterations
-    
+
     end = time.time()
 
     training_time = end - start
     return_dict_model_training["training_time"] = training_time
-    
+
     return return_dict_model_training
-    
-    
-        
+
+
 def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars):
 
     lambda_penalty_params = torch.tensor(lambda_penalty_params, dtype=torch.float32)
     if lambda_penalty_params.size() == torch.Size([]):
-        lambda_penalty_params = torch.tril(lambda_penalty_params.repeat(num_vars, num_vars)) - torch.eye( #before got warning with torch.tensor(lambda_penalty_params) in the tril
-            num_vars, num_vars) * lambda_penalty_params
+        lambda_penalty_params = (
+            torch.tril(lambda_penalty_params.repeat(num_vars, num_vars))
+            - torch.eye(  # before got warning with torch.tensor(lambda_penalty_params) in the tril
+                num_vars, num_vars
+            )
+            * lambda_penalty_params
+        )
 
     return lambda_penalty_params

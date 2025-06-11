@@ -1,16 +1,21 @@
 import torch
 from torch import nn
-#from gtm.layers.flip import Flip
+
+# from gtm.layers.flip import Flip
 from gtm.gtm_layers.transformation_layer import *
 from gtm.gtm_layers.decorrelation_layer import Decorrelation
 from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
 from gtm.gtm_training.objective_functions import log_likelihood, training_objective
-from gtm.gtm_training.training_helpers import train, if_float_create_lambda_penalisation_matrix
+from gtm.gtm_training.training_helpers import (
+    train,
+    if_float_create_lambda_penalisation_matrix,
+)
 from gtm.gtm_plots_analysis.compute_conditional_independence_kld import *
-#from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
+
+# from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
 
 import optuna
-from optuna.samplers import TPESampler 
+from optuna.samplers import TPESampler
 import itertools
 
 import scipy
@@ -21,59 +26,67 @@ from gtm.gtm_plots_analysis.plot_marginals import plot_marginals
 from gtm.gtm_plots_analysis.plot_metric_hist import plot_metric_hist
 from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
 from gtm.gtm_plots_analysis.plot_splines import plot_splines
-from gtm.gtm_plots_analysis.plot_conditional_independence_graph import plot_graph_conditional_independencies
-from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import plot_graph_conditional_independencies_with_pairplots
-from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import plot_conditional_dependence_pair
+from gtm.gtm_plots_analysis.plot_conditional_independence_graph import (
+    plot_graph_conditional_independencies,
+)
+from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import (
+    plot_graph_conditional_independencies_with_pairplots,
+)
+from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import (
+    plot_conditional_dependence_pair,
+)
 
 from typing import Literal, List, Tuple  # Still needed
 
+
 class GTM(nn.Module):
     """
-        Graphical Transformation Model (GTM).
-        
-        GTMs are highly flexible density estimation models. The combine marginal transformations, named the transfomation layer,
-        with a sequence normalizing flow like layers, named decorrelation layers.
-        The main advantage of GTMs is that they combine high flexibility in learning complex marginals and dependency structures with
-        interpretability of the conditional dependency structure between the varaibles.
-        The interpretability stems from the GTMs decorrelation layers that can be interpreted as creating a pseudo correlation matrix.
-        This means that at each point in the pace of the data, the GTM returns a local pseudo correlation matrix and hence local pseudo conditional correlations.
+    Graphical Transformation Model (GTM).
 
-        Parameters
-        ----------
-        number_variables : int
-            The number of variables in the data.
-        number_transformation_layers : Literal[0, 1] = 1, optional
-            The number of transformation layers. Either 0 or 1. Default is 1.
-        number_decorrelation_layers : int, optional
-            The number of decorrelation layers. Default is 3. a Minimum of 3 is recommended to ensure that variable ordering does not influence the results.
-        degree_transformations : int | list[int] = 15, optional
-            The degree of the transformation layer splines. One can either pass an integer which is then used as the degree for all variables or a
-            list of integers as long as the number of variables, which then results in varying degrees across variables.
-            Varying degrees make sense if different dimensions have marginals that vary strongly in their deviation from a standard gaussian distribution.
-            Default is 15.
-        degree_decorrelation : int = 30, optional
-            The degree of the decorrelation layer splines. The degree is the same for every spline across every decorrelation layer. Default is 30.
-        spline_transformation : Literal["bspline", "bernstein"] = "bspline", optional
-            The type of spline used in the transformation layer. Either "bspline" or "bernstein". Default is "bspline".
-            Bsplines tend to be more flexible and due to the implementation via de Boor's algorithm they do increase compute time to much when increasing the degree.
-            Bernstein polynomials on the other hand are faster a smaller degrees and require less penalization for smoothness at lower degrees.
-        spline_decorrelation : Literal["bspline", "bernstein"] = "bspline", optional
-            The type of spline used in the decorrelation layer. Either "bspline" or "bernstein". Default is "bspline".
-            Bsplines tend to be more flexible and due to the implementation via de Boor's algorithm they do increase compute time to much when increasing the degree.
-            Bernstein polynomials on the other hand are faster a smaller degrees and require less penalization for smoothness at lower degrees.
-            The decorrelation layers require most of the computational, hence for high dimensional data and not to complex dependencies Bernstein polynomials can be more efficient.
-        transformation_spline_range : List[float, float] = [-15, 15], optional
-            The range of the transformation splines, hence the minimum and maximum value across all variables. 
-            This is the range in which the transformation layer is defined. 
-            Therefor it is recommended to scale the data to a common range before training the model.
-            A further recommendation is to set the spline range 10-20% larger than the range of the data to allow for better out of sample prediction in validation and test sets.
-            Outside of the range the transformation layer uses a span restriction which results the border case prediction.
-            The same is true for the decorrelation layer.
-            Default spline range is [-15, 15].
-        device : str | torch.device = "cpu", optional
-            The device on which the model is trained. Default is "cpu". Can also be a torch.device object such as a torch.device("cuda:0") for GPU training.
-        -----------
+    GTMs are highly flexible density estimation models. The combine marginal transformations, named the transfomation layer,
+    with a sequence normalizing flow like layers, named decorrelation layers.
+    The main advantage of GTMs is that they combine high flexibility in learning complex marginals and dependency structures with
+    interpretability of the conditional dependency structure between the varaibles.
+    The interpretability stems from the GTMs decorrelation layers that can be interpreted as creating a pseudo correlation matrix.
+    This means that at each point in the pace of the data, the GTM returns a local pseudo correlation matrix and hence local pseudo conditional correlations.
+
+    Parameters
+    ----------
+    number_variables : int
+        The number of variables in the data.
+    number_transformation_layers : Literal[0, 1] = 1, optional
+        The number of transformation layers. Either 0 or 1. Default is 1.
+    number_decorrelation_layers : int, optional
+        The number of decorrelation layers. Default is 3. a Minimum of 3 is recommended to ensure that variable ordering does not influence the results.
+    degree_transformations : int | list[int] = 15, optional
+        The degree of the transformation layer splines. One can either pass an integer which is then used as the degree for all variables or a
+        list of integers as long as the number of variables, which then results in varying degrees across variables.
+        Varying degrees make sense if different dimensions have marginals that vary strongly in their deviation from a standard gaussian distribution.
+        Default is 15.
+    degree_decorrelation : int = 30, optional
+        The degree of the decorrelation layer splines. The degree is the same for every spline across every decorrelation layer. Default is 30.
+    spline_transformation : Literal["bspline", "bernstein"] = "bspline", optional
+        The type of spline used in the transformation layer. Either "bspline" or "bernstein". Default is "bspline".
+        Bsplines tend to be more flexible and due to the implementation via de Boor's algorithm they do increase compute time to much when increasing the degree.
+        Bernstein polynomials on the other hand are faster a smaller degrees and require less penalization for smoothness at lower degrees.
+    spline_decorrelation : Literal["bspline", "bernstein"] = "bspline", optional
+        The type of spline used in the decorrelation layer. Either "bspline" or "bernstein". Default is "bspline".
+        Bsplines tend to be more flexible and due to the implementation via de Boor's algorithm they do increase compute time to much when increasing the degree.
+        Bernstein polynomials on the other hand are faster a smaller degrees and require less penalization for smoothness at lower degrees.
+        The decorrelation layers require most of the computational, hence for high dimensional data and not to complex dependencies Bernstein polynomials can be more efficient.
+    transformation_spline_range : List[float, float] = [-15, 15], optional
+        The range of the transformation splines, hence the minimum and maximum value across all variables.
+        This is the range in which the transformation layer is defined.
+        Therefor it is recommended to scale the data to a common range before training the model.
+        A further recommendation is to set the spline range 10-20% larger than the range of the data to allow for better out of sample prediction in validation and test sets.
+        Outside of the range the transformation layer uses a span restriction which results the border case prediction.
+        The same is true for the decorrelation layer.
+        Default spline range is [-15, 15].
+    device : str | torch.device = "cpu", optional
+        The device on which the model is trained. Default is "cpu". Can also be a torch.device object such as a torch.device("cuda:0") for GPU training.
+    -----------
     """
+
     def __init__(
         self,
         number_variables: int,
@@ -84,7 +97,7 @@ class GTM(nn.Module):
         spline_transformation: Literal["bspline", "bernstein"] = "bspline",
         spline_decorrelation: Literal["bspline", "bernstein"] = "bspline",
         transformation_spline_range: Tuple[float, float] = (-15, 15),
-        device: str | torch.device = "cpu"
+        device: str | torch.device = "cpu",
     ):
         """
         Parameters
@@ -112,8 +125,8 @@ class GTM(nn.Module):
             Bernstein polynomials on the other hand are faster a smaller degrees and require less penalization for smoothness at lower degrees.
             The decorrelation layers require most of the computational, hence for high dimensional data and not to complex dependencies Bernstein polynomials can be more efficient.
         transformation_spline_range : List[float, float] = [-15, 15], optional
-            The range of the transformation splines, hence the minimum and maximum value across all variables. 
-            This is the range in which the transformation layer is defined. 
+            The range of the transformation splines, hence the minimum and maximum value across all variables.
+            This is the range in which the transformation layer is defined.
             Therefor it is recommended to scale the data to a common range before training the model.
             A further recommendation is to set the spline range 10-20% larger than the range of the data to allow for better out of sample prediction in validation and test sets.
             Outside of the range the transformation layer uses a span restriction which results the border case prediction.
@@ -124,31 +137,39 @@ class GTM(nn.Module):
         -----------
         """
         super(GTM, self).__init__()
-        
+
         # Parameters below are left out of init for the initial package release
         decorrelation_spline_range: List[List[float]] = [[-15], [15]]
         span_factor: torch.Tensor = torch.tensor(0.1)
         span_restriction: str = "reluler"
-        number_covariates: bool | int = False  #False means no covariates, or its the count
+        number_covariates: bool | int = (
+            False  # False means no covariates, or its the count
+        )
         initial_log_transform: bool = False
-        covariate_effect: str = "multiplicativ" 
+        covariate_effect: str = "multiplicativ"
         calc_method_bspline: str = "deBoor"
         affine_decorr_layer: bool = False
         degree_multi: bool | int = False
         spline_order: int = 3
         transform_only: bool = False
-        
-        
+
         self.transform_only = transform_only
-        
+
         self.number_variables = number_variables
 
         # Repeat polynomial ranges for all variables as this is the range for the bsplines essentially
-        self.transformation_spline_range = list([[transformation_spline_range[0]] * self.number_variables,
-                                                [transformation_spline_range[1]] * self.number_variables])
-        self.decorrelation_spline_range = list([decorrelation_spline_range[0] * self.number_variables,
-                                                decorrelation_spline_range[1] * self.number_variables])
-  
+        self.transformation_spline_range = list(
+            [
+                [transformation_spline_range[0]] * self.number_variables,
+                [transformation_spline_range[1]] * self.number_variables,
+            ]
+        )
+        self.decorrelation_spline_range = list(
+            [
+                decorrelation_spline_range[0] * self.number_variables,
+                decorrelation_spline_range[1] * self.number_variables,
+            ]
+        )
 
         # required for the varying degree of the transformation layer to work
         # if it is a number then transform into a repeating list of length of number of varaibles
@@ -156,7 +177,7 @@ class GTM(nn.Module):
             degree_transformations = [degree_transformations] * self.number_variables
         self.degree_transformations = degree_transformations
         self.degree_decorrelation = degree_decorrelation
-        
+
         self.spline_transformation = spline_transformation
         self.spline_decorrelation = spline_decorrelation
 
@@ -172,50 +193,66 @@ class GTM(nn.Module):
         self.initial_log_transform = initial_log_transform
 
         self.covariate_effect = covariate_effect
-        
+
         self.calc_method_bspline = calc_method_bspline
-        
+
         self.spline_order = spline_order
-        
+
         self.affine_decorr_layer = affine_decorr_layer
-        
+
         self.degree_multi = degree_multi
 
         if self.num_trans_layers > 0:
-            self.transformation = Transformation(degree=self.degree_transformations, number_variables=self.number_variables,
-                                     spline_range=self.transformation_spline_range, span_factor=self.span_factor,
-                                     number_covariates=self.number_covariates, spline=self.spline_transformation,
-                                     initial_log_transform=self.initial_log_transform,
-                                     calc_method_bspline=self.calc_method_bspline,
-                                     span_restriction=self.span_restriction,
-                                     spline_order = self.spline_order,
-                                     device=device) 
-            
-        if self.num_trans_layers > 1:
-            raise NotImplementedError("Model is only implemented to have 0 or 1 transformation layer. This is enough as a TM with enough degrees can model any arbitrary continious distribution.")
+            self.transformation = Transformation(
+                degree=self.degree_transformations,
+                number_variables=self.number_variables,
+                spline_range=self.transformation_spline_range,
+                span_factor=self.span_factor,
+                number_covariates=self.number_covariates,
+                spline=self.spline_transformation,
+                initial_log_transform=self.initial_log_transform,
+                calc_method_bspline=self.calc_method_bspline,
+                span_restriction=self.span_restriction,
+                spline_order=self.spline_order,
+                device=device,
+            )
 
-        self.flip_matrix = generate_diagonal_matrix(self.number_variables).to(self.device)
+        if self.num_trans_layers > 1:
+            raise NotImplementedError(
+                "Model is only implemented to have 0 or 1 transformation layer. This is enough as a TM with enough degrees can model any arbitrary continious distribution."
+            )
+
+        self.flip_matrix = generate_diagonal_matrix(self.number_variables).to(
+            self.device
+        )
 
         self.number_decorrelation_layers = number_decorrelation_layers
         if self.number_decorrelation_layers > 0:
-            self.decorrelation_layers = nn.ModuleList([Decorrelation(degree=self.degree_decorrelation, number_variables=self.number_variables,
-                                    spline_range=self.decorrelation_spline_range, span_factor=self.span_factor,
-                                    span_restriction=self.span_restriction, spline=self.spline_decorrelation,
-                                    number_covariates=self.number_covariates,
-                                    covariate_effect = self.covariate_effect,
-                                    calc_method_bspline = self.calc_method_bspline,
-                                    spline_order = self.spline_order,
-                                    affine_layer = self.affine_decorr_layer,
-                                    degree_multi = self.degree_multi,
-                                    device=device
-                                                                    ) for i in range(self.number_decorrelation_layers)])
-            
-        self.subset_dimension=None
-        self.conditional_independence_table=None
-        
-    
-    def to(self, 
-           device: str | torch.device ):
+            self.decorrelation_layers = nn.ModuleList(
+                [
+                    Decorrelation(
+                        degree=self.degree_decorrelation,
+                        number_variables=self.number_variables,
+                        spline_range=self.decorrelation_spline_range,
+                        span_factor=self.span_factor,
+                        span_restriction=self.span_restriction,
+                        spline=self.spline_decorrelation,
+                        number_covariates=self.number_covariates,
+                        covariate_effect=self.covariate_effect,
+                        calc_method_bspline=self.calc_method_bspline,
+                        spline_order=self.spline_order,
+                        affine_layer=self.affine_decorr_layer,
+                        degree_multi=self.degree_multi,
+                        device=device,
+                    )
+                    for i in range(self.number_decorrelation_layers)
+                ]
+            )
+
+        self.subset_dimension = None
+        self.conditional_independence_table = None
+
+    def to(self, device: str | torch.device):
         """
         Pushes GTM and its layers to the reuired device.
 
@@ -223,7 +260,7 @@ class GTM(nn.Module):
         ----------
         device : str | torch.device
             The device on which the model is trained. Default is "cpu". Can also be a torch.device object such as a torch.device("cuda:0") for GPU training.
-        
+
         Returns
         -------
         GTM pushed to device
@@ -234,55 +271,56 @@ class GTM(nn.Module):
             decorrelation_layer.device = device
 
         return super().to(device)
-        
-    
+
     def __create_return_dict_nf_mctm__(self, input):
-        return {"output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
-                "log_d": torch.zeros(input.size() if input.dim() > 1 else input.unsqueeze(1).size()).to(self.device),
-                "transformation_second_order_ridge_pen_global": 0,
-                "second_order_ridge_pen_global": 0,
-                "first_order_ridge_pen_global": 0,
-                "param_ridge_pen_global": 0,
-                "lambda_matrix_global": torch.eye(self.number_variables).to(self.device), 
-                "der_lambda_matrix_global": None,
-                "der2_lambda_matrix_global": None
-                }
-    
-        
-    def forward(self, y, return_lambda_matrix = True):
+        return {
+            "output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
+            "log_d": torch.zeros(
+                input.size() if input.dim() > 1 else input.unsqueeze(1).size()
+            ).to(self.device),
+            "transformation_second_order_ridge_pen_global": 0,
+            "second_order_ridge_pen_global": 0,
+            "first_order_ridge_pen_global": 0,
+            "param_ridge_pen_global": 0,
+            "lambda_matrix_global": torch.eye(self.number_variables).to(self.device),
+            "der_lambda_matrix_global": None,
+            "der2_lambda_matrix_global": None,
+        }
+
+    def forward(self, y, return_lambda_matrix=True):
         """
         GTM forward pass.
 
         Parameters
         ----------
-        y : torch.FloatTensor 
+        y : torch.FloatTensor
             The input data to pass through the model foward pass.
         return_lambda_matrix: bool = True
             Wether to compute the global lambda matrix in the forward pass or not. To not do it save a bit of compute.
-        
+
         Returns
         -------
-        A dictionary containing the latent space named "output", the log determinant "log_d", the differences for thes spline penalites 
+        A dictionary containing the latent space named "output", the log determinant "log_d", the differences for thes spline penalites
         "transformation_second_order_ridge_pen_global", "second_order_ridge_pen_global", "second_order_ridge_pen_global", "param_ridge_pen_global"
         and the full model, hence global, lambda matrix "lambda_matrix_global".
         """
         # Some left out arguements for the first release version
         # evaluate and train do not make sense anymore as we do not store basis in transformation layer
         # a main reason is that we now allow training bathwise which prevents this
-        covariate=False
-        return_scores_hessian=False
-        train=True
-        evaluate=True
-    
+        covariate = False
+        return_scores_hessian = False
+        train = True
+        evaluate = True
+
         return_dict_nf_mctm = self.__create_return_dict_nf_mctm__(y)
-        
+
         if self.subset_dimension is not None:
             # if subset dimension is set then only use this dimension
-            y = y[:,self.subset_dimension].unsqueeze(1)
+            y = y[:, self.subset_dimension].unsqueeze(1)
 
-        if self.initial_log_transform==True:
-            y = y + 0.01 #log(0) does not work
-            log_d = - torch.log(y) # = log(1/y)
+        if self.initial_log_transform == True:
+            y = y + 0.01  # log(0) does not work
+            log_d = -torch.log(y)  # = log(1/y)
             y = torch.log(y)
         else:
             log_d = 0
@@ -293,107 +331,214 @@ class GTM(nn.Module):
             if train:
                 if self.num_trans_layers > 0:
                     # new input false to not recompute basis each iteration
-                    return_dict_transformation = self.transformation(y, covariate, log_d=log_d, return_log_d=True, new_input=False, store_basis=True, return_scores_hessian=return_scores_hessian)
+                    return_dict_transformation = self.transformation(
+                        y,
+                        covariate,
+                        log_d=log_d,
+                        return_log_d=True,
+                        new_input=False,
+                        store_basis=True,
+                        return_scores_hessian=return_scores_hessian,
+                    )
 
                     return_dict_nf_mctm["output"] = return_dict_transformation["output"]
                     return_dict_nf_mctm["log_d"] = return_dict_transformation["log_d"]
                 else:
                     return_dict_nf_mctm["output"] = y.clone()
-                    return_dict_nf_mctm["log_d"] = torch.zeros(y.size(), device=self.device).float()
-                    
+                    return_dict_nf_mctm["log_d"] = torch.zeros(
+                        y.size(), device=self.device
+                    ).float()
 
             elif evaluate:
                 if self.num_trans_layers > 0:
                     # new input true as we need to recompute the basis for the validation/test set
-                    return_dict_transformation = self.transformation(y, covariate, log_d=log_d, return_log_d=True, new_input=True, store_basis=True, return_scores_hessian=return_scores_hessian)
-                    
+                    return_dict_transformation = self.transformation(
+                        y,
+                        covariate,
+                        log_d=log_d,
+                        return_log_d=True,
+                        new_input=True,
+                        store_basis=True,
+                        return_scores_hessian=return_scores_hessian,
+                    )
+
                     return_dict_nf_mctm["output"] = return_dict_transformation["output"]
                     return_dict_nf_mctm["log_d"] = return_dict_transformation["log_d"]
                 else:
                     return_dict_nf_mctm["output"] = y.clone()
-                    return_dict_nf_mctm["log_d"] = torch.zeros(y.size(), device=self.device).float()
-            
+                    return_dict_nf_mctm["log_d"] = torch.zeros(
+                        y.size(), device=self.device
+                    ).float()
+
             if self.transform_only == True:
                 return return_dict_nf_mctm
 
             if self.num_trans_layers > 0 and return_scores_hessian == True:
-            
-                return_dict_nf_mctm["der_lambda_matrix_global"] = return_dict_transformation["scores"]#.unsqueeze(2)
 
-                return_dict_nf_mctm["der2_lambda_matrix_global_list"] = [return_dict_transformation["hessian"]]#.unsqueeze(2)]
-            
+                return_dict_nf_mctm["der_lambda_matrix_global"] = (
+                    return_dict_transformation["scores"]
+                )  # .unsqueeze(2)
+
+                return_dict_nf_mctm["der2_lambda_matrix_global_list"] = [
+                    return_dict_transformation["hessian"]
+                ]  # .unsqueeze(2)]
+
             if self.number_decorrelation_layers > 0:
                 for i in range(self.number_decorrelation_layers):
 
-
-                    if ((i+1) % 2) == 0:
+                    if ((i + 1) % 2) == 0:
                         # even: 2,4, 6, ...
-                        return_dict_nf_mctm["output"] = (self.flip_matrix @ return_dict_nf_mctm["output"].T).T
-                    #else:
-                        # odd: 1, 3, 5, ...
+                        return_dict_nf_mctm["output"] = (
+                            self.flip_matrix @ return_dict_nf_mctm["output"].T
+                        ).T
+                    # else:
+                    # odd: 1, 3, 5, ...
 
+                    return_dict_decorrelation = self.decorrelation_layers[i](
+                        return_dict_nf_mctm["output"],
+                        covariate,
+                        0,
+                        return_log_d=True,
+                        return_penalties=True,
+                        return_scores_hessian=return_scores_hessian,
+                    )
 
-                    return_dict_decorrelation = self.decorrelation_layers[i](return_dict_nf_mctm["output"], covariate, 0,
-                                                                return_log_d=True, return_penalties=True, return_scores_hessian=return_scores_hessian)
-                    
                     return_dict_nf_mctm["output"] = return_dict_decorrelation["output"]
-                    return_dict_nf_mctm["log_d"] += return_dict_decorrelation["log_d"] #required if the layers are multiplicative
-                    return_dict_nf_mctm["second_order_ridge_pen_global"] += return_dict_decorrelation["second_order_ridge_pen_sum"]
-                    return_dict_nf_mctm["first_order_ridge_pen_global"] += return_dict_decorrelation["first_order_ridge_pen_sum"]
-                    return_dict_nf_mctm["param_ridge_pen_global"] += return_dict_decorrelation["param_ridge_pen_sum"]
+                    return_dict_nf_mctm["log_d"] += return_dict_decorrelation[
+                        "log_d"
+                    ]  # required if the layers are multiplicative
+                    return_dict_nf_mctm[
+                        "second_order_ridge_pen_global"
+                    ] += return_dict_decorrelation["second_order_ridge_pen_sum"]
+                    return_dict_nf_mctm[
+                        "first_order_ridge_pen_global"
+                    ] += return_dict_decorrelation["first_order_ridge_pen_sum"]
+                    return_dict_nf_mctm[
+                        "param_ridge_pen_global"
+                    ] += return_dict_decorrelation["param_ridge_pen_sum"]
 
-                    if ((i+1) % 2) == 0:
+                    if ((i + 1) % 2) == 0:
                         # even
                         if return_lambda_matrix == True:
-                            lambda_matrix_upper = self.flip_matrix @ return_dict_decorrelation["lambda_matrix"] @ self.flip_matrix
+                            lambda_matrix_upper = (
+                                self.flip_matrix
+                                @ return_dict_decorrelation["lambda_matrix"]
+                                @ self.flip_matrix
+                            )
 
                         if return_lambda_matrix == True:
-                            return_dict_nf_mctm["lambda_matrix_global"] = lambda_matrix_upper @ return_dict_nf_mctm["lambda_matrix_global"]
+                            return_dict_nf_mctm["lambda_matrix_global"] = (
+                                lambda_matrix_upper
+                                @ return_dict_nf_mctm["lambda_matrix_global"]
+                            )
 
                         if return_scores_hessian == True:
-                            der_lambda_matrix_upper = self.flip_matrix @ return_dict_decorrelation["der_lambda_matrix"] @ self.flip_matrix  
-                            return_dict_nf_mctm["der_lambda_matrix_global"] = torch.bmm(der_lambda_matrix_upper, return_dict_nf_mctm["der_lambda_matrix_global"])
-                            
-                            der2_lambda_matrix_upper = self.flip_matrix @ return_dict_decorrelation["der2_lambda_matrix"] @ self.flip_matrix
-                            
-                            return_dict_nf_mctm["der2_lambda_matrix_global_list"].append(
-                                torch.bmm(der2_lambda_matrix_upper, return_dict_nf_mctm["der_lambda_matrix_global"]) * return_dict_nf_mctm["der_lambda_matrix_global"])
-                            
-                            for j in range(i+1): #j are all sum elements prior to i
-                                return_dict_nf_mctm["der2_lambda_matrix_global_list"][j] = torch.bmm(der_lambda_matrix_upper, return_dict_nf_mctm["der2_lambda_matrix_global_list"][j])
-                            
+                            der_lambda_matrix_upper = (
+                                self.flip_matrix
+                                @ return_dict_decorrelation["der_lambda_matrix"]
+                                @ self.flip_matrix
+                            )
+                            return_dict_nf_mctm["der_lambda_matrix_global"] = torch.bmm(
+                                der_lambda_matrix_upper,
+                                return_dict_nf_mctm["der_lambda_matrix_global"],
+                            )
+
+                            der2_lambda_matrix_upper = (
+                                self.flip_matrix
+                                @ return_dict_decorrelation["der2_lambda_matrix"]
+                                @ self.flip_matrix
+                            )
+
+                            return_dict_nf_mctm[
+                                "der2_lambda_matrix_global_list"
+                            ].append(
+                                torch.bmm(
+                                    der2_lambda_matrix_upper,
+                                    return_dict_nf_mctm["der_lambda_matrix_global"],
+                                )
+                                * return_dict_nf_mctm["der_lambda_matrix_global"]
+                            )
+
+                            for j in range(i + 1):  # j are all sum elements prior to i
+                                return_dict_nf_mctm["der2_lambda_matrix_global_list"][
+                                    j
+                                ] = torch.bmm(
+                                    der_lambda_matrix_upper,
+                                    return_dict_nf_mctm[
+                                        "der2_lambda_matrix_global_list"
+                                    ][j],
+                                )
+
                     else:
                         # odd
                         if return_lambda_matrix == True:
-                            return_dict_nf_mctm["lambda_matrix_global"] = return_dict_decorrelation["lambda_matrix"] @ return_dict_nf_mctm["lambda_matrix_global"]
-                        
+                            return_dict_nf_mctm["lambda_matrix_global"] = (
+                                return_dict_decorrelation["lambda_matrix"]
+                                @ return_dict_nf_mctm["lambda_matrix_global"]
+                            )
+
                         if return_scores_hessian == True:
-                            return_dict_nf_mctm["der_lambda_matrix_global"] = torch.bmm(return_dict_decorrelation["der_lambda_matrix"], return_dict_nf_mctm["der_lambda_matrix_global"])
+                            return_dict_nf_mctm["der_lambda_matrix_global"] = torch.bmm(
+                                return_dict_decorrelation["der_lambda_matrix"],
+                                return_dict_nf_mctm["der_lambda_matrix_global"],
+                            )
 
-                            return_dict_nf_mctm["der2_lambda_matrix_global_list"].append(
-                                torch.bmm(return_dict_decorrelation["der2_lambda_matrix"], return_dict_nf_mctm["der_lambda_matrix_global"]) * return_dict_nf_mctm["der_lambda_matrix_global"])
-                            
-                            for j in range(i+1): #j are all sum elements prior to i
-                                return_dict_nf_mctm["der2_lambda_matrix_global_list"][j] = torch.bmm(return_dict_decorrelation["der_lambda_matrix"], return_dict_nf_mctm["der2_lambda_matrix_global_list"][j])
+                            return_dict_nf_mctm[
+                                "der2_lambda_matrix_global_list"
+                            ].append(
+                                torch.bmm(
+                                    return_dict_decorrelation["der2_lambda_matrix"],
+                                    return_dict_nf_mctm["der_lambda_matrix_global"],
+                                )
+                                * return_dict_nf_mctm["der_lambda_matrix_global"]
+                            )
 
-                    if ((i+1) % 2) == 0:
+                            for j in range(i + 1):  # j are all sum elements prior to i
+                                return_dict_nf_mctm["der2_lambda_matrix_global_list"][
+                                    j
+                                ] = torch.bmm(
+                                    return_dict_decorrelation["der_lambda_matrix"],
+                                    return_dict_nf_mctm[
+                                        "der2_lambda_matrix_global_list"
+                                    ][j],
+                                )
+
+                    if ((i + 1) % 2) == 0:
                         # even
-                        #output = (self.flip_matrix @ output.T).T
-                        return_dict_nf_mctm["output"] = (self.flip_matrix @ return_dict_nf_mctm["output"].T).T
-                    #else:
+                        # output = (self.flip_matrix @ output.T).T
+                        return_dict_nf_mctm["output"] = (
+                            self.flip_matrix @ return_dict_nf_mctm["output"].T
+                        ).T
+                    # else:
                     #    # odd
-                    
-                if return_scores_hessian == True:
-                    return_dict_nf_mctm["scores"] = -1 * return_dict_nf_mctm["output"] * return_dict_nf_mctm["der_lambda_matrix_global"].squeeze(1)
-                
-                    for j in range(i+1): #j are all sum elements prior to i
-                                return_dict_nf_mctm["der2_lambda_matrix_global_list"][j] = -1 * return_dict_nf_mctm["output"].unsqueeze(2) * return_dict_nf_mctm["der2_lambda_matrix_global_list"][j]
-                    return_dict_nf_mctm["der2_lambda_matrix_global_list"][i+1] = -1 * return_dict_nf_mctm["der2_lambda_matrix_global_list"][i+1]
-                
-                    return_dict_nf_mctm["hessian"] = torch.stack(return_dict_nf_mctm["der2_lambda_matrix_global_list"], dim=0).sum(0).squeeze(2)
-            
-            return return_dict_nf_mctm
 
+                if return_scores_hessian == True:
+                    return_dict_nf_mctm["scores"] = (
+                        -1
+                        * return_dict_nf_mctm["output"]
+                        * return_dict_nf_mctm["der_lambda_matrix_global"].squeeze(1)
+                    )
+
+                    for j in range(i + 1):  # j are all sum elements prior to i
+                        return_dict_nf_mctm["der2_lambda_matrix_global_list"][j] = (
+                            -1
+                            * return_dict_nf_mctm["output"].unsqueeze(2)
+                            * return_dict_nf_mctm["der2_lambda_matrix_global_list"][j]
+                        )
+                    return_dict_nf_mctm["der2_lambda_matrix_global_list"][i + 1] = (
+                        -1
+                        * return_dict_nf_mctm["der2_lambda_matrix_global_list"][i + 1]
+                    )
+
+                    return_dict_nf_mctm["hessian"] = (
+                        torch.stack(
+                            return_dict_nf_mctm["der2_lambda_matrix_global_list"], dim=0
+                        )
+                        .sum(0)
+                        .squeeze(2)
+                    )
+
+            return return_dict_nf_mctm
 
     def latent_space_representation(self, y):
         """
@@ -401,65 +546,83 @@ class GTM(nn.Module):
 
         Parameters
         ----------
-        y : torch.FloatTensor 
+        y : torch.FloatTensor
             The input data to pass through the model foward pass.
         return_lambda_matrix: bool = True
             Wether to compute the global lambda matrix in the forward pass or not. To not do it save a bit of compute.
-        
+
         Returns
         -------
-        A dictionary containing the latent space named "output", the log determinant "log_d", the differences for thes spline penalites 
+        A dictionary containing the latent space named "output", the log determinant "log_d", the differences for thes spline penalites
         "transformation_second_order_ridge_pen_global", "second_order_ridge_pen_global", "second_order_ridge_pen_global", "param_ridge_pen_global"
         and the full model, hence global, lambda matrix "lambda_matrix_global".
         """
-        #covariate=False
-        return_dict = self.forward(y)#, covariate) #, train=False, evaluate=True)
+        # covariate=False
+        return_dict = self.forward(y)  # , covariate) #, train=False, evaluate=True)
         return return_dict["output"]
-
 
     def __log_likelihood_loss__(self, y, mean_loss=True):
         # covariate=False, train=True, evaluate=True,
 
-        return_dict_nf_mctm = log_likelihood(model=self, samples=y, mean_loss=mean_loss) # train_covariates=covariate, train=train, evaluate=evaluate,
+        return_dict_nf_mctm = log_likelihood(
+            model=self, samples=y, mean_loss=mean_loss
+        )  # train_covariates=covariate, train=train, evaluate=evaluate,
 
-        return_dict_nf_mctm["negative_log_likelihood_data"] = -1 * return_dict_nf_mctm["log_likelihood_data"]
-            
+        return_dict_nf_mctm["negative_log_likelihood_data"] = (
+            -1 * return_dict_nf_mctm["log_likelihood_data"]
+        )
+
         return return_dict_nf_mctm
-    
-    
-    def log_likelihood(self, y, mean_loss=False): #covariate=False, 
+
+    def log_likelihood(self, y, mean_loss=False):  # covariate=False,
         """
-        Returns the the log likelihood per sample for input Y. 
+        Returns the the log likelihood per sample for input Y.
 
         Parameters
         ----------
-        y : torch.FloatTensor 
+        y : torch.FloatTensor
             The input data for which to compute the log likelihood.
         mean_loss: bool = False
             Whether to return the mean of the log likelihood or not.
-        
+
         Returns
         -------
-        Returns the the log likelihood per sample for input Y. 
+        Returns the the log likelihood per sample for input Y.
         """
-        return self.__log_likelihood_loss__(y, mean_loss=mean_loss)["log_likelihood_data"] # covariate=False, train=False, evaluate=True
-    
-    
-    def __training_objective__(self, samples, penalty_params, train_covariates=False, lambda_penalty_params: torch.Tensor =False, 
-                           adaptive_lasso_weights_matrix: torch.Tensor =False, 
-                           avg = True, lambda_penalty_mode="square", objective_type = "negloglik"):
-        
-        return training_objective(self, samples = samples, penalty_params = penalty_params, train_covariates = train_covariates, lambda_penalty_params = lambda_penalty_params, 
-                                  adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix,
-                                  avg = avg, lambda_penalty_mode = lambda_penalty_mode, objective_type = objective_type)
-    
+        return self.__log_likelihood_loss__(y, mean_loss=mean_loss)[
+            "log_likelihood_data"
+        ]  # covariate=False, train=False, evaluate=True
+
+    def __training_objective__(
+        self,
+        samples,
+        penalty_params,
+        train_covariates=False,
+        lambda_penalty_params: torch.Tensor = False,
+        adaptive_lasso_weights_matrix: torch.Tensor = False,
+        avg=True,
+        lambda_penalty_mode="square",
+        objective_type="negloglik",
+    ):
+
+        return training_objective(
+            self,
+            samples=samples,
+            penalty_params=penalty_params,
+            train_covariates=train_covariates,
+            lambda_penalty_params=lambda_penalty_params,
+            adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+            avg=avg,
+            lambda_penalty_mode=lambda_penalty_mode,
+            objective_type=objective_type,
+        )
 
     def train(
         self,
         train_dataloader: torch.utils.data.DataLoader,
         validate_dataloader: torch.utils.data.DataLoader | bool = False,
-        #train_covariates: torch.Tensor | bool = False,
-        #validate_covariates: torch.Tensor | bool = False,
+        # train_covariates: torch.Tensor | bool = False,
+        # validate_covariates: torch.Tensor | bool = False,
         penalty_splines_params: torch.FloatTensor = torch.FloatTensor([0, 0, 0, 0]),
         penalty_lasso_conditional_independence: float | bool = False,
         adaptive_lasso_weights_matrix: torch.Tensor | bool = False,
@@ -469,7 +632,8 @@ class GTM(nn.Module):
         patience: int = 5,
         min_delta: float = 1e-7,
         seperate_copula_training: bool = False,
-        max_batches_per_iter: int | bool = False):
+        max_batches_per_iter: int | bool = False,
+    ):
         """
         Trains the GTM iteratively using gradient-based optimization.
 
@@ -533,40 +697,60 @@ class GTM(nn.Module):
             - "training_time": total time spent in training (seconds)
             - All additional outputs from the final model's forward pass
         """
-        objective_type="negloglik"
+        objective_type = "negloglik"
         train_covariates = False
         validate_covariates = False
         verbose = False
-        lambda_penalty_mode = "square" #Literal["square", "absolute"]
-        #ema_decay: float | bool = False, used to have ema_decay in training
+        lambda_penalty_mode = "square"  # Literal["square", "absolute"]
+        # ema_decay: float | bool = False, used to have ema_decay in training
 
         if penalty_lasso_conditional_independence is not False:
-            penalty_lasso_conditional_independence = penalty_lasso_conditional_independence.to(self.device)
-            
+            penalty_lasso_conditional_independence = (
+                penalty_lasso_conditional_independence.to(self.device)
+            )
+
         if adaptive_lasso_weights_matrix is not False:
-            adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix.to(self.device)
-        
-        if seperate_copula_training==True:
-            self.transformation.params.requires_grad=False
-            
+            adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix.to(
+                self.device
+            )
+
+        if seperate_copula_training == True:
+            self.transformation.params.requires_grad = False
+
         if self.spline_decorrelation == "bernstein":
             for layer in self.decorrelation_layers:
-                layer.binom_n  = layer.binom_n.to(self.device)
-                layer.binom_n1 = layer.binom_n1.to(self.device) 
+                layer.binom_n = layer.binom_n.to(self.device)
+                layer.binom_n1 = layer.binom_n1.to(self.device)
                 layer.binom_n2 = layer.binom_n2.to(self.device)
         if self.spline_transformation == "bernstein":
-                self.transformation.binom_n  = self.transformation.binom_n.to(self.device)
-                self.transformation.binom_n1 = self.transformation.binom_n1.to(self.device) 
-                self.transformation.binom_n2 = self.transformation.binom_n2.to(self.device)      
-        
-        return_dict_model_training = train(self, train_dataloader=train_dataloader, validate_dataloader=validate_dataloader, train_covariates=train_covariates, validate_covariates=validate_covariates, penalty_params=penalty_splines_params, lambda_penalty_params=penalty_lasso_conditional_independence, learning_rate=learning_rate, 
-                     iterations=iterations, verbose=verbose, patience=patience, min_delta=min_delta, optimizer=optimizer, lambda_penalty_mode=lambda_penalty_mode, objective_type=objective_type, adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix, max_batches_per_iter=max_batches_per_iter)
-        
-        if seperate_copula_training==True:
-            self.transformation.params.requires_grad=True
-        
+            self.transformation.binom_n = self.transformation.binom_n.to(self.device)
+            self.transformation.binom_n1 = self.transformation.binom_n1.to(self.device)
+            self.transformation.binom_n2 = self.transformation.binom_n2.to(self.device)
+
+        return_dict_model_training = train(
+            self,
+            train_dataloader=train_dataloader,
+            validate_dataloader=validate_dataloader,
+            train_covariates=train_covariates,
+            validate_covariates=validate_covariates,
+            penalty_params=penalty_splines_params,
+            lambda_penalty_params=penalty_lasso_conditional_independence,
+            learning_rate=learning_rate,
+            iterations=iterations,
+            verbose=verbose,
+            patience=patience,
+            min_delta=min_delta,
+            optimizer=optimizer,
+            lambda_penalty_mode=lambda_penalty_mode,
+            objective_type=objective_type,
+            adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+            max_batches_per_iter=max_batches_per_iter,
+        )
+
+        if seperate_copula_training == True:
+            self.transformation.params.requires_grad = True
+
         return return_dict_model_training
-    
 
     def pretrain_transformation_layer(
         self,
@@ -579,7 +763,8 @@ class GTM(nn.Module):
         patience: int = 5,
         min_delta: float = 1e-7,
         optimizer: Literal["LBFGS", "Adam"] = "LBFGS",
-        max_batches_per_iter: int | bool = False):
+        max_batches_per_iter: int | bool = False,
+    ):
         """
         Pretrains only the transformation layer of the GTM using gradient-based optimization.
 
@@ -624,48 +809,51 @@ class GTM(nn.Module):
             - "training_time": total training time in seconds
             - other output keys from the forward pass of the final model state.
         """
-        objective_type="negloglik"
+        objective_type = "negloglik"
         train_covariates = False
         validate_covariates = False
         verbose = False
-        lambda_penalty_mode = "square" #Literal["square", "absolute"]
-        #ema_decay: float | bool = False, used to have ema_decay in training
+        lambda_penalty_mode = "square"  # Literal["square", "absolute"]
+        # ema_decay: float | bool = False, used to have ema_decay in training
 
-        
-        #optimizer='LBFGS'
-        #warnings.warn("Optimiser for pretrain_transformation_layer is always LBFGS. If this is an issue change the code.")
-        
+        # optimizer='LBFGS'
+        # warnings.warn("Optimiser for pretrain_transformation_layer is always LBFGS. If this is an issue change the code.")
+
         self.transform_only = True
-        penalty_lasso_conditional_independence = False # makes objective not check lambda matrix
-    
-        return_dict_model_training = train(self, 
-                                           train_dataloader=train_dataloader, 
-                                           validate_dataloader=validate_dataloader, 
-                                           train_covariates=train_covariates, 
-                                           validate_covariates=validate_covariates, 
-                                           penalty_params=penalty_splines_params, 
-                                           lambda_penalty_params=penalty_lasso_conditional_independence, 
-                                           learning_rate=learning_rate, 
-                                           iterations=iterations, 
-                                           verbose=verbose, 
-                                           patience=patience, 
-                                           min_delta=min_delta, 
-                                           optimizer=optimizer, 
-                                           lambda_penalty_mode=lambda_penalty_mode, 
-                                           objective_type=objective_type,
-                                           max_batches_per_iter=max_batches_per_iter)
-        
+        penalty_lasso_conditional_independence = (
+            False  # makes objective not check lambda matrix
+        )
+
+        return_dict_model_training = train(
+            self,
+            train_dataloader=train_dataloader,
+            validate_dataloader=validate_dataloader,
+            train_covariates=train_covariates,
+            validate_covariates=validate_covariates,
+            penalty_params=penalty_splines_params,
+            lambda_penalty_params=penalty_lasso_conditional_independence,
+            learning_rate=learning_rate,
+            iterations=iterations,
+            verbose=verbose,
+            patience=patience,
+            min_delta=min_delta,
+            optimizer=optimizer,
+            lambda_penalty_mode=lambda_penalty_mode,
+            objective_type=objective_type,
+            max_batches_per_iter=max_batches_per_iter,
+        )
+
         self.transform_only = False
-        
+
         return return_dict_model_training
-    
-    
+
     def find_minimal_transformation_degrees(
         self,
         train_dataloader: torch.utils.data.DataLoader,
         iterations: int = 100,
         degrees_try_list: list[int] = list(range(5, 155, 5)),
-        max_batches_per_iter: int | bool = False):
+        max_batches_per_iter: int | bool = False,
+    ):
         """
         Searches for the smallest transformation spline degree that is enough to transform the training data into standard Gaussian space for each data dimension individually.
 
@@ -699,54 +887,75 @@ class GTM(nn.Module):
         optimal_degree_pvalue = []
         for dimension in range(self.number_variables):
             for degree in degrees_try_list:
-                print("Starting run for data dim ",dimension," with degrees of ",degree)
+                print(
+                    "Starting run for data dim ", dimension, " with degrees of ", degree
+                )
                 try:
-                    
-                    tm_model = GTM(number_variables=1,
-                             transformation_spline_range=[self.transformation_spline_range[0][dimension],
-                                                     self.transformation_spline_range[1][dimension]],
-                             number_decorrelation_layers=0,
-                             number_transformation_layers=1,
-                            degree_transformations=[degree],
-                            spline_transformation=self.spline_transformation,
+
+                    tm_model = GTM(
+                        number_variables=1,
+                        transformation_spline_range=[
+                            self.transformation_spline_range[0][dimension],
+                            self.transformation_spline_range[1][dimension],
+                        ],
+                        number_decorrelation_layers=0,
+                        number_transformation_layers=1,
+                        degree_transformations=[degree],
+                        spline_transformation=self.spline_transformation,
                     )
-                    
-                    #tm_model = TM(degree=degree, spline_range=[self.transformation_spline_range[0][dimension],
+
+                    # tm_model = TM(degree=degree, spline_range=[self.transformation_spline_range[0][dimension],
                     #                                        self.transformation_spline_range[1][dimension]])
                     tm_model.subset_dimension = dimension
-            
-                    train_dict = tm_model.train(train_dataloader=train_dataloader, validate_dataloader=train_dataloader, iterations=iterations, optimizer="LBFGS",
-                                    max_batches_per_iter=max_batches_per_iter)
-                    
+
+                    train_dict = tm_model.train(
+                        train_dataloader=train_dataloader,
+                        validate_dataloader=train_dataloader,
+                        iterations=iterations,
+                        optimizer="LBFGS",
+                        max_batches_per_iter=max_batches_per_iter,
+                    )
+
                     z_tilde = []
-                    #y_train_all = []
+                    # y_train_all = []
                     for y_train in train_dataloader:
-                        y_train_sub = y_train[:,tm_model.subset_dimension].unsqueeze(1)
-                        z_tilde.append(tm_model.after_transformation(y_train_sub).squeeze())
-                        #y_train_all.append(y_train_sub)
+                        y_train_sub = y_train[:, tm_model.subset_dimension].unsqueeze(1)
+                        z_tilde.append(
+                            tm_model.after_transformation(y_train_sub).squeeze()
+                        )
+                        # y_train_all.append(y_train_sub)
                     z_tilde = torch.hstack(z_tilde).detach().numpy()
-                    #y_train_all = torch.hstack(y_train_all).detach().numpy()
-                    
-                    #perform Shapiro-Wilk test for normality
-                    pv = scipy.stats.shapiro(z_tilde[:5000]).pvalue # becuase warning that pvalue may not be accurate for larger than 5000 obs in the package
-                    #print(pv)
-                    #plt.hist(y_train_all,bins=100)
-                    #plt.hist(z_tilde,bins=100)
-                    #plt.show()
-                    #plt.hist(z_tilde,bins=100)
+                    # y_train_all = torch.hstack(y_train_all).detach().numpy()
+
+                    # perform Shapiro-Wilk test for normality
+                    pv = scipy.stats.shapiro(
+                        z_tilde[:5000]
+                    ).pvalue  # becuase warning that pvalue may not be accurate for larger than 5000 obs in the package
+                    # print(pv)
+                    # plt.hist(y_train_all,bins=100)
+                    # plt.hist(z_tilde,bins=100)
+                    # plt.show()
+                    # plt.hist(z_tilde,bins=100)
                     if pv >= 0.05:
-                    
-                        print("pvalue is ",pv," for data dim ",dimension," with degrees of ",degree)
-                        
+
+                        print(
+                            "pvalue is ",
+                            pv,
+                            " for data dim ",
+                            dimension,
+                            " with degrees of ",
+                            degree,
+                        )
+
                         optimal_degree.append(degree)
                         optimal_degree_pvalue.append(pv)
-                        
-                        plt.hist(z_tilde,bins=100)
+
+                        plt.hist(z_tilde, bins=100)
                         plt.show()
-                        
+
                         # for next loop iteration to not always plot
-                        pv = 0 
-                        
+                        pv = 0
+
                         break
                     # Handels the case where even the max degree is not enough
                     elif degree == max(degrees_try_list):
@@ -754,12 +963,12 @@ class GTM(nn.Module):
                         optimal_degree_pvalue.append(pv)
                 except:
                     continue
-                
-        return optimal_degree, optimal_degree_pvalue
-        
-    
 
-    def compute_pseudo_precision_matrix(self, y: torch.Tensor) -> torch.Tensor: #, covariate=False):
+        return optimal_degree, optimal_degree_pvalue
+
+    def compute_pseudo_precision_matrix(
+        self, y: torch.Tensor
+    ) -> torch.Tensor:  # , covariate=False):
         """
         Computes the pseudo precision matrix from the data `y` based on the lambda matrices of the full GTM model.
 
@@ -775,15 +984,22 @@ class GTM(nn.Module):
         """
 
         with torch.no_grad():
-            return_dict = self.forward(y, return_lambda_matrix=True) #covariate=covariate, evaluate=True, train=False, return_lambda_matrix=True)
+            return_dict = self.forward(
+                y, return_lambda_matrix=True
+            )  # covariate=covariate, evaluate=True, train=False, return_lambda_matrix=True)
 
-            precision_matrix = torch.matmul(torch.transpose(return_dict["lambda_matrix_global"], 1, 2),
-                                            return_dict["lambda_matrix_global"])
+            precision_matrix = torch.matmul(
+                torch.transpose(return_dict["lambda_matrix_global"], 1, 2),
+                return_dict["lambda_matrix_global"],
+            )
 
         return precision_matrix
-    
-    
-    def compute_pseudo_conditional_correlation_matrix(self, y: torch.Tensor) -> torch.Tensor: #, covariate=False): #TODO: is pseudo conditional indepednence matrix! standardisted p matrix
+
+    def compute_pseudo_conditional_correlation_matrix(
+        self, y: torch.Tensor
+    ) -> (
+        torch.Tensor
+    ):  # , covariate=False): #TODO: is pseudo conditional indepednence matrix! standardisted p matrix
         """
         Computes the pseudo conditional correlation matrix from the data `y` based on the lambda matrices of the full GTM model.
         This is essentially the standardised precision matrix, that way off diagonal elements represent the pseudo conditional correlations between the different dimensions.
@@ -798,19 +1014,27 @@ class GTM(nn.Module):
         torch.Tensor
             A tensor of shape (n_samples, n_variables, n_variables) representing the pseudo conditional correlation matrix.
         """
-        
+
         def p_to_corr(matrix):
             d = matrix.size(0)
             diag_sqrt = torch.diag(matrix) ** 0.5
-            matrix_std_multiplied = torch.matmul(torch.reshape(diag_sqrt, (d, 1)), torch.reshape(diag_sqrt, (1, d)))
+            matrix_std_multiplied = torch.matmul(
+                torch.reshape(diag_sqrt, (d, 1)), torch.reshape(diag_sqrt, (1, d))
+            )
             return -1 * matrix / matrix_std_multiplied
 
         with torch.no_grad():
-            precision_matrix = self.compute_pseudo_precision_matrix( y) #, covariate=False)
-            correlation_matrix_train = torch.stack([p_to_corr(precision_matrix[obs_num,:,:]) for obs_num in range(precision_matrix.size(0))])
+            precision_matrix = self.compute_pseudo_precision_matrix(
+                y
+            )  # , covariate=False)
+            correlation_matrix_train = torch.stack(
+                [
+                    p_to_corr(precision_matrix[obs_num, :, :])
+                    for obs_num in range(precision_matrix.size(0))
+                ]
+            )
 
         return correlation_matrix_train
-
 
     def sample(self, n_samples: int) -> torch.Tensor:
         """
@@ -831,49 +1055,63 @@ class GTM(nn.Module):
             A tensor of shape (n_samples, n_variables) containing the generated samples.
         """
 
-        covariate=False
-        
+        covariate = False
+
         # check if transformation contains params_inverse
         if self.transformation.params_inverse is None:
-            warnings.warn("Transformation layer does not have an inverse. Inverse is approximated")
+            warnings.warn(
+                "Transformation layer does not have an inverse. Inverse is approximated"
+            )
             self.approximate_transformation_inverse()
-        
-        with torch.no_grad():
-            
-            z = torch.distributions.Normal(0, 1).sample((n_samples, self.number_variables)).to(device=self.device)
-            
-            if self.number_decorrelation_layers > 0:
-                for i in range(self.number_decorrelation_layers -1, -1, -1):
 
-                    if ((i+1) % 2) == 0:
+        with torch.no_grad():
+
+            z = (
+                torch.distributions.Normal(0, 1)
+                .sample((n_samples, self.number_variables))
+                .to(device=self.device)
+            )
+
+            if self.number_decorrelation_layers > 0:
+                for i in range(self.number_decorrelation_layers - 1, -1, -1):
+
+                    if ((i + 1) % 2) == 0:
                         # even
                         z = (self.flip_matrix @ z.T).T
                         # else:
                         #    # odd
 
-                    return_dict = self.decorrelation_layers[i](z, covariate=covariate, return_log_d=False, return_penalties=False, inverse=True)
+                    return_dict = self.decorrelation_layers[i](
+                        z,
+                        covariate=covariate,
+                        return_log_d=False,
+                        return_penalties=False,
+                        inverse=True,
+                    )
                     z = return_dict["output"]
 
-                    if ((i+1) % 2) == 0:
+                    if ((i + 1) % 2) == 0:
                         # even
                         z = (self.flip_matrix @ z.T).T
                         # else:
                         #    # odd
-                     
+
             if self.num_trans_layers > 0:
-                return_dict = self.transformation(z, covariate, new_input=True, inverse=True)
+                return_dict = self.transformation(
+                    z, covariate, new_input=True, inverse=True
+                )
                 y = return_dict["output"]
             else:
                 y = z
 
-            if self.initial_log_transform==True:
+            if self.initial_log_transform == True:
                 y = torch.exp(y)
-                y = y - 0.01  
+                y = y - 0.01
 
             return y
 
     def after_transformation(self, y, covariate=False):
-        if self.initial_log_transform==True:
+        if self.initial_log_transform == True:
             y = y + 0.01
             y = torch.log(y)
         else:
@@ -885,45 +1123,58 @@ class GTM(nn.Module):
         else:
             output = y
         return output
-        
-    def conditional_sample(self, number_proposed_samples, sample_indices, sample_ranges, fixed_values, covariate=False):
+
+    def conditional_sample(
+        self,
+        number_proposed_samples,
+        sample_indices,
+        sample_ranges,
+        fixed_values,
+        covariate=False,
+    ):
         with torch.no_grad():
             num_dim = self.number_variables
-            
+
             # Initialize samples with fixed values
-            samples = torch.full((number_proposed_samples, num_dim), float('nan'))
+            samples = torch.full((number_proposed_samples, num_dim), float("nan"))
             for idx, value in fixed_values.items():
                 samples[:, idx] = value  # Set fixed values
-            
+
             # Sample the desired dimensions uniformly within sample_range
             idx = 0
             for sample_idx in sample_indices:
                 min_val, max_val = sample_ranges[idx]
-                samples[:, sample_idx] = torch.rand((number_proposed_samples)) * (max_val - min_val) + min_val
-                
-                idx +=1
-            
+                samples[:, sample_idx] = (
+                    torch.rand((number_proposed_samples)) * (max_val - min_val)
+                    + min_val
+                )
+
+                idx += 1
+
             # Compute acceptance probabilities using log likelihood
-            log_probs = self.log_likelihood(samples) #, covariate=covariate)  # Shape: (max_attempts,)
-            probs = torch.exp(log_probs - torch.max(log_probs))  # Normalize to avoid overflow
+            log_probs = self.log_likelihood(
+                samples
+            )  # , covariate=covariate)  # Shape: (max_attempts,)
+            probs = torch.exp(
+                log_probs - torch.max(log_probs)
+            )  # Normalize to avoid overflow
             probs /= torch.max(probs)  # Scale probabilities between 0 and 1
-            
+
             # Accept/reject samples based on computed probabilities
             accept_mask = torch.rand(number_proposed_samples) < probs
             accepted_samples = samples[accept_mask]
-            
-            print(accepted_samples.size(0),"samples where accepted.")
-            
+
+            print(accepted_samples.size(0), "samples where accepted.")
+
             return accepted_samples
-        
-        
+
     def approximate_transformation_inverse(self) -> None:
         """
         Approximates the inverse of the transformation layer splines and stores the result.
 
         This method computes an approximate inverse for each univariate transformation
-        spline in the transformation layer. The resulting parameters are cached within 
-        the model and used during sampling to transform latent Gaussian samples back 
+        spline in the transformation layer. The resulting parameters are cached within
+        the model and used during sampling to transform latent Gaussian samples back
         to the original data space.
 
         Returns
@@ -931,21 +1182,36 @@ class GTM(nn.Module):
         None
         """
         self.transformation.approximate_inverse(device=self.device)
-        
-        
-    def __return_objective_for_hyperparameters__(self, train_dataloader, validate_dataloader=False, train_covariates=False, validate_covariates=False, penalty_params=torch.FloatTensor([0,0,0,0]), 
-                  adaptive_lasso_weights_matrix = False,
-                  lambda_penalty_param=False, learning_rate=1, iterations=2000, patience=5, min_delta=1e-7,
-          optimizer='LBFGS', lambda_penalty_mode="square", objective_type="negloglik", seperate_copula_training=False,
-          max_batches_per_iter=False, pretrained_transformation_layer=False, cross_validation_folds=False):
-    
+
+    def __return_objective_for_hyperparameters__(
+        self,
+        train_dataloader,
+        validate_dataloader=False,
+        train_covariates=False,
+        validate_covariates=False,
+        penalty_params=torch.FloatTensor([0, 0, 0, 0]),
+        adaptive_lasso_weights_matrix=False,
+        lambda_penalty_param=False,
+        learning_rate=1,
+        iterations=2000,
+        patience=5,
+        min_delta=1e-7,
+        optimizer="LBFGS",
+        lambda_penalty_mode="square",
+        objective_type="negloglik",
+        seperate_copula_training=False,
+        max_batches_per_iter=False,
+        pretrained_transformation_layer=False,
+        cross_validation_folds=False,
+    ):
+
         import copy
-        
+
         gtm_tuning = copy.deepcopy(self)
-        
+
         gtm_tuning.to(self.device)
         gtm_tuning.device = self.device
-        
+
         # Logic here:
         # we only want to pretrain the transformation layer once if we do not do cross validation folds
         # In that case each pretaining is basically the same, as same init params and same hyperparameters
@@ -953,72 +1219,101 @@ class GTM(nn.Module):
         # In each subsequent trial we load the pretrained model and directly do the joint training
         # This only works if we pretrain without a penalty on the transformation layer
         if pretrained_transformation_layer == True:
-            
-            if hasattr(self, 'pretrained_transformation_layer_model_state_dict'): #pretrained_transformation_layer_model
-                #gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model.state_dict())
-                gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model_state_dict) 
+
+            if hasattr(
+                self, "pretrained_transformation_layer_model_state_dict"
+            ):  # pretrained_transformation_layer_model
+                # gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model.state_dict())
+                gtm_tuning.load_state_dict(
+                    self.pretrained_transformation_layer_model_state_dict
+                )
             else:
-                gtm_tuning.pretrain_transformation_layer(train_dataloader=train_dataloader,
-                                                    validate_dataloader=validate_dataloader,
-                                                    #train_covariates=train_covariates,
-                                                    #validate_covariates=validate_covariates,
-                                                    penalty_splines_params=penalty_params,
-                                                    penalty_lasso_param=lambda_penalty_param,
-                                                    iterations=iterations, 
-                                                    learning_rate=learning_rate,
-                                                    patience=patience,
-                                                    min_delta=min_delta,
-                                                    optimizer=optimizer,
-                                                    max_batches_per_iter=max_batches_per_iter)
-                
+                gtm_tuning.pretrain_transformation_layer(
+                    train_dataloader=train_dataloader,
+                    validate_dataloader=validate_dataloader,
+                    # train_covariates=train_covariates,
+                    # validate_covariates=validate_covariates,
+                    penalty_splines_params=penalty_params,
+                    penalty_lasso_param=lambda_penalty_param,
+                    iterations=iterations,
+                    learning_rate=learning_rate,
+                    patience=patience,
+                    min_delta=min_delta,
+                    optimizer=optimizer,
+                    max_batches_per_iter=max_batches_per_iter,
+                )
+
                 if cross_validation_folds == False:
-                    #self.pretrained_transformation_layer_model = copy.deepcopy(gtm_tuning)
-                    self.pretrained_transformation_layer_model_state_dict = gtm_tuning.state_dict()
-                    
-        
-        gtm_tuning.train(train_dataloader=train_dataloader,
-                validate_dataloader=validate_dataloader, 
-                #train_covariates=train_covariates,
-                #validate_covariates=validate_covariates,
-                penalty_splines_params=penalty_params,
-                penalty_lasso_conditional_independence=lambda_penalty_param,
-                adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix,
-                iterations=iterations, 
-                learning_rate=learning_rate,
-                patience=patience,
-                min_delta=min_delta,
-                optimizer=optimizer,
-                seperate_copula_training=seperate_copula_training,
-                max_batches_per_iter=max_batches_per_iter)
-        
-        num_batches=0
-        target=0
+                    # self.pretrained_transformation_layer_model = copy.deepcopy(gtm_tuning)
+                    self.pretrained_transformation_layer_model_state_dict = (
+                        gtm_tuning.state_dict()
+                    )
+
+        gtm_tuning.train(
+            train_dataloader=train_dataloader,
+            validate_dataloader=validate_dataloader,
+            # train_covariates=train_covariates,
+            # validate_covariates=validate_covariates,
+            penalty_splines_params=penalty_params,
+            penalty_lasso_conditional_independence=lambda_penalty_param,
+            adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+            iterations=iterations,
+            learning_rate=learning_rate,
+            patience=patience,
+            min_delta=min_delta,
+            optimizer=optimizer,
+            seperate_copula_training=seperate_copula_training,
+            max_batches_per_iter=max_batches_per_iter,
+        )
+
+        num_batches = 0
+        target = 0
         for y_validate in validate_dataloader:
             y_validate = y_validate.to(self.device)
             num_batches += 1
             covar_batch = False
             if objective_type == "negloglik":
-                target += gtm_tuning.log_likelihood(y_validate, covar_batch).cpu().detach().numpy().mean()  # .mean()
-            elif objective_type == "score_matching" or objective_type == "single_sliced_score_matching":
-                #TODO: does the -1 * make sense is it not already in the exact_score_loss method
-                target += -1 * gtm_tuning.exact_score_matching(y_validate, covar_batch).cpu().detach().numpy().mean()  # .mean() # maximize the reverse score loss e.g.g minimize the loss
+                target += (
+                    gtm_tuning.log_likelihood(y_validate, covar_batch)
+                    .cpu()
+                    .detach()
+                    .numpy()
+                    .mean()
+                )  # .mean()
+            elif (
+                objective_type == "score_matching"
+                or objective_type == "single_sliced_score_matching"
+            ):
+                # TODO: does the -1 * make sense is it not already in the exact_score_loss method
+                target += (
+                    -1
+                    * gtm_tuning.exact_score_matching(y_validate, covar_batch)
+                    .cpu()
+                    .detach()
+                    .numpy()
+                    .mean()
+                )  # .mean() # maximize the reverse score loss e.g.g minimize the loss
             elif objective_type == "noise_contrastive_estimation":
-                target += gtm_tuning.log_likelihood(y_validate, covar_batch).cpu().detach().numpy().mean()  #TODO: For Now! Its cheating right?
-        
-        target = target / num_batches     
-        
-            
+                target += (
+                    gtm_tuning.log_likelihood(y_validate, covar_batch)
+                    .cpu()
+                    .detach()
+                    .numpy()
+                    .mean()
+                )  # TODO: For Now! Its cheating right?
+
+        target = target / num_batches
+
         # Handelling CUDA Out of Memory Error
         if self.device == "cuda":
             # Explicitly delete the model to free up memory
             del gtm_tuning
-            
+
             # Clear the cache
             torch.cuda.empty_cache()
-        
+
         return target
-    
-        
+
     def hyperparameter_tune_penalties(
         self,
         train_dataloader,
@@ -1039,14 +1334,15 @@ class GTM(nn.Module):
         pretrained_transformation_layer=False,
         n_trials=15,
         temp_folder=".",
-        study_name=None):
+        study_name=None,
+    ):
         """
         Tunes the regularization hyperparameters of the GTM model using Optuna.
 
         This method allows either manual specification of penalty values (as floats),
         turning off a penalty by passing None (interpreted as zero),
         or enabling Optuna to sample the penalty using the string "sample".
-        
+
         The penalties tuned or set include:
         - Ridge penalty on decorrelation layer splines parameters (`penalty_decorrelation_ridge_param`)
         - First derivative ridge penalty on decorrelation splines via finite differencing (`penalty_decorrelation_ridge_first_difference`)
@@ -1111,7 +1407,7 @@ class GTM(nn.Module):
         Returns
         -------
         optuna.study.Study
-            The Optuna study object containing all trial results, including best hyperparameter configuration. 
+            The Optuna study object containing all trial results, including best hyperparameter configuration.
             The study contains the optimal penalties identified as keys. These are:
             - study[`penalty_decorrelation_ridge_param`]
             - study[`penalty_decorrelation_ridge_first_difference`]
@@ -1120,21 +1416,21 @@ class GTM(nn.Module):
             - study[`penalty_lasso_conditional_independence`]
         """
         # All for now fixed parameters
-        lambda_penalty_mode="square"
-        objective_type="negloglik"
-        tuning_mode="optuna"
-        cross_validation_folds=False
-        train_covariates=False
-        validate_covariates=False
-        #random_state_KFold=42
-        #device=None
-        
+        lambda_penalty_mode = "square"
+        objective_type = "negloglik"
+        tuning_mode = "optuna"
+        cross_validation_folds = False
+        train_covariates = False
+        validate_covariates = False
+        # random_state_KFold=42
+        # device=None
+
         # From Old version where one could pass lists to do tuning using list of hyperparameters passed
-        #list_of_lists = [penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference, 
-                         #penalty_transformation_ridge_second_difference,
-                        # penalty_lasso_conditional_independence]
-        #hyperparameter_combinations_list = list(itertools.product(*list_of_lists))
-        
+        # list_of_lists = [penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference,
+        # penalty_transformation_ridge_second_difference,
+        # penalty_lasso_conditional_independence]
+        # hyperparameter_combinations_list = list(itertools.product(*list_of_lists))
+
         if train_covariates is False:
             number_covariates = 0
         else:
@@ -1142,123 +1438,215 @@ class GTM(nn.Module):
 
         if tuning_mode == "optuna":
             # From Old version where one could pass lists to do tuning using list of hyperparameters passed
-            #penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference, penalty_transformation_ridge_second_difference, penalty_lasso_conditional_independence  = hyperparameter_combinations_list[0]
-                
-            def optuna_objective(trial, train_dataloader=train_dataloader, 
-                                      validate_dataloader=validate_dataloader ): 
-                
+            # penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference, penalty_transformation_ridge_second_difference, penalty_lasso_conditional_independence  = hyperparameter_combinations_list[0]
+
+            def optuna_objective(
+                trial,
+                train_dataloader=train_dataloader,
+                validate_dataloader=validate_dataloader,
+            ):
+
                 if penalty_decorrelation_ridge_param == None:
                     penalty_decorrelation_ridge_param_opt = 0
-                elif isinstance(penalty_decorrelation_ridge_param, float) or isinstance(penalty_decorrelation_ridge_param, int):
-                    penalty_decorrelation_ridge_param_opt = penalty_decorrelation_ridge_param
+                elif isinstance(penalty_decorrelation_ridge_param, float) or isinstance(
+                    penalty_decorrelation_ridge_param, int
+                ):
+                    penalty_decorrelation_ridge_param_opt = (
+                        penalty_decorrelation_ridge_param
+                    )
                 elif penalty_decorrelation_ridge_param == "sample":
-                    penalty_decorrelation_ridge_param_opt = trial.suggest_float("penalty_decorrelation_ridge_param", 0.0000001, 30, log=False) #True
+                    penalty_decorrelation_ridge_param_opt = trial.suggest_float(
+                        "penalty_decorrelation_ridge_param", 0.0000001, 30, log=False
+                    )  # True
                 else:
-                    warnings.warn("penalty_decorrelation_ridge_param not understood. Please provide a float, int None, or the string \"sample\".")
+                    warnings.warn(
+                        'penalty_decorrelation_ridge_param not understood. Please provide a float, int None, or the string "sample".'
+                    )
 
                 if penalty_decorrelation_ridge_first_difference == None:
                     penalty_decorrelation_ridge_first_difference_opt = 0
-                elif isinstance(penalty_decorrelation_ridge_first_difference, float) or isinstance(penalty_decorrelation_ridge_first_difference, int):
-                    penalty_decorrelation_ridge_first_difference_opt = penalty_decorrelation_ridge_first_difference
+                elif isinstance(
+                    penalty_decorrelation_ridge_first_difference, float
+                ) or isinstance(penalty_decorrelation_ridge_first_difference, int):
+                    penalty_decorrelation_ridge_first_difference_opt = (
+                        penalty_decorrelation_ridge_first_difference
+                    )
                 elif penalty_decorrelation_ridge_first_difference == "sample":
-                    penalty_decorrelation_ridge_first_difference_opt = trial.suggest_float("penalty_decorrelation_ridge_first_difference", 0.0000001, 30, log=False) # True
+                    penalty_decorrelation_ridge_first_difference_opt = (
+                        trial.suggest_float(
+                            "penalty_decorrelation_ridge_first_difference",
+                            0.0000001,
+                            30,
+                            log=False,
+                        )
+                    )  # True
                 else:
-                    warnings.warn("penalty_decorrelation_ridge_first_difference not understood. Please provide a float, int None, or the string \"sample\".")
-                    
+                    warnings.warn(
+                        'penalty_decorrelation_ridge_first_difference not understood. Please provide a float, int None, or the string "sample".'
+                    )
+
                 if penalty_decorrelation_ridge_second_difference == None:
                     penalty_decorrelation_ridge_second_difference_opt = 0
-                elif isinstance(penalty_decorrelation_ridge_second_difference, float) or isinstance(penalty_decorrelation_ridge_second_difference, int):
-                    penalty_decorrelation_ridge_second_difference_opt = penalty_decorrelation_ridge_second_difference
+                elif isinstance(
+                    penalty_decorrelation_ridge_second_difference, float
+                ) or isinstance(penalty_decorrelation_ridge_second_difference, int):
+                    penalty_decorrelation_ridge_second_difference_opt = (
+                        penalty_decorrelation_ridge_second_difference
+                    )
                 elif penalty_decorrelation_ridge_second_difference == "sample":
-                    penalty_decorrelation_ridge_second_difference_opt = trial.suggest_float("penalty_decorrelation_ridge_second_difference", 0.0000001, 30, log=False) # True
+                    penalty_decorrelation_ridge_second_difference_opt = (
+                        trial.suggest_float(
+                            "penalty_decorrelation_ridge_second_difference",
+                            0.0000001,
+                            30,
+                            log=False,
+                        )
+                    )  # True
                 else:
-                    warnings.warn("penalty_decorrelation_ridge_second_difference not understood. Please provide a float, int None, or the string \"sample\".")
-                    
+                    warnings.warn(
+                        'penalty_decorrelation_ridge_second_difference not understood. Please provide a float, int None, or the string "sample".'
+                    )
+
                 if penalty_transformation_ridge_second_difference == None:
                     penalty_transformation_ridge_second_difference_opt = 0
-                elif isinstance(penalty_transformation_ridge_second_difference, float) or isinstance(penalty_transformation_ridge_second_difference, int):
-                    penalty_transformation_ridge_second_difference_opt = penalty_transformation_ridge_second_difference
+                elif isinstance(
+                    penalty_transformation_ridge_second_difference, float
+                ) or isinstance(penalty_transformation_ridge_second_difference, int):
+                    penalty_transformation_ridge_second_difference_opt = (
+                        penalty_transformation_ridge_second_difference
+                    )
                 elif penalty_transformation_ridge_second_difference == "sample":
-                    penalty_transformation_ridge_second_difference_opt = trial.suggest_float("penalty_transformation_ridge_second_difference", 0.0000001, 30, log=False) # True
+                    penalty_transformation_ridge_second_difference_opt = (
+                        trial.suggest_float(
+                            "penalty_transformation_ridge_second_difference",
+                            0.0000001,
+                            30,
+                            log=False,
+                        )
+                    )  # True
                 else:
-                    warnings.warn("penalty_transformation_ridge_second_difference not understood. Please provide a float, int None, or the string \"sample\".")
-                    
+                    warnings.warn(
+                        'penalty_transformation_ridge_second_difference not understood. Please provide a float, int None, or the string "sample".'
+                    )
+
                 if penalty_lasso_conditional_independence == None:
                     penalty_lasso_conditional_independence_opt = 0
-                elif isinstance(penalty_lasso_conditional_independence, float) or isinstance(penalty_lasso_conditional_independence, int):
-                    penalty_lasso_conditional_independence_opt = penalty_lasso_conditional_independence
+                elif isinstance(
+                    penalty_lasso_conditional_independence, float
+                ) or isinstance(penalty_lasso_conditional_independence, int):
+                    penalty_lasso_conditional_independence_opt = (
+                        penalty_lasso_conditional_independence
+                    )
                 elif penalty_lasso_conditional_independence == "sample":
-                    penalty_lasso_conditional_independence_opt = trial.suggest_float("penalty_lasso_conditional_independence", 0.0000001, 1, log=True)
+                    penalty_lasso_conditional_independence_opt = trial.suggest_float(
+                        "penalty_lasso_conditional_independence", 0.0000001, 1, log=True
+                    )
                 else:
-                    warnings.warn("penalty_lasso_conditional_independence not understood. Please provide a float, int None, or the string \"sample\".")
-                    
-                #print("This Trial has the Hyperparameters:", 
-                #    "penalty_decorrelation_ridge_param_opt:", penalty_decorrelation_ridge_param_opt, " ", 
-                #    "penalty_decorrelation_ridge_first_difference_opt:", penalty_decorrelation_ridge_first_difference_opt, " ", 
-                #    "penalty_decorrelation_ridge_second_difference_opt:", penalty_decorrelation_ridge_second_difference_opt, " ", 
+                    warnings.warn(
+                        'penalty_lasso_conditional_independence not understood. Please provide a float, int None, or the string "sample".'
+                    )
+
+                # print("This Trial has the Hyperparameters:",
+                #    "penalty_decorrelation_ridge_param_opt:", penalty_decorrelation_ridge_param_opt, " ",
+                #    "penalty_decorrelation_ridge_first_difference_opt:", penalty_decorrelation_ridge_first_difference_opt, " ",
+                #    "penalty_decorrelation_ridge_second_difference_opt:", penalty_decorrelation_ridge_second_difference_opt, " ",
                 #    "penalty_transformation_ridge_second_difference_opt:", penalty_transformation_ridge_second_difference_opt, " ",
                 #    "penalty_lasso_conditional_independence_opt:", penalty_lasso_conditional_independence_opt)
-                penalty_lasso_conditional_independence_opt = if_float_create_lambda_penalisation_matrix(penalty_lasso_conditional_independence_opt, num_vars=self.number_variables)
-                penalty_params_opt = torch.tensor([penalty_decorrelation_ridge_param_opt,
-                                            penalty_decorrelation_ridge_first_difference_opt,
-                                            penalty_decorrelation_ridge_second_difference_opt,
-                                            penalty_transformation_ridge_second_difference_opt])
-                
+                penalty_lasso_conditional_independence_opt = (
+                    if_float_create_lambda_penalisation_matrix(
+                        penalty_lasso_conditional_independence_opt,
+                        num_vars=self.number_variables,
+                    )
+                )
+                penalty_params_opt = torch.tensor(
+                    [
+                        penalty_decorrelation_ridge_param_opt,
+                        penalty_decorrelation_ridge_first_difference_opt,
+                        penalty_decorrelation_ridge_second_difference_opt,
+                        penalty_transformation_ridge_second_difference_opt,
+                    ]
+                )
+
                 if cross_validation_folds == False:
                     # define model, train the model with tuning params and return the objective value on the given validation set
-                    target = self.__return_objective_for_hyperparameters__(train_dataloader, validate_dataloader, train_covariates, validate_covariates, penalty_params_opt, 
-                                                                        adaptive_lasso_weights_matrix,
-                                                                        penalty_lasso_conditional_independence_opt, learning_rate, iterations, patience, min_delta, 
-                                                                        optimizer, lambda_penalty_mode, objective_type, seperate_copula_training, max_batches_per_iter,
-                                                                        pretrained_transformation_layer, cross_validation_folds)
-                    
+                    target = self.__return_objective_for_hyperparameters__(
+                        train_dataloader,
+                        validate_dataloader,
+                        train_covariates,
+                        validate_covariates,
+                        penalty_params_opt,
+                        adaptive_lasso_weights_matrix,
+                        penalty_lasso_conditional_independence_opt,
+                        learning_rate,
+                        iterations,
+                        patience,
+                        min_delta,
+                        optimizer,
+                        lambda_penalty_mode,
+                        objective_type,
+                        seperate_copula_training,
+                        max_batches_per_iter,
+                        pretrained_transformation_layer,
+                        cross_validation_folds,
+                    )
+
                     return target
                 else:
-                    warnings.warn("cross validation based hyperparameter tuning is not implemented yet based on dataloaders")
+                    warnings.warn(
+                        "cross validation based hyperparameter tuning is not implemented yet based on dataloaders"
+                    )
                     ## Perform cross-validation
-                    #for fold, (train_idx, val_idx) in enumerate(kf.split(dataset)):
+                    # for fold, (train_idx, val_idx) in enumerate(kf.split(dataset)):
                     #    print(f"Fold {fold + 1}: Train size = {len(train_idx)}, Val size = {len(val_idx)}")
-#
-                    #    # Create subset samplers
-                    #    train_subset = Subset(dataset, train_idx)
-                    #    val_subset = Subset(dataset, val_idx)
-#
-                    #    # Create DataLoaders
-                    #    train_loader = DataLoader(train_subset, batch_size=16, shuffle=True)
-                    #    val_loader = DataLoader(val_subset, batch_size=16, shuffle=False)
-#
-                    #    # Example: Iterate through one batch
-                    #    for batch in train_loader:
-                    #        x, y = batch
-                    #        print(f"Train Batch Shape: {x.shape}, Labels: {y.shape}")
-                    #        break  # Just show one batch per fold
-                
-            study = optuna.create_study(sampler=TPESampler(n_startup_trials=int(np.floor(n_trials/2)), #7
-                                                       consider_prior=False, #True # is this useful without a prior weight?
-                                                       # Set consider_prior=False othwise with score matching we got the error: raise ValueError("Prior weight must be positive.")
-                                                       prior_weight=0,#1.0, #default value 1.0 but then does not explore the space as good I think
-                                                       multivariate=True # experimental but very useful here as our parameters are highly correlated
-                                                       ),
-                                    storage='sqlite:///'+temp_folder+'/hyperparameter_tuning_study.db',
-                                    #hyperparameter_tuning_study.db',
-                                    direction='maximize',
-                                    study_name=study_name,
-                                    load_if_exists=True)
-                    
+
+            #
+            #    # Create subset samplers
+            #    train_subset = Subset(dataset, train_idx)
+            #    val_subset = Subset(dataset, val_idx)
+            #
+            #    # Create DataLoaders
+            #    train_loader = DataLoader(train_subset, batch_size=16, shuffle=True)
+            #    val_loader = DataLoader(val_subset, batch_size=16, shuffle=False)
+            #
+            #    # Example: Iterate through one batch
+            #    for batch in train_loader:
+            #        x, y = batch
+            #        print(f"Train Batch Shape: {x.shape}, Labels: {y.shape}")
+            #        break  # Just show one batch per fold
+
+            study = optuna.create_study(
+                sampler=TPESampler(
+                    n_startup_trials=int(np.floor(n_trials / 2)),  # 7
+                    consider_prior=False,  # True # is this useful without a prior weight?
+                    # Set consider_prior=False othwise with score matching we got the error: raise ValueError("Prior weight must be positive.")
+                    prior_weight=0,  # 1.0, #default value 1.0 but then does not explore the space as good I think
+                    multivariate=True,  # experimental but very useful here as our parameters are highly correlated
+                ),
+                storage="sqlite:///" + temp_folder + "/hyperparameter_tuning_study.db",
+                # hyperparameter_tuning_study.db',
+                direction="maximize",
+                study_name=study_name,
+                load_if_exists=True,
+            )
+
             study.optimize(optuna_objective, n_trials=n_trials)
             print("hyperparameter_tuning done")
             return study
-        
-    def compute_conditional_independence_table(self,
-                                                y: torch.Tensor | None = None,
-                                                evaluation_data_type: Literal["data", "uniform_random_samples", "samples_from_model"] = "data",
-                                                num_processes: int = 10,
-                                                sample_size: int = 1000,
-                                                num_points_quad: int = 20,
-                                                copula_only: bool = False,
-                                                min_val: float = -5, 
-                                                max_val: float = 5,
-                                                likelihood_based_metrics: bool = True):
+
+    def compute_conditional_independence_table(
+        self,
+        y: torch.Tensor | None = None,
+        evaluation_data_type: Literal[
+            "data", "uniform_random_samples", "samples_from_model"
+        ] = "data",
+        num_processes: int = 10,
+        sample_size: int = 1000,
+        num_points_quad: int = 20,
+        copula_only: bool = False,
+        min_val: float = -5,
+        max_val: float = 5,
+        likelihood_based_metrics: bool = True,
+    ):
         """
         Computes a table of pairwise conditional dependence statistics (e.g., KLD, IAE, psuedo precision matrix, and pseudo conditional correlation)
         to assess conditional independence relationships between variables.
@@ -1270,13 +1658,13 @@ class GTM(nn.Module):
         ----------
         y : torch.Tensor, optional
             Input data matrix of shape (n_samples, n_variables) used for evaluation. Required if evaluation_data_type == "data".
-        
+
         evaluation_data_type : {"data", "uniform_random_samples", "samples_from_model"}, default="data"
             Defines which kind of data is used for evaluation:
             - "data": use the passed tensor `y`.
             - "uniform_random_samples": generate uniform samples in [min_val, max_val].
             - "samples_from_model": generate samples from the trained model.
-        
+
         num_processes : int, default=10
             Number of parallel processes to use. If <= 1, processes run serially.
 
@@ -1313,38 +1701,40 @@ class GTM(nn.Module):
             - kld: Kullback-Leibler divergence (only if likelihood_based_metrics is True)
             - iae: Integrated Absolute Error (only if likelihood_based_metrics is True)
 
-        Notes 
+        Notes
         -------
         - If multiprocessing is enabled (num_processes > 1), then the rows of the summary table are computed in parallel with num_processes rows at the same time.
         """
         x = False
         optimized = True
-        
-        
-        self.conditional_independence_table = compute_conditional_independence_kld(self,
-                                        y,
-                                        x,
-                                        evaluation_data_type,
-                                        num_processes,
-                                        sample_size,
-                                        num_points_quad,
-                                        optimized,
-                                        copula_only,
-                                        min_val,
-                                        max_val,
-                                        likelihood_based_metrics)
-        
+
+        self.conditional_independence_table = compute_conditional_independence_kld(
+            self,
+            y,
+            x,
+            evaluation_data_type,
+            num_processes,
+            sample_size,
+            num_points_quad,
+            optimized,
+            copula_only,
+            min_val,
+            max_val,
+            likelihood_based_metrics,
+        )
+
         return self.conditional_independence_table
 
-    #def plot_densities(self, y, x_lim=None, y_lim=None, density_plot=True, storage=None, show_plot=True):
+    # def plot_densities(self, y, x_lim=None, y_lim=None, density_plot=True, storage=None, show_plot=True):
     def plot_densities(
-    self,
-    y: list | tuple | None,
-    x_lim: tuple[float, float] | None = None,
-    y_lim: tuple[float, float] | None = None,
-    density_plot: bool = True,
-    storage: str | None = None,
-    show_plot: bool = True) -> None:
+        self,
+        y: list | tuple | None,
+        x_lim: tuple[float, float] | None = None,
+        y_lim: tuple[float, float] | None = None,
+        density_plot: bool = True,
+        storage: str | None = None,
+        show_plot: bool = True,
+    ) -> None:
         """
         Plots the densities of the given data for each pair in a grid with optional axis limits and storage options.
 
@@ -1372,13 +1762,15 @@ class GTM(nn.Module):
         None
             The method produces a plot and optionally saves or shows it, but does not return any value.
         """
-        plot_densities(data=y, 
-                       covariate=False, 
-                       x_lim=x_lim, 
-                       y_lim=y_lim, 
-                       density_plot=density_plot, 
-                       storage=storage,
-                       show_plot=show_plot)
+        plot_densities(
+            data=y,
+            covariate=False,
+            x_lim=x_lim,
+            y_lim=y_lim,
+            density_plot=density_plot,
+            storage=storage,
+            show_plot=show_plot,
+        )
 
     def plot_marginals(
         self,
@@ -1386,7 +1778,8 @@ class GTM(nn.Module):
         names: bool | list = False,
         y_lim: bool | tuple[float, float] = False,
         storage: str | None = None,
-        show_plot: bool = True) -> None:
+        show_plot: bool = True,
+    ) -> None:
         """
         Plots the marginal distributions of the provided data in a grid.
 
@@ -1412,12 +1805,18 @@ class GTM(nn.Module):
         None
             The method generates a plot and optionally saves or displays it, but does not return a value.
         """
-        plot_marginals(y, covariate=False, names=names, y_lim=y_lim, storage=storage,
-                       show_plot=show_plot)
+        plot_marginals(
+            y,
+            covariate=False,
+            names=names,
+            y_lim=y_lim,
+            storage=storage,
+            show_plot=show_plot,
+        )
 
     def plot_splines(
         self,
-        layer_type: Literal["transformation" , "decorrelation"] = "transformation",
+        layer_type: Literal["transformation", "decorrelation"] = "transformation",
         decorrelation_layer_number: int = 0,
         storage: str | None = None,
         show_plot: bool = True,
@@ -1425,8 +1824,8 @@ class GTM(nn.Module):
         """
         Plots all spline functions for a specified model layer in a grid.
 
-        This method visualizes spline functions associated with either the 
-        transformation layer or one of the decorrelation layers of the model. It selects 
+        This method visualizes spline functions associated with either the
+        transformation layer or one of the decorrelation layers of the model. It selects
         the layer based on `layer_type` and plots the corresponding splines using an internal
         plotting function.
 
@@ -1459,20 +1858,28 @@ class GTM(nn.Module):
         None
             The method generates a plot and optionally saves or displays it but does not return a value.
         """
-        
+
         if layer_type == "transformation":
             layer = self.transformation
         elif layer_type == "decorrelation":
             if decorrelation_layer_number >= self.number_decorrelation_layers:
-                raise ValueError("decorrelation_layer_number exceeds the number of decorrelation layers.")
+                raise ValueError(
+                    "decorrelation_layer_number exceeds the number of decorrelation layers."
+                )
             layer = self.decorrelation_layers[decorrelation_layer_number]
         else:
-            raise ValueError("layer_type must be either 'transformation' or 'decorrelation'.")
+            raise ValueError(
+                "layer_type must be either 'transformation' or 'decorrelation'."
+            )
 
-        plot_splines(layer, covariate_exists=False, affine=False, storage=storage,
-                     show_plot=show_plot)
-        
-        
+        plot_splines(
+            layer,
+            covariate_exists=False,
+            affine=False,
+            storage=storage,
+            show_plot=show_plot,
+        )
+
     def plot_conditional_dependence_structure(
         self,
         data,
@@ -1490,7 +1897,7 @@ class GTM(nn.Module):
     ) -> None:
         """
         Plots the conditional dependence structure of each pair of variables in a grid based on pseudo conditional correlations.
-        It optionally filters pairs by a threshold applied to a dependence metric, which can be 
+        It optionally filters pairs by a threshold applied to a dependence metric, which can be
         specified by a conditional independence table. Thus this metric can be likelihood based as well.
 
         Parameters
@@ -1544,56 +1951,84 @@ class GTM(nn.Module):
         None
             The method produces a plot and optionally saves or displays it but does not return a value.
         """
-        
+
         dependence_metric_plotting = "pseudo_conditional_correlation"
-        
+
         # Taking internally stored one from last run
         if conditional_independence_table is False:
             if self.conditional_independence_table is None:
                 conditional_independence_table = False
                 if minimum_dependence_threshold > 0:
-                    raise ValueError("No conditional independence table found. Please compute it first using compute_conditional_independence_table() in order to be able to set a minimum_dependence_threshold > 0.")
+                    raise ValueError(
+                        "No conditional independence table found. Please compute it first using compute_conditional_independence_table() in order to be able to set a minimum_dependence_threshold > 0."
+                    )
             else:
                 # Use the stored conditional independence table
                 conditional_independence_table = self.conditional_independence_table
-        
+
         if dependence_metric_plotting == "pseudo_conditional_correlation":
             metric = self.compute_pseudo_conditional_correlation_matrix(data)
             metric_type = "matrix"
-            label_metric="Pseudo Conditional Correlation"
+            label_metric = "Pseudo Conditional Correlation"
         elif dependence_metric_plotting == "offdiagonal_precision_matrix":
             metric = self.compute_pseudo_precision_matrix(data)
             metric_type = "matrix"
-            label_metric="Off-Diagonal Precision Matrix"
+            label_metric = "Off-Diagonal Precision Matrix"
         else:
-            raise ValueError("Unknown dependence metric. Please use 'pseudo_conditional_correlation' or 'offdiagonal_precision_matrix'.")
-        
-        if minimum_dependence_threshold > 0 and conditional_independence_table is not False and dependence_metric_threshholding is not False:
+            raise ValueError(
+                "Unknown dependence metric. Please use 'pseudo_conditional_correlation' or 'offdiagonal_precision_matrix'."
+            )
+
+        if (
+            minimum_dependence_threshold > 0
+            and conditional_independence_table is not False
+            and dependence_metric_threshholding is not False
+        ):
             significant_dependence_pairs = []
             threshholding_metric_values = []
-            
-            significant_subset = conditional_independence_table[conditional_independence_table[dependence_metric_threshholding] > minimum_dependence_threshold]
-            significant_subset = significant_subset.sort_values(dependence_metric_threshholding,ascending=False)
+
+            significant_subset = conditional_independence_table[
+                conditional_independence_table[dependence_metric_threshholding]
+                > minimum_dependence_threshold
+            ]
+            significant_subset = significant_subset.sort_values(
+                dependence_metric_threshholding, ascending=False
+            )
 
             for index, row in significant_subset.iterrows():
-                significant_dependence_pairs.append([int(row["var_col"]), int(row["var_row"])])
+                significant_dependence_pairs.append(
+                    [int(row["var_col"]), int(row["var_row"])]
+                )
                 threshholding_metric_values.append(row[dependence_metric_threshholding])
             strength_name = dependence_metric_threshholding
         else:
             significant_dependence_pairs = False
             threshholding_metric_values = False
             strength_name = ""
-            
+
         if after_marginal_transformation == True:
             data_plotting = self.after_transformation(data).detach()
         else:
             data_plotting = data
-        
-        plot_metric_scatter(data=data_plotting, metric=metric, covariate=False, x_lim=x_lim, y_lim=y_lim, metric_type=metric_type, 
-                        pairs=significant_dependence_pairs, strength_value=threshholding_metric_values, 
-                        strength_name=strength_name, show_colorbar=show_colorbar, hide_axis_info=hide_axis_info, sub_title_fontsize=sub_title_fontsize,
-                        after_marginal_transformation=after_marginal_transformation, label_metric=label_metric, storage=storage,
-                        show_plot=show_plot)
+
+        plot_metric_scatter(
+            data=data_plotting,
+            metric=metric,
+            covariate=False,
+            x_lim=x_lim,
+            y_lim=y_lim,
+            metric_type=metric_type,
+            pairs=significant_dependence_pairs,
+            strength_value=threshholding_metric_values,
+            strength_name=strength_name,
+            show_colorbar=show_colorbar,
+            hide_axis_info=hide_axis_info,
+            sub_title_fontsize=sub_title_fontsize,
+            after_marginal_transformation=after_marginal_transformation,
+            label_metric=label_metric,
+            storage=storage,
+            show_plot=show_plot,
+        )
 
     def plot_conditional_dependence_graph(
         self,
@@ -1611,7 +2046,7 @@ class GTM(nn.Module):
         seed_graph: int = 42,
         storage: str | None = None,
         show_plot: bool = True,
-        scatter_plot_size: float = 1
+        scatter_plot_size: float = 1,
     ) -> None:
         """
         Creates and plots a full conditional independence graph using the network package.
@@ -1690,33 +2125,41 @@ class GTM(nn.Module):
         None
             The function generates and optionally saves and/or displays the conditional dependence graph.
         """
-    # Function body here...
+        # Function body here...
 
-        dependence_metric_plotting="pseudo_conditional_correlation"
-        
+        dependence_metric_plotting = "pseudo_conditional_correlation"
+
         # Taking internally stored one from last run
         if conditional_independence_table is False:
             if self.conditional_independence_table is None:
-                raise ValueError("No conditional independence table found. Please compute it first using compute_conditional_independence_table().")
+                raise ValueError(
+                    "No conditional independence table found. Please compute it first using compute_conditional_independence_table()."
+                )
             else:
                 # Use the stored conditional independence table
                 conditional_independence_table = self.conditional_independence_table
-        
+
         if names is False:
             names = list(range(self.number_variables))
-        
-        ci_matrix = torch.zeros([self.number_variables,self.number_variables])
+
+        ci_matrix = torch.zeros([self.number_variables, self.number_variables])
         for row in conditional_independence_table.iterrows():
             row = row[1]
-            ci_matrix[int(row["var_row"]),int(row["var_col"])] = row[dependence_metric]
+            ci_matrix[int(row["var_row"]), int(row["var_col"])] = row[dependence_metric]
 
         if pair_plots is False:
 
-            plot_graph_conditional_independencies(ci_matrix, 
-                                                gene_names=names, 
-                                                min_abs_mean=minimum_dependence_threshold,
-                                                pos_list=variables_move, pos_tuple_list=variables_move_positions, k=k, seed_graph=seed_graph, storage=storage,
-                                                show_plot=show_plot)
+            plot_graph_conditional_independencies(
+                ci_matrix,
+                gene_names=names,
+                min_abs_mean=minimum_dependence_threshold,
+                pos_list=variables_move,
+                pos_tuple_list=variables_move_positions,
+                k=k,
+                seed_graph=seed_graph,
+                storage=storage,
+                show_plot=show_plot,
+            )
 
         elif pair_plots is True:
 
@@ -1730,21 +2173,25 @@ class GTM(nn.Module):
             elif dependence_metric_plotting == "offdiagonal_precision_matrix":
                 metric = self.compute_pseudo_precision_matrix(data)
             else:
-                raise ValueError("Unknown dependence metric. Please use 'pseudo_conditional_correlation' or 'offdiagonal_precision_matrix'.")
-            
-            plot_graph_conditional_independencies_with_pairplots(ci_matrix, 
-                                                                gene_names=names, 
-                                                data = data_plotting,
-                                                metric = metric.numpy(),
-                                                min_abs_mean=minimum_dependence_threshold,
-                                                lim_axis=lim_axis_pairplots,
-                                                pos_list=variables_move,
-                                                pos_tuple_list=variables_move_positions,
-                                                k=k,
-                                                seed_graph=seed_graph,
-                                                storage=storage,
-                                                show_plot=show_plot,
-                                                scatter_plot_size=scatter_plot_size)
+                raise ValueError(
+                    "Unknown dependence metric. Please use 'pseudo_conditional_correlation' or 'offdiagonal_precision_matrix'."
+                )
+
+            plot_graph_conditional_independencies_with_pairplots(
+                ci_matrix,
+                gene_names=names,
+                data=data_plotting,
+                metric=metric.numpy(),
+                min_abs_mean=minimum_dependence_threshold,
+                lim_axis=lim_axis_pairplots,
+                pos_list=variables_move,
+                pos_tuple_list=variables_move_positions,
+                k=k,
+                seed_graph=seed_graph,
+                storage=storage,
+                show_plot=show_plot,
+                scatter_plot_size=scatter_plot_size,
+            )
 
     def plot_conditional_dependence_pair(
         self,
@@ -1754,7 +2201,8 @@ class GTM(nn.Module):
         title: str | None = None,
         show_ticks: bool = False,
         storage: str | None = None,
-        show_plot: bool = True) -> None:
+        show_plot: bool = True,
+    ) -> None:
         """
         Plots conditional dependence between two variables as a 2x2 grid of plots.
 
@@ -1787,13 +2235,14 @@ class GTM(nn.Module):
         -------
         None
         """
- 
-        plot_conditional_dependence_pair(loaded_model=self,
-                                             sample_indices=sample_indices,
-                                             resampled_samples=resampled_samples,
-                                             show_colorbar=show_colorbar,
-                                             title=title,
-                                             storage=storage,
-                                             show_ticks=show_ticks,
-                                             show_plot=show_plot)
-            
+
+        plot_conditional_dependence_pair(
+            loaded_model=self,
+            sample_indices=sample_indices,
+            resampled_samples=resampled_samples,
+            show_colorbar=show_colorbar,
+            title=title,
+            storage=storage,
+            show_ticks=show_ticks,
+            show_plot=show_plot,
+        )

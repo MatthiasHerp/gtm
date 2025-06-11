@@ -41,9 +41,20 @@ def create_simulated_data_gmm():
         def __getitem__(self, idx):
             return self.data[idx]
 
-    dataloader_train = DataLoader(GMM_1D_Dataset(simulated_data_train), batch_size=N_train)
-    dataloader_validate = DataLoader(GMM_1D_Dataset(simulated_data_validate), batch_size=N_validate)
+    dataloader_train = DataLoader(
+        GMM_1D_Dataset(simulated_data_train), batch_size=N_train
+    )
+    dataloader_validate = DataLoader(
+        GMM_1D_Dataset(simulated_data_validate), batch_size=N_validate
+    )
 
-    return dataloader_train, dataloader_validate, \
-           simulated_data_train, simulated_data_validate, simulated_data_test, \
-           loglik_train, loglik_validate, loglik_test
+    return (
+        dataloader_train,
+        dataloader_validate,
+        simulated_data_train,
+        simulated_data_validate,
+        simulated_data_test,
+        loglik_train,
+        loglik_validate,
+        loglik_test,
+    )

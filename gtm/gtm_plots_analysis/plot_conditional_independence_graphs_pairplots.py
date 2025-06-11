@@ -3,8 +3,22 @@ import matplotlib.pyplot as plt
 import networkx as nx
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, data, metric, min_abs_mean=0.1, storage=None, lim_axis=[-18, 18],
-                                                         pos_list=None, pos_tuple_list=None, k=1.5, seed_graph=42, show_plot=True, scatter_plot_size=0.24):
+
+def plot_graph_conditional_independencies_with_pairplots(
+    abs_array,
+    gene_names,
+    data,
+    metric,
+    min_abs_mean=0.1,
+    storage=None,
+    lim_axis=[-18, 18],
+    pos_list=None,
+    pos_tuple_list=None,
+    k=1.5,
+    seed_graph=42,
+    show_plot=True,
+    scatter_plot_size=0.24,
+):
     """
     Plots a network graph of conditional independencies and overlays small scatter plots on edges.
 
@@ -22,7 +36,7 @@ def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, 
     # Count significant edges
     num_edges = np.count_nonzero(edge_array)
     print(f"There are {num_edges} connections above {min_abs_mean}")
-    
+
     if num_edges == 0:
         print("No significant edges found. Exiting function.")
         return
@@ -38,86 +52,101 @@ def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, 
 
     # Initialize figure and layout
     fig, ax = plt.subplots(figsize=(12, 8))
-    pos = nx.spring_layout(G, weight="weight",  seed=seed_graph,
-                           k=k
-                           )
+    pos = nx.spring_layout(G, weight="weight", seed=seed_graph, k=k)
     if pos_list is not None:
         for i in range(len(pos_list)):
             pos[pos_list[i]] = pos_tuple_list[i]
-            
 
-    
     # Find the isolated nodes (nodes with degree 0)
-    #isolated_nodes = [node for node, degree in G.degree() if degree == 0]
+    # isolated_nodes = [node for node, degree in G.degree() if degree == 0]
 
     # Manually place the isolated nodes on the side (e.g., at x = 2 and vary y)
-    #side_x = 2
-    #y_place=[-2,2]
-    #for i, node in enumerate(isolated_nodes):
+    # side_x = 2
+    # y_place=[-2,2]
+    # for i, node in enumerate(isolated_nodes):
     #    pos[node] = [side_x, y_place[i]]  # Place isolated nodes at x = 2, with different y values
-
 
     # Draw the graph
     nx.draw_networkx_nodes(G, pos, ax=ax, node_size=5000, node_color="black", alpha=0.7)
-    nx.draw_networkx_edges(G, pos, ax=ax, edgelist=widths.keys(), width=list(widths.values()), edge_color="lightblue", alpha=0.6)
+    nx.draw_networkx_edges(
+        G,
+        pos,
+        ax=ax,
+        edgelist=widths.keys(),
+        width=list(widths.values()),
+        edge_color="lightblue",
+        alpha=0.6,
+    )
     nx.draw_networkx_labels(G, pos, ax=ax, font_color="white")
     # No edge labels needed as we have plots
-    #nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, ax=ax, font_size=10)
+    # nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, ax=ax, font_size=10)
 
     # Overlay scatter plots on edges
     for (gene1, gene2), weight in widths.items():
-        x_mid, y_mid = (pos[gene1][0] + pos[gene2][0]) / 2, (pos[gene1][1] + pos[gene2][1]) / 2
-        
+        x_mid, y_mid = (
+            (pos[gene1][0] + pos[gene2][0]) / 2,
+            (pos[gene1][1] + pos[gene2][1]) / 2,
+        )
+
         # Apply a small random shift to avoid overlap
-        x_shift = -0.12 #np.random.uniform(-0.05, 0.05)
-        y_shift = -0.12 #np.random.uniform(-0.05, 0.05)
+        x_shift = -0.12  # np.random.uniform(-0.05, 0.05)
+        y_shift = -0.12  # np.random.uniform(-0.05, 0.05)
 
         try:
             # Create inset axis
-            ax_inset = inset_axes(ax, width=scatter_plot_size, height=scatter_plot_size, loc="center",
-                                  bbox_to_anchor=(x_mid + x_shift, 
-                                                  y_mid + y_shift, 
-                                                  0.25, 
-                                                  0.25),
-                                  bbox_transform=ax.transData, borderpad=0)
-            
-            #ax_inset.patch.set_linewidth(1)
-            #ax_inset.patch.set_edgecolor("black")
+            ax_inset = inset_axes(
+                ax,
+                width=scatter_plot_size,
+                height=scatter_plot_size,
+                loc="center",
+                bbox_to_anchor=(x_mid + x_shift, y_mid + y_shift, 0.25, 0.25),
+                bbox_transform=ax.transData,
+                borderpad=0,
+            )
+
+            # ax_inset.patch.set_linewidth(1)
+            # ax_inset.patch.set_edgecolor("black")
             ax_inset.set_frame_on(False)
-            #ax_inset.patch.set_visible(True)
-            #ax_inset.patch.set_zorder(10)
-            #ax_inset.set_facecolor('white')
-            #ax_inset.set_alpha(1)
-            #ax_inset.set_clip_on(False)
+            # ax_inset.patch.set_visible(True)
+            # ax_inset.patch.set_zorder(10)
+            # ax_inset.set_facecolor('white')
+            # ax_inset.set_alpha(1)
+            # ax_inset.set_clip_on(False)
 
             # Scatter plot of gene expressions
             norm = plt.Normalize(-1, 1)
             if data.shape[0] > 0 and metric.shape[0] > 0:
-                ax_inset.hexbin(data[:, gene1], data[:, gene2],
-                                C=metric[:, gene1, gene2],
-                                gridsize=60, cmap="icefire", norm=norm, reduce_C_function=np.mean)
+                ax_inset.hexbin(
+                    data[:, gene1],
+                    data[:, gene2],
+                    C=metric[:, gene1, gene2],
+                    gridsize=60,
+                    cmap="icefire",
+                    norm=norm,
+                    reduce_C_function=np.mean,
+                )
                 ax_inset.set_xlim(lim_axis)
                 ax_inset.set_ylim(lim_axis)
-                
+
                 # Make the inset square
-                ax_inset.set_aspect("equal") 
-                
+                ax_inset.set_aspect("equal")
+
                 ax_inset.set_xticks([])
                 ax_inset.set_yticks([])
-                #ax_inset.patch.set_linewidth(1)  # Ensure frame visibility
-                #ax_inset.patch.set_edgecolor("black")  # Explicitly set frame color
-                #ax_inset.set_frame_on(True)  # Make sure the frame is enabled
-                
-                #ax_inset.set_zorder(10)  # Bring insets to the front
-                
-                #ax_inset.patch.set_linewidth(1)
-                #ax_inset.patch.set_edgecolor("black")
-                #ax_inset.set_frame_on(True)
-                #ax_inset.patch.set_visible(True)
-                #ax_inset.patch.set_zorder(10)
-                #ax_inset.set_facecolor('white')
-                #ax_inset.set_alpha(1)
-                #ax_inset.set_clip_on(False)
+                # ax_inset.patch.set_linewidth(1)  # Ensure frame visibility
+                # ax_inset.patch.set_edgecolor("black")  # Explicitly set frame color
+                # ax_inset.set_frame_on(True)  # Make sure the frame is enabled
+
+                # ax_inset.set_zorder(10)  # Bring insets to the front
+
+                # ax_inset.patch.set_linewidth(1)
+                # ax_inset.patch.set_edgecolor("black")
+                # ax_inset.set_frame_on(True)
+                # ax_inset.patch.set_visible(True)
+                # ax_inset.patch.set_zorder(10)
+                # ax_inset.set_facecolor('white')
+                # ax_inset.set_alpha(1)
+                # ax_inset.set_clip_on(False)
 
             else:
                 print(f"Skipping ({gene1}, {gene2}): Empty data or metric.")
@@ -125,16 +154,14 @@ def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, 
         except Exception as e:
             print(f"Skipping scatter plot for ({gene1}, {gene2}) due to error: {e}")
 
-    #plt.box(True)
+    # plt.box(True)
     plt.axis("off")
     plt.draw()
 
     if storage:
         plt.savefig(storage, bbox_inches="tight")
-    
+
     if show_plot == True:
         plt.show()
     else:
         plt.close(fig)
-    
-            
