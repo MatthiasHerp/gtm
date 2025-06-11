@@ -26,8 +26,13 @@ def plot_metric_scatter(data, metric, covariate=False, x_lim=None, y_lim=None, m
         num_combinations = int(num_cols * (num_cols - 1) / 2)
 
     if num_combinations > 1:
-        number_rows = int(np.ceil(num_combinations / 4))
-        number_cols = 4
+        if num_combinations > 4:
+            number_rows = int(np.ceil(num_combinations / 4))
+            number_cols = 4
+        else: 
+            number_rows = 1
+            number_cols = int(num_combinations)
+        
         fig, axs = plt.subplots(nrows=number_rows, ncols=number_cols, squeeze=False,
                                 figsize=(15, 5 * number_rows),
                                 gridspec_kw={'wspace': 0.25, 'hspace': 0.2})
@@ -42,8 +47,12 @@ def plot_metric_scatter(data, metric, covariate=False, x_lim=None, y_lim=None, m
             #    if [i,j] not in pairs:
             #            continue
             if i != j:
-                row = int(a // 4)  # Get the row index
-                col = int(a % 4)  # Get the column index
+                if num_combinations > 4:
+                    row = int(a // 4)  # Get the row index
+                    col = int(a % 4)  # Get the column index
+                else:
+                    row = 0
+                    col = int(a)
 
                 if covariate is not False:
                     warnings.warn("Covariate is not supported for 3d data yet")

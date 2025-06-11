@@ -4,7 +4,7 @@ import networkx as nx
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, data, metric, min_abs_mean=0.1, storage=None, lim_axis=[-18, 18],
-                                                         pos_list=None, pos_tuple_list=None, k=1.5, seed_graph=42, show_plot=True):
+                                                         pos_list=None, pos_tuple_list=None, k=1.5, seed_graph=42, show_plot=True, scatter_plot_size=0.24):
     """
     Plots a network graph of conditional independencies and overlays small scatter plots on edges.
 
@@ -74,12 +74,21 @@ def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, 
 
         try:
             # Create inset axis
-            ax_inset = inset_axes(ax, width="100%", height="100%", loc="center",
+            ax_inset = inset_axes(ax, width=scatter_plot_size, height=scatter_plot_size, loc="center",
                                   bbox_to_anchor=(x_mid + x_shift, 
                                                   y_mid + y_shift, 
-                                                  0.24, 
-                                                  0.24),
+                                                  0.25, 
+                                                  0.25),
                                   bbox_transform=ax.transData, borderpad=0)
+            
+            #ax_inset.patch.set_linewidth(1)
+            #ax_inset.patch.set_edgecolor("black")
+            ax_inset.set_frame_on(False)
+            #ax_inset.patch.set_visible(True)
+            #ax_inset.patch.set_zorder(10)
+            #ax_inset.set_facecolor('white')
+            #ax_inset.set_alpha(1)
+            #ax_inset.set_clip_on(False)
 
             # Scatter plot of gene expressions
             norm = plt.Normalize(-1, 1)
@@ -95,11 +104,20 @@ def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, 
                 
                 ax_inset.set_xticks([])
                 ax_inset.set_yticks([])
-                ax_inset.patch.set_linewidth(1)  # Ensure frame visibility
-                ax_inset.patch.set_edgecolor("black")  # Explicitly set frame color
-                ax_inset.set_frame_on(True)  # Make sure the frame is enabled
+                #ax_inset.patch.set_linewidth(1)  # Ensure frame visibility
+                #ax_inset.patch.set_edgecolor("black")  # Explicitly set frame color
+                #ax_inset.set_frame_on(True)  # Make sure the frame is enabled
                 
-                ax_inset.set_zorder(10)  # Bring insets to the front
+                #ax_inset.set_zorder(10)  # Bring insets to the front
+                
+                #ax_inset.patch.set_linewidth(1)
+                #ax_inset.patch.set_edgecolor("black")
+                #ax_inset.set_frame_on(True)
+                #ax_inset.patch.set_visible(True)
+                #ax_inset.patch.set_zorder(10)
+                #ax_inset.set_facecolor('white')
+                #ax_inset.set_alpha(1)
+                #ax_inset.set_clip_on(False)
 
             else:
                 print(f"Skipping ({gene1}, {gene2}): Empty data or metric.")
@@ -107,7 +125,7 @@ def plot_graph_conditional_independencies_with_pairplots(abs_array, gene_names, 
         except Exception as e:
             print(f"Skipping scatter plot for ({gene1}, {gene2}) due to error: {e}")
 
-    #plt.box(False)
+    #plt.box(True)
     plt.axis("off")
     plt.draw()
 

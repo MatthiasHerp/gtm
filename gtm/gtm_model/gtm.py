@@ -1611,6 +1611,7 @@ class GTM(nn.Module):
         seed_graph: int = 42,
         storage: str | None = None,
         show_plot: bool = True,
+        scatter_plot_size: float = 1
     ) -> None:
         """
         Creates and plots a full conditional independence graph using the network package.
@@ -1674,6 +1675,9 @@ class GTM(nn.Module):
         show_plot : bool, optional
             Whether to display the plot interactively.
             Default is True.
+        scatter_plot_size : float, optional
+            Determiens the size of the overlayed scatterplots, default is 1.
+            Depends on then umber of scatterplots and dimensionality of the data.
 
         Raises
         ------
@@ -1701,7 +1705,7 @@ class GTM(nn.Module):
         if names is False:
             names = list(range(self.number_variables))
         
-        ci_matrix = torch.zeros([10,10])
+        ci_matrix = torch.zeros([self.number_variables,self.number_variables])
         for row in conditional_independence_table.iterrows():
             row = row[1]
             ci_matrix[int(row["var_row"]),int(row["var_col"])] = row[dependence_metric]
@@ -1722,7 +1726,7 @@ class GTM(nn.Module):
                 data_plotting = data
 
             if dependence_metric_plotting == "pseudo_conditional_correlation":
-                metric = self.compute_pseudo_precision_matrix(data)
+                metric = self.compute_pseudo_conditional_correlation_matrix(data)
             elif dependence_metric_plotting == "offdiagonal_precision_matrix":
                 metric = self.compute_pseudo_precision_matrix(data)
             else:
@@ -1739,7 +1743,8 @@ class GTM(nn.Module):
                                                 k=k,
                                                 seed_graph=seed_graph,
                                                 storage=storage,
-                                                show_plot=show_plot)
+                                                show_plot=show_plot,
+                                                scatter_plot_size=scatter_plot_size)
 
     def plot_conditional_dependence_pair(
         self,
