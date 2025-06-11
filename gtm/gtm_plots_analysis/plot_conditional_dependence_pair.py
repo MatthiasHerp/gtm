@@ -33,7 +33,7 @@ def plot_conditional_dependence_pair(
         fill=True, alpha=0.9, ax=axes[0, 0]
     )
 
-    conditional_correlation_matrix_resampled_samples = loaded_model.compute_correlation_matrix(
+    conditional_correlation_matrix_resampled_samples = loaded_model.compute_pseudo_conditional_correlation_matrix(
         resampled_samples).detach()
 
     axes[0, 1].hexbin(
@@ -87,7 +87,9 @@ def plot_conditional_dependence_pair(
     axes[0, 0].set_title("Density", fontsize=13)
     axes[0, 1].set_title("Conditional Correlation", fontsize=13)
     axes[0, 0].set_ylabel("Y", fontsize=13)
+    axes[0, 0].set_xlabel(" ", fontsize=13)
     axes[1, 0].set_ylabel(r"$\tilde{Z}$", fontsize=13)
+    axes[1, 0].set_xlabel(" ", fontsize=13)
 
     # ----------- Title and saving -----------
     if title is not None:

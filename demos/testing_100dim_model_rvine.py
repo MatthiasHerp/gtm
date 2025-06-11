@@ -39,27 +39,26 @@ if __name__ == "__main__":
     dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
     
     model = GTM(
-                transformation_spline_range=list([[-10], [10]]), 
-                degree_decorrelation=40,
-                degree_transformations=10,
-                num_decorr_layers=3,
-                num_trans_layers=1,
-                number_variables=100,
-                spline_decorrelation="bspline",
-                spline_transformation="bspline",
-                device=device) 
+        number_variables = 100,
+        number_transformation_layers = 1,
+        number_decorrelation_layers = 3,
+        degree_transformations = 10,
+        degree_decorrelation = 20,
+        spline_transformation = "bspline",
+        spline_decorrelation = "bspline",
+        transformation_spline_range = (-15, 15),
+        device = device)
                 
     model.to(device)                       
-                
                 
     #study = model.hyperparameter_tune_penalties( 
     #                            train_dataloader=dataloader_train, 
     #                            validate_dataloader=dataloader_validate, 
-    #                            penvalueridge = 0,
-    #                            penfirstridge = "sample",
-    #                            pensecondridge = "sample",
-    #                            ctm_pensecondridge = "sample",
-    #                            lambda_penalty_params = 0,
+    #                            penalty_decorrelation_ridge_param = 0,
+    #                            penalty_decorrelation_ridge_first_difference = "sample",
+    #                            penalty_decorrelation_ridge_second_difference = "sample",
+    #                            penalty_transformation_ridge_second_difference = "sample",
+    #                            penalty_lasso_conditional_independence = 0,
     #                            adaptive_lasso_weights_matrix=False,
     #                            iterations=1000, 
     #                            patience=20, 
@@ -76,11 +75,11 @@ if __name__ == "__main__":
                             ])
 
     # pretrain the marginal transformations
-    _ = model.pretrain_tranformation_layer(dataloader_train, iterations=1000)
+    _ = model.pretrain_transformation_layer(dataloader_train, iterations=1000)
     
     # train the joint model
     _ = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, 
                         iterations=1000, optimizer="LBFGS",
-                        penalty_params=penalty_params)
+                        penalty_splines_params=penalty_params)
     
                 

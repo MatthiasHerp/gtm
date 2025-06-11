@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from gtm.gtm_splines.splines_utils import adjust_ploynomial_range, ReLULeR, custom_sigmoid
+from gtm.gtm_splines.splines_utils import ReLULeR, custom_sigmoid
 
 def binomial_coeffs(n, device=None):
     i = torch.arange(n + 1, device=device)

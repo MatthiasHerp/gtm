@@ -26,7 +26,7 @@ def training_objective(model, samples, penalty_params, train_covariates=False, l
               lambda_penalty_mode="square", objective_type = "negloglik"):
     
     if objective_type == "negloglik":
-        return_dict_model_loss = model.log_likelihood_loss(samples, covariate=train_covariates, mean_loss=True)
+        return_dict_model_loss = model.__log_likelihood_loss__(samples, mean_loss=True) #covariate=train_covariates, mean_loss=True)
         loss = return_dict_model_loss["negative_log_likelihood_data"]     
     #elif objective_type == "vi":
     #    return_dict_model_loss = model.vi_loss(samples, covariate=train_covariates, mean_loss=True)

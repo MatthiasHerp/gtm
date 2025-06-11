@@ -47,48 +47,56 @@ if __name__ == "__main__":
                 dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
                 
                 model = GTM(
-                            transformation_spline_range=list([[-15], [15]]), 
-                            degree_decorrelation=40,
-                            degree_transformations=variable_degree_list,
-                            num_decorr_layers=num_decorr_layers,
-                            num_trans_layers=1,
-                            number_variables=10,
-                            spline_decorrelation="bspline",
-                            spline_transformation="bspline",
-                            device=device) 
+                            number_variables = 10,
+                            number_transformation_layers = 1,
+                            number_decorrelation_layers = num_decorr_layers,
+                            degree_transformations = variable_degree_list,
+                            degree_decorrelation = 30,
+                            spline_transformation = "bspline",
+                            spline_decorrelation = "bspline",
+                            transformation_spline_range = (-15, 15),
+                            device = "cpu")
                 
-                model.to(device)                       
+                model.to(device)
                 
                 
                 study = model.hyperparameter_tune_penalties( 
-                                            train_dataloader=dataloader_train, 
-                                            validate_dataloader=dataloader_validate, 
-                                            penvalueridge = 0,
-                                            penfirstridge = "sample",
-                                            pensecondridge = "sample",
-                                            ctm_pensecondridge = "sample",
-                                            lambda_penalty_params = 0,
-                                            adaptive_lasso_weights_matrix=False,
-                                            iterations=1000, 
-                                            patience=20, 
-                                            min_delta=1e-8, 
-                                            optimizer='LBFGS', 
-                                            pretrained_transformation_layer=True,
-                                            n_trials=40)
-                
-                penalty_params=torch.FloatTensor([
-                                        0, #study.best_params["penvalueridge"],
-                                        study.best_params["penfirstridge"],
-                                        study.best_params["pensecondridge"],
-                                        study.best_params["ctm_pensecondridge"]
-                                        ])
+                            train_dataloader = dataloader_train,
+                            validate_dataloader = dataloader_validate,
+                            penalty_decorrelation_ridge_param = None,
+                            penalty_decorrelation_ridge_first_difference = "sample",
+                            penalty_decorrelation_ridge_second_difference = "sample",
+                            penalty_transformation_ridge_second_difference = "sample",
+                            penalty_lasso_conditional_independence = None,
+                            adaptive_lasso_weights_matrix=False,
+                            optimizer="LBFGS",
+                            learning_rate=1,
+                            iterations=2000,
+                            patience=20,
+                            min_delta=1e-7,
+                            seperate_copula_training=False,
+                            max_batches_per_iter=False,
+                            pretrained_transformation_layer=True,
+                            n_trials=40,
+                            temp_folder=".",
+                            study_name=None)
+                                            
+
+                penalty_splines_params=torch.FloatTensor([
+                                            0, #study.best_params["penalty_decorrelation_ridge_param"],
+                                            study.best_params["penalty_decorrelation_ridge_first_difference"],
+                                            study.best_params["penalty_decorrelation_ridge_second_difference"],
+                                            study.best_params["penalty_transformation_ridge_second_difference"]
+                                            ])
+                adaptive_lasso_weights_matrix = False
+                penalty_lasso_conditional_independence=False                       
 
                 # pretrain the marginal transformations
-                _ = model.pretrain_tranformation_layer(dataloader_train, iterations=1000)
+                _ = model.pretrain_transformation_layer(dataloader_train, iterations=1000, penalty_splines_params=penalty_splines_params)
                 
                 # train the joint model
-                _ = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, 
-                                    iterations=1000, optimizer="LBFGS",
-                                    penalty_params=penalty_params)
+                _ = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, iterations=1000, optimizer="LBFGS",
+                                penalty_splines_params=penalty_splines_params, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, penalty_lasso_conditional_independence=penalty_lasso_conditional_independence, 
+                                max_batches_per_iter=False)
                 
                 torch.save(model, os.path.join("demos", "models", f"magic_group_{group}_decorr_{num_decorr_layers}_gtm_state_dict.pth"))

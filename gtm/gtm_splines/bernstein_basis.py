@@ -88,49 +88,90 @@ def compute_multivariate_bernstein_basis(input, degree, spline_range, span_facto
 
 
 #TODO: do this with softplus, somehow gives issue, only works with exp
-def restrict_parameters(params_a, covariate, degree, monotonically_increasing,device=None): #####Requires device as input not passed
-    if monotonically_increasing:
-    # check out Bayesian CTM book 2.1 theorem!!!
+#def restrict_parameters(params_a, covariate, degree, monotonically_increasing,device=None): #####Requires device as input not passed
+#    if monotonically_increasing:
+#    # check out Bayesian CTM book 2.1 theorem!!!
+#
+#        #params_restricted = torch.randn((16*16))
+#        params_restricted = params_a.clone()
+#        for num_var in range(params_a.size(1)):
+#            if covariate == 1:
+#                # exp() for all parameters except the intercepts for each different covariate value
+#                #softplus = torch.nn.Softplus()
+#                #params_restricted[degree:,num_var] = torch.exp(params_restricted[degree:,num_var])
+#                params_restricted[degree:,num_var] = torch.log(1 + torch.exp(params_restricted[degree:,num_var]))
+#                #params_restricted[degree:,num_var] = torch.nn.functional.softplus(params_a[degree:,num_var])
+#                ############## before used torch.exp, johannes suggested to use softplus as then it does not explode that much
+#                # Summing up of each value with all its prior values for each different covariate value
+#                params_restricted[:,num_var] = torch.matmul(params_restricted[:,num_var],
+#                                                 torch.kron(torch.triu(torch.ones(degree+1, degree+1)),
+#                                                            torch.eye(degree+1))
+#                                                            )
+#            else:
+#                # simple case without covariate
+#                # exp() for all parameters except the intercept
+#                #params_restricted[1:,num_var] = torch.exp(params_restricted[1:,num_var])
+#                params_restricted[1:,num_var] = torch.log(1 + torch.exp(params_restricted[1:,num_var]))
+#                #softplus = torch.nn.Softplus()
+#                #params_restricted[1:,num_var] = torch.nn.functional.softplus(params_a[degree:,num_var])
+#                # Summing up of each value with all its prior values
+#                #summing_matrix = torch.ones(degree+1, degree+1, device=device) #the input.device is npassed here
+#                
+#                summing_matrix = torch.ones(params_restricted.size(0), params_restricted.size(0), device=device) #the input.device is npassed here
+#                
+#                
+#                #if dev is not False:
+#                #    summing_matrix.to(dev)
+#
+#                summing_matrix = torch.triu(summing_matrix)
+#                summing_matrix = summing_matrix.to(params_restricted.device)
+#
+#                params_restricted[:,num_var] = torch.matmul(params_restricted[:,num_var],summing_matrix)
+#    else:
+#        params_restricted = params_a
+#
+#    return params_restricted
 
-        #params_restricted = torch.randn((16*16))
-        params_restricted = params_a.clone()
-        for num_var in range(params_a.size(1)):
-            if covariate == 1:
-                # exp() for all parameters except the intercepts for each different covariate value
-                #softplus = torch.nn.Softplus()
-                #params_restricted[degree:,num_var] = torch.exp(params_restricted[degree:,num_var])
-                params_restricted[degree:,num_var] = torch.log(1 + torch.exp(params_restricted[degree:,num_var]))
-                #params_restricted[degree:,num_var] = torch.nn.functional.softplus(params_a[degree:,num_var])
-                ############## before used torch.exp, johannes suggested to use softplus as then it does not explode that much
-                # Summing up of each value with all its prior values for each different covariate value
-                params_restricted[:,num_var] = torch.matmul(params_restricted[:,num_var],
-                                                 torch.kron(torch.triu(torch.ones(degree+1, degree+1)),
-                                                            torch.eye(degree+1))
-                                                            )
-            else:
-                # simple case without covariate
-                # exp() for all parameters except the intercept
-                #params_restricted[1:,num_var] = torch.exp(params_restricted[1:,num_var])
-                params_restricted[1:,num_var] = torch.log(1 + torch.exp(params_restricted[1:,num_var]))
-                #softplus = torch.nn.Softplus()
-                #params_restricted[1:,num_var] = torch.nn.functional.softplus(params_a[degree:,num_var])
-                # Summing up of each value with all its prior values
-                #summing_matrix = torch.ones(degree+1, degree+1, device=device) #the input.device is npassed here
-                
-                summing_matrix = torch.ones(params_restricted.size(0), params_restricted.size(0), device=device) #the input.device is npassed here
-                
-                
-                #if dev is not False:
-                #    summing_matrix.to(dev)
+# Updated version that is vectorised (no for loop over dimensions)
+def restrict_parameters(params_a, covariate, degree, monotonically_increasing, device=None):
+    if not monotonically_increasing:
+        return params_a.clone()
 
-                summing_matrix = torch.triu(summing_matrix)
-                summing_matrix = summing_matrix.to(params_restricted.device)
+    params_restricted = params_a.clone().T  # [B, K]
+    B, K = params_restricted.shape
 
-                params_restricted[:,num_var] = torch.matmul(params_restricted[:,num_var],summing_matrix)
+    if covariate == 1:
+        # Infer number of variables
+        num_vars = K // (degree + 1)
+        if K % (degree + 1) != 0:
+            raise ValueError("K must be divisible by (degree + 1) when covariate == 1")
+
+        # Apply softplus to all but the intercepts (i.e., first entry in each degree+1 block)
+        params_restricted = params_restricted.view(B, degree + 1, num_vars)  # [B, D+1, V]
+        params_restricted[:, 1:, :] = torch.nn.functional.softplus(params_restricted[:, 1:, :])
+        params_restricted = params_restricted.view(B, K)  # back to [B, K]
+
+        # Build Kronecker sum matrix: [K, K]
+        tri = torch.triu(torch.ones(degree + 1, degree + 1, device=device))  # [D+1, D+1]
+        eye = torch.eye(num_vars, device=device)  # [V, V]
+        sum_matrix = torch.kron(tri, eye)  # [K, K]
+
+        # Apply cumulative summation via matrix multiplication
+        params_restricted = torch.matmul(params_restricted, sum_matrix.T)  # [B, K]
+
     else:
-        params_restricted = params_a
+        # Apply softplus to non-intercept parameters (index 1 onward)
+        params_restricted[:, 1:] = torch.log(1 + torch.exp(params_restricted[:,1:])) #torch.nn.functional.softplus(params_restricted[:, 1:])
 
-    return params_restricted
+        # Create upper triangular summing matrix: [K, K]
+        sum_matrix = torch.triu(torch.ones(K, K, device=device))  # [K, K]
+
+        # Apply cumulative sum: [B, K] x [K, K]ᵗ = [B, K]
+        params_restricted = torch.matmul(params_restricted, sum_matrix)
+
+    return params_restricted.T
+
+
     
     #restrict the last knot value
     #params_restricted2 = params_restricted.clone()

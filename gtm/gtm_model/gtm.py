@@ -442,7 +442,7 @@ class GTM(nn.Module):
         -------
         Returns the the log likelihood per sample for input Y. 
         """
-        return self.__log_likelihood_loss__(y, covariate=False, mean_loss=mean_loss)["log_likelihood_data"] # covariate=False, train=False, evaluate=True
+        return self.__log_likelihood_loss__(y, mean_loss=mean_loss)["log_likelihood_data"] # covariate=False, train=False, evaluate=True
     
     
     def __training_objective__(self, samples, penalty_params, train_covariates=False, lambda_penalty_params: torch.Tensor =False, 
@@ -633,7 +633,7 @@ class GTM(nn.Module):
 
         
         #optimizer='LBFGS'
-        #warnings.warn("Optimiser for pretrain_tranformation_layer is always LBFGS. If this is an issue change the code.")
+        #warnings.warn("Optimiser for pretrain_transformation_layer is always LBFGS. If this is an issue change the code.")
         
         self.transform_only = True
         penalty_lasso_conditional_independence = False # makes objective not check lambda matrix
@@ -703,10 +703,10 @@ class GTM(nn.Module):
                 try:
                     
                     tm_model = GTM(number_variables=1,
-                             transformation_spline_range=[[self.transformation_spline_range[0][dimension]],
-                                                     [self.transformation_spline_range[1][dimension]]],
-                             num_decorr_layers=0,
-                             num_trans_layers=1,
+                             transformation_spline_range=[self.transformation_spline_range[0][dimension],
+                                                     self.transformation_spline_range[1][dimension]],
+                             number_decorrelation_layers=0,
+                             number_transformation_layers=1,
                             degree_transformations=[degree],
                             spline_transformation=self.spline_transformation,
                     )
@@ -716,7 +716,6 @@ class GTM(nn.Module):
                     tm_model.subset_dimension = dimension
             
                     train_dict = tm_model.train(train_dataloader=train_dataloader, validate_dataloader=train_dataloader, iterations=iterations, optimizer="LBFGS",
-                                    penalty_params=[0,0,0,0], adaptive_lasso_weights_matrix=False, lambda_penalty_params=False, 
                                     max_batches_per_iter=max_batches_per_iter)
                     
                     z_tilde = []
@@ -905,7 +904,7 @@ class GTM(nn.Module):
                 idx +=1
             
             # Compute acceptance probabilities using log likelihood
-            log_probs = self.log_likelihood(samples, covariate=covariate)  # Shape: (max_attempts,)
+            log_probs = self.log_likelihood(samples) #, covariate=covariate)  # Shape: (max_attempts,)
             probs = torch.exp(log_probs - torch.max(log_probs))  # Normalize to avoid overflow
             probs /= torch.max(probs)  # Scale probabilities between 0 and 1
             
@@ -959,42 +958,36 @@ class GTM(nn.Module):
                 #gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model.state_dict())
                 gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model_state_dict) 
             else:
-                gtm_tuning.pretrain_tranformation_layer(train_dataloader=train_dataloader,
+                gtm_tuning.pretrain_transformation_layer(train_dataloader=train_dataloader,
                                                     validate_dataloader=validate_dataloader,
-                                                    train_covariates=train_covariates,
-                                                    validate_covariates=validate_covariates,
-                                                    penalty_params=penalty_params,
-                                                    lambda_penalty_params=lambda_penalty_param,
+                                                    #train_covariates=train_covariates,
+                                                    #validate_covariates=validate_covariates,
+                                                    penalty_splines_params=penalty_params,
+                                                    penalty_lasso_param=lambda_penalty_param,
                                                     iterations=iterations, 
                                                     learning_rate=learning_rate,
                                                     patience=patience,
                                                     min_delta=min_delta,
-                                                    verbose=False,
                                                     optimizer=optimizer,
-                                                    lambda_penalty_mode=lambda_penalty_mode,
-                                                    objective_type=objective_type,
                                                     max_batches_per_iter=max_batches_per_iter)
                 
                 if cross_validation_folds == False:
                     #self.pretrained_transformation_layer_model = copy.deepcopy(gtm_tuning)
                     self.pretrained_transformation_layer_model_state_dict = gtm_tuning.state_dict()
-                
+                    
         
         gtm_tuning.train(train_dataloader=train_dataloader,
                 validate_dataloader=validate_dataloader, 
-                train_covariates=train_covariates,
-                validate_covariates=validate_covariates,
-                penalty_params=penalty_params,
-                lambda_penalty_params=lambda_penalty_param,
+                #train_covariates=train_covariates,
+                #validate_covariates=validate_covariates,
+                penalty_splines_params=penalty_params,
+                penalty_lasso_conditional_independence=lambda_penalty_param,
                 adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix,
                 iterations=iterations, 
                 learning_rate=learning_rate,
                 patience=patience,
                 min_delta=min_delta,
-                verbose=False,
                 optimizer=optimizer,
-                lambda_penalty_mode=lambda_penalty_mode,
-                objective_type=objective_type,
                 seperate_copula_training=seperate_copula_training,
                 max_batches_per_iter=max_batches_per_iter)
         
@@ -1424,7 +1417,7 @@ class GTM(nn.Module):
 
     def plot_splines(
         self,
-        layer_type: "transformation" | "decorrelation" = "transformation",
+        layer_type: Literal["transformation" , "decorrelation"] = "transformation",
         decorrelation_layer_number: int = 0,
         storage: str | None = None,
         show_plot: bool = True,

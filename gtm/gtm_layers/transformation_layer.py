@@ -40,7 +40,7 @@ class Transformation(nn.Module):
         self.number_covariates = number_covariates
         # TODO: solve how covariate effect is implemented
         self.params_covariate = False
-        self.covaraite_effect = False
+        self.covariate_effect = False
 
         self.initial_log_transform = initial_log_transform
         
@@ -210,7 +210,7 @@ class Transformation(nn.Module):
         #        span_restriction=self.span_restriction,
         #        covariate=covariate,
         #        params_covariate=self.params_covariate,
-        #        covaraite_effect=self.covaraite_effect,
+        #        covariate_effect=self.covariate_effect,
         #        calc_method=self.calc_method_bspline,
         #        order=self.spline_order
         #    )
@@ -234,7 +234,7 @@ class Transformation(nn.Module):
                             span_restriction=self.span_restriction if inverse==False else self.span_restriction_inverse,
                             covariate=covariate, 
                             params_covariate=self.params_covariate, 
-                            covaraite_effect=self.covaraite_effect,
+                            covariate_effect=self.covariate_effect,
                             penalize_towards=0, 
                             order=self.spline_order,
                             varying_degrees=False,
@@ -483,7 +483,7 @@ class Transformation(nn.Module):
                             span_restriction=self.span_restriction,
                             covariate=covariate, 
                             params_covariate=self.params_covariate, 
-                            covaraite_effect=self.covaraite_effect,
+                            covariate_effect=self.covariate_effect,
                             penalize_towards=0, 
                             order=self.spline_order,
                             varying_degrees=self.varying_degrees,
@@ -501,7 +501,7 @@ class Transformation(nn.Module):
                             span_restriction=self.span_restriction,
                             covariate=covariate, 
                             params_covariate=self.params_covariate, 
-                            covaraite_effect=self.covaraite_effect,
+                            covariate_effect=self.covariate_effect,
                             penalize_towards=0, 
                             order=self.spline_order,
                             varying_degrees=self.varying_degrees,
@@ -520,7 +520,7 @@ class Transformation(nn.Module):
                             span_restriction=self.span_restriction,
                             covariate=covariate, 
                             params_covariate=self.params_covariate, 
-                            covaraite_effect=self.covaraite_effect,
+                            covariate_effect=self.covariate_effect,
                             penalize_towards=0, 
                             order=self.spline_order,
                             varying_degrees=False,
@@ -541,7 +541,7 @@ class Transformation(nn.Module):
                             span_restriction=self.span_restriction,
                             covariate=covariate, 
                             params_covariate=self.params_covariate, 
-                            covaraite_effect=self.covaraite_effect,
+                            covariate_effect=self.covariate_effect,
                             penalize_towards=0, 
                             order=self.spline_order,
                             varying_degrees=False,
