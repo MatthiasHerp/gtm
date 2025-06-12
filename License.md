@@ -18,4 +18,4 @@ copyright holders be liable for any claim, damages or other liability, whether
 in an action of contract, tort or otherwise, arising from, out of or in connection
 with the Software or the use or other dealings in the Software.
 
-For commercial use or licensing inquiries, please contact: [your_email@example.com]
+For commercial use or licensing inquiries, please contact: [matthias.herp@bioinf.med.uni-goettingen.de]

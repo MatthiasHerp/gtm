@@ -29,12 +29,12 @@ To clone the repository run:
 git clone https://github.com/MatthiasHerp/gtm.git
 cd gtm
 
-# (Optional) Create a virtual environment
-python -m venv gtm_environment
-source gtm_environment/bin/activate  # On Windows: gtm_environment\Scripts\activate
+# (Optional) Create a virtual environment with conda
+conda create -n gtm_env python=3.11.5
 ```
 
-Run the following command in the cloned repository root and in your python environment to install the package and its dependencies:
+Run the following command in the cloned repository root and in your python environment to install the package and its dependencies.
+We recommend using Python 3.11.5 .
 
 ```python
 pip install -e .
