@@ -34,7 +34,7 @@ conda create -n gtm_env python=3.11.5
 ```
 
 Run the following command in the cloned repository root and in your python environment to install the package and its dependencies.
-We recommend using Python 3.11.5 .
+We recommend using Python `3.11.5` .
 
 ```python
 pip install -e .
