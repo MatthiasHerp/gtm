@@ -27,7 +27,7 @@ The [classification notebook](demos/demo_magic_classification.ipynb) demonstrate
 To clone the repository run:
 ```bash
 git clone https://github.com/MatthiasHerp/gtm.git
-cd your_model_repo
+cd gtm
 
 # (Optional) Create a virtual environment
 python -m venv gtm_environment
