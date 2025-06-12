@@ -24,18 +24,22 @@ The [classification notebook](demos/demo_magic_classification.ipynb) demonstrate
 
 ## 📥 Installation
 
+To clone the repository run:
 ```bash
-# Clone the repository
 git clone https://github.com/MatthiasHerp/gtm.git
 cd your_model_repo
 
 # (Optional) Create a virtual environment
 python -m venv gtm_environment
 source gtm_environment/bin/activate  # On Windows: gtm_environment\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
 ```
+
+Run the following command in the cloned repository root and in your python environment to install the package and its dependencies:
+
+```python
+pip install -e .
+```
+
 
 ## 🏋️‍♂️ Training
 
