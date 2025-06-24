@@ -16,7 +16,6 @@ def plot_densities(
     storage=None,
     show_plot=True,
 ):
-
     # Ensures that by default all points are in the plot and axis have the same span (not distortion, can see distribution clearly)
     if x_lim is None:
         x_lim = [data.min(), data.max()]
@@ -28,7 +27,6 @@ def plot_densities(
     if covariate is False:
         numbers_covariates = 1
     else:
-
         # binning the covariates
         # as explained here: https://discuss.pytorch.org/t/binning-tensor-values/89998
         covariate = torch.round(covariate / 0.2) * 0.2

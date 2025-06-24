@@ -7,17 +7,17 @@ import pandas as pd
 import seaborn as sns
 import torch
 
-from gtm.gtm_splines.bernstein_prediction_vectorized import \
-    bernstein_prediction_vectorized
+from gtm.gtm_splines.bernstein_prediction_vectorized import (
+    bernstein_prediction_vectorized,
+)
+
 # from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
-from gtm.gtm_splines.bspline_prediction_vectorized import \
-    bspline_prediction_vectorized
+from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
 
 
 def plot_splines(
     layer, covariate_exists=False, affine=False, storage=None, show_plot=True
 ):
-
     # num_variables = layer.number_variables
     # num_splines = int(num_variables * (num_variables-1) / 2)
     # num_splines = layer.params.size()[1]

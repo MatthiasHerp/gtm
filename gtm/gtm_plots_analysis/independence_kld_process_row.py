@@ -1,19 +1,22 @@
 import os
 
 import numpy as np
+
 # from run_simulation_study import run_simulation_study, log_mlflow_plot
 import pandas as pd
 import torch
 
 from gtm.gtm_plots_analysis.nd_quad import (  # https://github.com/harisankar95/nd-quadrature
-    getQuad, integrateQuad, transformQuad)
+    getQuad,
+    integrateQuad,
+    transformQuad,
+)
 
 
 ##################################################################################################################################################################
 def compute_ci_probability_deviance_31_glq(
     model, y_subset, min_val=-5, max_val=5, n=20
 ):
-
     # compute p1 = log(f(Y_1,Y_3,Y_2)) from the model
     p1_glq = model.log_likelihood(y_subset)
 

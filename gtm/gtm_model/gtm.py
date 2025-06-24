@@ -9,31 +9,31 @@ from torch import nn
 
 from gtm.gtm_layers.decorrelation_layer import Decorrelation
 from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
+
 # from gtm.layers.flip import Flip
 from gtm.gtm_layers.transformation_layer import *
 from gtm.gtm_plots_analysis.compute_conditional_independence_kld import *
-from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import \
-    plot_conditional_dependence_pair
-from gtm.gtm_plots_analysis.plot_conditional_independence_graph import \
-    plot_graph_conditional_independencies
-from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import \
-    plot_graph_conditional_independencies_with_pairplots
+from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import (
+    plot_conditional_dependence_pair,
+)
+from gtm.gtm_plots_analysis.plot_conditional_independence_graph import (
+    plot_graph_conditional_independencies,
+)
+from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import (
+    plot_graph_conditional_independencies_with_pairplots,
+)
 from gtm.gtm_plots_analysis.plot_densities import plot_densities
 from gtm.gtm_plots_analysis.plot_marginals import plot_marginals
 from gtm.gtm_plots_analysis.plot_metric_hist import plot_metric_hist
 from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
 from gtm.gtm_plots_analysis.plot_splines import plot_splines
-from gtm.gtm_training.objective_functions import (log_likelihood,
-                                                  training_objective)
+from gtm.gtm_training.objective_functions import log_likelihood, training_objective
 from gtm.gtm_training.training_helpers import (
-    if_float_create_lambda_penalisation_matrix, train)
+    if_float_create_lambda_penalisation_matrix,
+    train,
+)
 
 # from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
-
-
-
-
-
 
 
 class GTM(nn.Module):
@@ -324,7 +324,6 @@ class GTM(nn.Module):
 
         # Training or evaluation
         if train or evaluate:
-
             if train:
                 if self.num_trans_layers > 0:
                     # new input false to not recompute basis each iteration
@@ -371,7 +370,6 @@ class GTM(nn.Module):
                 return return_dict_nf_mctm
 
             if self.num_trans_layers > 0 and return_scores_hessian == True:
-
                 return_dict_nf_mctm["der_lambda_matrix_global"] = (
                     return_dict_transformation["scores"]
                 )  # .unsqueeze(2)
@@ -382,7 +380,6 @@ class GTM(nn.Module):
 
             if self.number_decorrelation_layers > 0:
                 for i in range(self.number_decorrelation_layers):
-
                     if ((i + 1) % 2) == 0:
                         # even: 2,4, 6, ...
                         return_dict_nf_mctm["output"] = (
@@ -404,15 +401,15 @@ class GTM(nn.Module):
                     return_dict_nf_mctm["log_d"] += return_dict_decorrelation[
                         "log_d"
                     ]  # required if the layers are multiplicative
-                    return_dict_nf_mctm[
-                        "second_order_ridge_pen_global"
-                    ] += return_dict_decorrelation["second_order_ridge_pen_sum"]
-                    return_dict_nf_mctm[
-                        "first_order_ridge_pen_global"
-                    ] += return_dict_decorrelation["first_order_ridge_pen_sum"]
-                    return_dict_nf_mctm[
-                        "param_ridge_pen_global"
-                    ] += return_dict_decorrelation["param_ridge_pen_sum"]
+                    return_dict_nf_mctm["second_order_ridge_pen_global"] += (
+                        return_dict_decorrelation["second_order_ridge_pen_sum"]
+                    )
+                    return_dict_nf_mctm["first_order_ridge_pen_global"] += (
+                        return_dict_decorrelation["first_order_ridge_pen_sum"]
+                    )
+                    return_dict_nf_mctm["param_ridge_pen_global"] += (
+                        return_dict_decorrelation["param_ridge_pen_sum"]
+                    )
 
                     if ((i + 1) % 2) == 0:
                         # even
@@ -601,7 +598,6 @@ class GTM(nn.Module):
         lambda_penalty_mode="square",
         objective_type="negloglik",
     ):
-
         return training_objective(
             self,
             samples=samples,
@@ -888,7 +884,6 @@ class GTM(nn.Module):
                     "Starting run for data dim ", dimension, " with degrees of ", degree
                 )
                 try:
-
                     tm_model = GTM(
                         number_variables=1,
                         transformation_spline_range=[
@@ -934,7 +929,6 @@ class GTM(nn.Module):
                     # plt.show()
                     # plt.hist(z_tilde,bins=100)
                     if pv >= 0.05:
-
                         print(
                             "pvalue is ",
                             pv,
@@ -994,9 +988,7 @@ class GTM(nn.Module):
 
     def compute_pseudo_conditional_correlation_matrix(
         self, y: torch.Tensor
-    ) -> (
-        torch.Tensor
-    ):  # , covariate=False): #TODO: is pseudo conditional indepednence matrix! standardisted p matrix
+    ) -> torch.Tensor:  # , covariate=False): #TODO: is pseudo conditional indepednence matrix! standardisted p matrix
         """
         Computes the pseudo conditional correlation matrix from the data `y` based on the lambda matrices of the full GTM model.
         This is essentially the standardised precision matrix, that way off diagonal elements represent the pseudo conditional correlations between the different dimensions.
@@ -1062,7 +1054,6 @@ class GTM(nn.Module):
             self.approximate_transformation_inverse()
 
         with torch.no_grad():
-
             z = (
                 torch.distributions.Normal(0, 1)
                 .sample((n_samples, self.number_variables))
@@ -1071,7 +1062,6 @@ class GTM(nn.Module):
 
             if self.number_decorrelation_layers > 0:
                 for i in range(self.number_decorrelation_layers - 1, -1, -1):
-
                     if ((i + 1) % 2) == 0:
                         # even
                         z = (self.flip_matrix @ z.T).T
@@ -1201,7 +1191,6 @@ class GTM(nn.Module):
         pretrained_transformation_layer=False,
         cross_validation_folds=False,
     ):
-
         import copy
 
         gtm_tuning = copy.deepcopy(self)
@@ -1216,7 +1205,6 @@ class GTM(nn.Module):
         # In each subsequent trial we load the pretrained model and directly do the joint training
         # This only works if we pretrain without a penalty on the transformation layer
         if pretrained_transformation_layer == True:
-
             if hasattr(
                 self, "pretrained_transformation_layer_model_state_dict"
             ):  # pretrained_transformation_layer_model
@@ -1442,7 +1430,6 @@ class GTM(nn.Module):
                 train_dataloader=train_dataloader,
                 validate_dataloader=validate_dataloader,
             ):
-
                 if penalty_decorrelation_ridge_param == None:
                     penalty_decorrelation_ridge_param_opt = 0
                 elif isinstance(penalty_decorrelation_ridge_param, float) or isinstance(
@@ -2145,7 +2132,6 @@ class GTM(nn.Module):
             ci_matrix[int(row["var_row"]), int(row["var_col"])] = row[dependence_metric]
 
         if pair_plots is False:
-
             plot_graph_conditional_independencies(
                 ci_matrix,
                 gene_names=names,
@@ -2159,7 +2145,6 @@ class GTM(nn.Module):
             )
 
         elif pair_plots is True:
-
             if after_marginal_transformation == True:
                 data_plotting = self.after_transformation(data).detach().numpy()
             else:

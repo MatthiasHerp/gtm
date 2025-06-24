@@ -20,7 +20,6 @@ def load_data_magic():
 
 
 def load_train_test_data_magic(train_portion=2 / 3, group="h"):
-
     data_g, data_h = load_data_magic()
 
     indices_g = int(np.ceil(data_g.shape[0] * train_portion))
@@ -101,7 +100,6 @@ def load_magic_data(
     validation_fold_index=4,
     split_random_state=25,
 ):
-
     (
         y_train_normed,
         y_test_normed,
@@ -137,7 +135,6 @@ def magic_classification_report(
     phi_h=False,
     return_auc=False,
 ):
-
     # data_g_test_normed = torch.tensor(data_g_test_normed)
     # data_h_test_normed = torch.tensor(data_h_test_normed)
 

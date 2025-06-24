@@ -3,9 +3,11 @@ import random
 
 import matplotlib.pyplot as plt
 import numpy as np
+
 # Sample Copulas Package
 import pyvinecopulib as pv
 import seaborn as sns
+
 # Other Stuff
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -108,7 +110,6 @@ import pandas as pd
 
 
 def compute_conditional_dependence_table(vine_model):
-
     text = vine_model.format()
 
     # Strip first line (title) and get all data lines

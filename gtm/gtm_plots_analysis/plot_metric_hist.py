@@ -8,7 +8,6 @@ import torch
 
 
 def plot_metric_hist(metric, covariate=False, bins=20, storage=None, show_plot=True):
-
     if torch.is_tensor(metric):
         metric = metric.detach().numpy()
 

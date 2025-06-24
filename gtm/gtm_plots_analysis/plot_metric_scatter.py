@@ -116,7 +116,7 @@ def plot_metric_scatter(
                 if strength_value is not False:
                     if after_marginal_transformation == False:
                         axs[row, col].set_title(
-                            f"({a+1}) $Y_{i}$,$Y_{j}$ "
+                            f"({a + 1}) $Y_{i}$,$Y_{j}$ "
                             + strength_name.upper()
                             + ": "
                             + str(np.round(strength_value[a], 3)),

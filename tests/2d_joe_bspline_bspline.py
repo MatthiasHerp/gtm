@@ -7,7 +7,6 @@ import torch
 from gtm import *
 
 if __name__ == "__main__":
-
     # Get Simulated Data
     from joe_simulated_data import create_simulated_data_joe_copula
 
@@ -96,7 +95,6 @@ if __name__ == "__main__":
         adaptive_lasso_weights_matrix = False
         lambda_penalty_params = False
     else:
-
         penalty_params = torch.tensor([0.0000, 0.0000, 0.0000, 0.0000])
         adaptive_lasso_weights_matrix = False
         lambda_penalty_params = False

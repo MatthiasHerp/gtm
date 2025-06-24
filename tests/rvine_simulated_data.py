@@ -1,6 +1,7 @@
 # Sample Copulas Package
 import numpy as np
 import pyvinecopulib as pv
+
 # Other Stuff
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -114,7 +115,6 @@ def create_simulated_data_vine_copula():
 
     class Copula_2D_Dataset(Dataset):
         def __init__(self, data):
-
             # First Dimension (N) needs to be the samples
             # Second Dimension (D) is the dimensionality of the data
             self.data = data

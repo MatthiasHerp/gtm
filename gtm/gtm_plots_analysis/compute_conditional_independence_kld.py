@@ -24,7 +24,6 @@ def compute_conditional_independence_kld(
     max_val=5,
     likelihood_based_metrics=True,
 ):
-
     # in case of gpu cuda compute
     if evaluation_data_type == "data":
         evaluation_data = y[:sample_size]  # Adjust this based on your needs
@@ -57,7 +56,6 @@ def compute_conditional_independence_kld(
     )
 
     if likelihood_based_metrics == True:
-
         actual_log_distribution_glq_list = []
         under_ci_assumption_log_distribution_glq_list = []
 
@@ -113,7 +111,7 @@ def compute_conditional_independence_kld(
 
         end = time.time()
 
-        print(f"Time taken: {end-start}")
+        print(f"Time taken: {end - start}")
 
         print("All rows processed.")
 

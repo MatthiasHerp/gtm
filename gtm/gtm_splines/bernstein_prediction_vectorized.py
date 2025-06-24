@@ -116,7 +116,6 @@ def bernstein_prediction_vectorized(
     binom_n1=None,
     binom_n2=None,
 ):  # device=None
-
     input_a_clone = input_a
 
     if span_restriction == "sigmoid":
