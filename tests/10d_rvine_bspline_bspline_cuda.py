@@ -45,7 +45,7 @@ if __name__ == "__main__":
     model = model.to(device)
 
     hyperparametertune = True
-    if hyperparametertune == True:
+    if hyperparametertune:
         study = model.hyperparameter_tune_penalties(
             train_dataloader=dataloader_train,
             validate_dataloader=dataloader_validate,

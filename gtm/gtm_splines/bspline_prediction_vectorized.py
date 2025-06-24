@@ -96,7 +96,6 @@ def B_varying_degree(x, k, i, t):
     :param t: Knot vector of shape [batch_size, num_knots]
     :return: Basis function values of shape [batch_size, num_x]
     """
-    device = x.device
 
     # Base case: k == 0 -> Indicator function for the knot interval
     if k == 0:
@@ -175,7 +174,7 @@ def Naive_Basis(x, spline_range, degree, span_factor, knots, derivativ=0, order=
     elif order == 3:
         n = degree + 2
 
-    distance_between_knots = (
+    (
         (spline_range[1] - spline_range[0]) * (1 + span_factor) / (n - 1)
     )
 
@@ -578,7 +577,7 @@ def bspline_prediction_vectorized(
         pass
 
     if calc_method == "deBoor":
-        if varying_degrees == True:
+        if varying_degrees:
             prediction = run_deBoor_varying_degrees(
                 x=input_a_clone.T, t=knots.T, c=params_a.T, p=order, d=derivativ
             )
@@ -587,7 +586,7 @@ def bspline_prediction_vectorized(
                 x=input_a_clone.T, t=knots.T, c=params_a.T, p=order, d=derivativ
             )
     elif calc_method == "Naive":
-        if varying_degrees == True:
+        if varying_degrees:
             prediction = Naive_varying_degree(
                 x=input_a_clone.T, t=knots.T, c=params_a, p=order, d=derivativ
             )
@@ -620,7 +619,7 @@ def bspline_prediction_vectorized(
         prediction = prediction * prediction_covariate
 
     if return_penalties:
-        if varying_degrees == False:
+        if not varying_degrees:
             second_order_ridge_pen = torch.sum(torch.diff(params_a, n=2, dim=0) ** 2)
             first_order_ridge_pen = torch.sum(torch.diff(params_a, n=1, dim=0) ** 2)
             param_ridge_pen = torch.sum(

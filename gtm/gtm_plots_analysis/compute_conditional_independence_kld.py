@@ -24,7 +24,7 @@ def compute_conditional_independence_kld(
     # in case of gpu cuda compute
     if evaluation_data_type == "data":
         evaluation_data = y[:sample_size]  # Adjust this based on your needs
-        if copula_only == True:
+        if copula_only:
             evaluation_data = self.after_transformation(evaluation_data)
     elif evaluation_data_type == "uniform_random_samples":
         evaluation_data = torch.distributions.Uniform(min_val, max_val).sample(
@@ -32,10 +32,10 @@ def compute_conditional_independence_kld(
         )
     elif evaluation_data_type == "samples_from_model":
         evaluation_data = self.sample(sample_size).detach()
-        if copula_only == True:
+        if copula_only:
             evaluation_data = self.after_transformation(evaluation_data).detach()
 
-    if copula_only == True:
+    if copula_only:
         self.num_trans_layers = 0
     ll_evaluation_data = self.log_likelihood(evaluation_data).detach().cpu()
 
@@ -52,7 +52,7 @@ def compute_conditional_independence_kld(
         precision_matrix
     )
 
-    if likelihood_based_metrics == True:
+    if likelihood_based_metrics:
         actual_log_distribution_glq_list = []
         under_ci_assumption_log_distribution_glq_list = []
 
@@ -116,7 +116,7 @@ def compute_conditional_independence_kld(
     precision_square_mean_list = []
     cond_correlation_abs_mean_list = []
     cond_correlation_square_mean_list = []
-    if likelihood_based_metrics == True:
+    if likelihood_based_metrics:
         kld_list = []
         iae_list = []
 
@@ -136,7 +136,7 @@ def compute_conditional_independence_kld(
             correlation_matrix[:, var_row_num, var_col_num].square().mean()
         )
 
-        if likelihood_based_metrics == True:
+        if likelihood_based_metrics:
             actual_log_distribution_glq = actual_log_distribution_glq_list[row_num]
             under_ci_assumption_log_distribution_glq = (
                 under_ci_assumption_log_distribution_glq_list[row_num]
@@ -226,7 +226,7 @@ def compute_conditional_independence_kld(
         cond_correlation_square_mean_list
     )
 
-    if likelihood_based_metrics == True:
+    if likelihood_based_metrics:
         precision_matrix_summary_statistics["kld"] = kld_list
         precision_matrix_summary_statistics["iae"] = iae_list
 
@@ -254,7 +254,7 @@ def compute_conditional_independence_kld(
             ]
         ]
 
-    if copula_only == True:
+    if copula_only:
         self.num_trans_layers = 1
 
     sub_kld_summary_statistics.reset_index(inplace=True)

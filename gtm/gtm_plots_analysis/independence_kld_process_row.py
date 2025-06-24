@@ -287,7 +287,7 @@ def list_comprehension_integrate_out_one_variable(
         data_synth[:, num_col_to_integrate_out] = sample
 
         ll = model.log_likelihood(data_synth).detach()
-        if copula == True:
+        if copula:
             marginal_ll = torch.distributions.Normal(0, 1).log_prob(data_synth).sum(1)
         else:
             marginal_ll = 0
@@ -332,7 +332,7 @@ def list_comprehension_integrate_out_two_variables(
         data_synth[:, num_col_to_integrate_out_2] = sample_2
 
         ll = model.log_likelihood(data_synth).detach()
-        if copula == True:
+        if copula:
             marginal_ll = torch.distributions.Normal(0, 1).log_prob(data_synth).sum(1)
         else:
             marginal_ll = 0
@@ -469,7 +469,7 @@ def compute_ci_probability_deviance_two_dim_glq(
         # compute p2 = log(f(Y_{/ij}))
         # z_tilde = model.after_transformation(data)
         # p2_glq = torch.distributions.Normal(0, 1).log_prob(z_tilde[:, num_col_1])
-        if optimized == False:
+        if not optimized:
             p2_glq = torch.hstack(
                 [
                     list_comprehension_integrate_out_two_variables(
@@ -504,7 +504,7 @@ def compute_ci_probability_deviance_two_dim_glq(
         p3_glq = p1_glq - p2_glq
 
         # compute p4 = log(f(Y_i|Y_{/ij})) = log(f(Y_i,Y_{/ij})) - log(f(Y_{/ij}))
-        if optimized == False:
+        if not optimized:
             p4_glq = torch.hstack(
                 [
                     list_comprehension_integrate_out_one_variable(
@@ -532,7 +532,7 @@ def compute_ci_probability_deviance_two_dim_glq(
         p4_glq = p4_glq - p2_glq
 
         # compute p5 = log(f(Y_j|Y_{/ij})) = log(f(Y_j,Y_{/ij})) - log(f(Y_{/ij}))
-        if optimized == False:
+        if not optimized:
             p5_glq = torch.hstack(
                 [
                     list_comprehension_integrate_out_one_variable(

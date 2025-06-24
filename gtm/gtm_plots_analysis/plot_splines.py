@@ -205,12 +205,10 @@ def plot_splines(
                 else:
                     col_indices = lower_tri_indices[1][spline_num]
 
-                if affine == True:
-                    params = layer.params_multiplier[:, spline_num]
-                    degree = layer.degree_multi
+                if affine:
+                    layer.params_multiplier[:, spline_num]
                 else:
-                    params = layer.params[:, spline_num]
-                    degree = layer.degree
+                    layer.params[:, spline_num]
                 # output_splines[:, spline_num] = bspline_prediction(params,#layer.params[:, spline_num],
                 #                                            data_span_vec[:, col_indices],
                 #                                            degree=degree,#layer.degree,
@@ -391,5 +389,5 @@ def plot_splines(
 
     if storage:
         plt.savefig(storage, bbox_inches="tight")
-    if show_plot == True:
+    if show_plot:
         plt.show()

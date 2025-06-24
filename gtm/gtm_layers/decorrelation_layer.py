@@ -209,7 +209,7 @@ class Decorrelation(nn.Module):
         return bspline_prediction_vectorized(
             (
                 self.params[:, params_index].unsqueeze(1)
-                if multi == False
+                if not multi
                 else self.params_multiplier[:, params_index].unsqueeze(1)
             ),
             input[:, covar_num].unsqueeze(1),
@@ -244,7 +244,7 @@ class Decorrelation(nn.Module):
         return bernstein_prediction_vectorized(
             params_a=(
                 self.params[:, params_index].unsqueeze(1)
-                if multi == False
+                if not multi
                 else self.params_multiplier[:, params_index].unsqueeze(1)
             ),
             input_a=input[:, covar_num].unsqueeze(1),
@@ -448,13 +448,13 @@ class Decorrelation(nn.Module):
                         )
                         return_dict["param_ridge_pen_sum"] += param_ridge_pen_current
 
-                    if return_scores_hessian == True:
+                    if return_scores_hessian:
                         if self.params_multiplier is not False:
                             warnings.warn(
                                 "Warning: return_scores_hessian not implemented for multiplicative effect. The der_lambda_matrix and der2_lambda_matrix will be wrong."
                             )
 
-                        der_lambda_value = self.spline_prediction(
+                        self.spline_prediction(
                             input,
                             params_index,
                             covariate,
@@ -465,7 +465,7 @@ class Decorrelation(nn.Module):
                             multi=False,
                         )
 
-                        der2_lambda_value = self.spline_prediction(
+                        self.spline_prediction(
                             input,
                             params_index,
                             covariate,
@@ -476,8 +476,7 @@ class Decorrelation(nn.Module):
                             multi=False,
                         )
                     else:
-                        der_lambda_value = 0
-                        der2_lambda_value = 0
+                        pass
 
                     if self.params_multiplier is not False:
                         lambda_value_multiplier_total = (
@@ -520,7 +519,7 @@ class Decorrelation(nn.Module):
         return_penalties=False,
         return_scores_hessian=False,
     ):
-        if inverse == True or self.number_variables == 2 or self.vmap == False:
+        if inverse or self.number_variables == 2 or not self.vmap:
             return_dict = self.for_loop_forward(
                 input,
                 log_d,

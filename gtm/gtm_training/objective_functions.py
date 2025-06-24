@@ -69,7 +69,7 @@ def training_objective(
         # lambda_penalty_params is not False for the pretrain to work
     if (
         lambda_penalty_params is not False
-        and torch.all(lambda_penalty_params == 0) == False
+        and not torch.all(lambda_penalty_params == 0)
     ):
         precision_matrix = torch.matmul(
             torch.transpose(return_dict_model_loss["lambda_matrix_global"], 1, 2),

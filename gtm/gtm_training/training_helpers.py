@@ -616,7 +616,7 @@ def train(
 
         loss = return_dict_model_objective["loss_with_penalties"].mean()
 
-        if verbose == True:
+        if verbose:
             print("current_loss:", loss)
 
         # Note to myself:
@@ -680,7 +680,7 @@ def train(
                 opt.step()
                 scheduler.step()
                 current_loss = loss
-                if verbose == True:
+                if verbose:
                     print("current_loss:", loss)
             elif optimizer == "LBFGS":
                 current_loss = opt.step(closure)
