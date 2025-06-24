@@ -1,7 +1,5 @@
 # GTM Package including GTM and the plot functions
-import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import torch
 
 from gtm import *

@@ -1,4 +1,3 @@
-import warnings
 from itertools import combinations
 
 import matplotlib.pyplot as plt

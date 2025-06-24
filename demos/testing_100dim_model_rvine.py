@@ -1,10 +1,8 @@
 # Other Stuff
-import numpy as np
 
 # Sample Copulas Package
 import pyvinecopulib as pv
 import torch
-from sklearn.metrics import roc_auc_score, roc_curve
 from torch.utils.data import DataLoader
 
 from demos.dataset_helpers import Generic_Dataset

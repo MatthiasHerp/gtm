@@ -1,16 +1,13 @@
 # GTM Package including GTM and the plot functions
 import random
 
-import matplotlib.pyplot as plt
 import numpy as np
 
 # Sample Copulas Package
 import pyvinecopulib as pv
-import seaborn as sns
 
 # Other Stuff
 import torch
-from torch.utils.data import DataLoader, Dataset
 
 from gtm import *
 

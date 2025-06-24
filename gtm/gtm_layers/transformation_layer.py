@@ -1,11 +1,8 @@
 import warnings
 
-import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import torch
-from torch import nn, optim
-from tqdm import tqdm
+from torch import nn
 
 from gtm.gtm_splines.bernstein_basis import (
     compute_multivariate_bernstein_basis,

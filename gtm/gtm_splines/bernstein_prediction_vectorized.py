@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 
 from gtm.gtm_splines.splines_utils import ReLULeR, custom_sigmoid

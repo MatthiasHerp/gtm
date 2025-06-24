@@ -1,4 +1,3 @@
-import itertools
 from typing import List, Literal, Tuple  # Still needed
 
 import optuna
@@ -24,7 +23,6 @@ from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots impor
 )
 from gtm.gtm_plots_analysis.plot_densities import plot_densities
 from gtm.gtm_plots_analysis.plot_marginals import plot_marginals
-from gtm.gtm_plots_analysis.plot_metric_hist import plot_metric_hist
 from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
 from gtm.gtm_plots_analysis.plot_splines import plot_splines
 from gtm.gtm_training.objective_functions import log_likelihood, training_objective

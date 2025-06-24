@@ -1,10 +1,8 @@
-import numpy as np
 import torch
 
 from gtm.gtm_splines.bernstein_basis import kron
 from gtm.gtm_splines.splines_utils import (
     ReLULeR,
-    adjust_ploynomial_range,
     custom_sigmoid,
 )
 
