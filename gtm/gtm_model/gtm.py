@@ -219,14 +219,14 @@ class GTM(nn.Module):
                 "Model is only implemented to have 0 or 1 transformation layer. This is enough as a TM with enough degrees can model any arbitrary continious distribution."
             )
 
-        self.flip_matrix = generate_diagonal_matrix(self.number_variables).to(
-            self.device
+        self.flip_matrix: torch.Tensor = generate_diagonal_matrix(self.number_variables).to(
+            device=self.device
         )
 
         self.number_decorrelation_layers = number_decorrelation_layers
         if self.number_decorrelation_layers > 0:
             self.decorrelation_layers = nn.ModuleList(
-                [
+                modules=[
                     Decorrelation(
                         degree=self.degree_decorrelation,
                         number_variables=self.number_variables,
@@ -267,7 +267,7 @@ class GTM(nn.Module):
         for decorrelation_layer in self.decorrelation_layers:
             decorrelation_layer.device = device
 
-        return super().to(device)
+        return super().to(device=device)
 
     def __create_return_dict_nf_mctm__(self, input):
         return {
