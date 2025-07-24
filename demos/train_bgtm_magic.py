@@ -67,6 +67,7 @@ if __name__ == "__main__":
                 spline_transformation="bspline",
                 spline_decorrelation="bspline",
                 transformation_spline_range=(-15, 15),
+                inference = 'bayesian',
                 device="cpu",
             )
 
