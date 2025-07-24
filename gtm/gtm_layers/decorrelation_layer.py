@@ -17,6 +17,7 @@ class Decorrelation(nn.Module):
         degree,
         number_variables,
         spline_range,
+        hyperparameters,
         spline="bspline",
         span_factor=torch.tensor(0.1),
         span_restriction="reluler",
@@ -26,6 +27,7 @@ class Decorrelation(nn.Module):
         affine_layer=False,
         degree_multi=False,
         spline_order=3,
+        inference="frequentist",
         device="cpu",
     ):
         super().__init__()
@@ -33,7 +35,8 @@ class Decorrelation(nn.Module):
         self.degree = degree
         self.number_variables = number_variables
         self.spline_range = torch.FloatTensor(spline_range)
-
+        self.inference = inference
+        self.hyperparameters = hyperparameters
         self.device = device
 
         self.num_lambdas = number_variables * (number_variables - 1) / 2
@@ -59,12 +62,28 @@ class Decorrelation(nn.Module):
             warnings.warn(
                 "Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default."
             )
+            
 
         self.spline_order = spline_order
-
+        
         self.params = self.compute_starting_values_bspline(start_value=0.001)
 
         self.number_covariates = number_covariates
+            
+        if self.inference is 'bayesian':
+            
+            self.order_prior_diff = 2 # Standard 2 order random walk....
+            
+            self.K_prior: torch.Tensor = torch.tensor(
+                data=self._difference_penalty_matrix(
+                    order=self.order_prior_diff,
+                    n_params=self.params.shape[0]
+                    ),
+                dtype=torch.float32,
+                device=self.device
+                )
+            
+            self.log_tau2_prior = nn.Parameter(data=torch.tensor(data=0.0))
 
         if self.number_covariates is not False:
             if self.number_covariates > 1:
@@ -137,6 +156,29 @@ class Decorrelation(nn.Module):
         self.var_num_list, self.covar_num_list = torch.tril_indices(
             self.number_variables, self.number_variables, offset=-1
         )
+        
+    ####### BAYESIAN DECOLAYER ###########
+        
+    def _difference_penalty_matrix(self, order, n_params):
+        D = np.eye(n_params)
+        for _ in range(order):
+            D = np.diff(D, n=1, axis=0)
+        return D.T @ D # K = DᵀD
+
+    def log_prior(self):
+
+        K = self.K_prior
+        sigma2 = torch.exp(self.log_sigma2_prior)
+        log_prior = 0.0
+        for j in range(self.params.shape[1]):
+            theta_j = self.params[:, j]
+            quad_form = theta_j @ K @ theta_j
+            log_prior += -0.5 * quad_form / sigma2
+
+        log_det_term = -0.5 * self.params.shape[1] * K.shape[0] * torch.log(sigma2)
+        return log_prior + log_det_term
+    
+    ####### BAYESIAN DECORELATION LAYER ###########
 
     def create_return_dict_decorrelation(self, input):
         lambda_matrix_general = (

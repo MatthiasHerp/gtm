@@ -94,8 +94,21 @@ class GTM(nn.Module):
         spline_transformation: Literal["bspline", "bernstein"] = "bspline",
         spline_decorrelation: Literal["bspline", "bernstein"] = "bspline",
         transformation_spline_range: Tuple[float, float] = (-15, 15),
+        inference: Literal['frequentist', 'bayesian'] = 'frequentist',
+        hyperparameter_transformation: dict = {
+            'alpha_sigma': 1,
+            'beta_sigma': 0.005,
+            'alpha_tau' : 1,
+            'beta_tau' : 0.005
+            },
+        hyperparameter_decorrelation: dict = {
+            'alpha_sigma': 1,
+            'beta_sigma': 0.005,
+            'alpha_tau' : 1,
+            'beta_tau' : 0.005
+        },
         device: str | torch.device = "cpu",
-    ):
+    ) -> None:
         """
         Parameters
         ----------
@@ -150,9 +163,12 @@ class GTM(nn.Module):
         spline_order: int = 3
         transform_only: bool = False
 
-        self.transform_only = transform_only
+        self.transform_only: Literal[False] = transform_only
 
-        self.number_variables = number_variables
+        self.number_variables: int = number_variables
+        self.inference: Literal['frequentist'] | Literal['bayesian'] = inference
+        self.hyperparameter_transformation = hyperparameter_transformation
+        self.hyperparameter_decorrelation = hyperparameter_decorrelation
 
         # Repeat polynomial ranges for all variables as this is the range for the bsplines essentially
         self.transformation_spline_range = list(
@@ -172,22 +188,22 @@ class GTM(nn.Module):
         # if it is a number then transform into a repeating list of length of number of varaibles
         if isinstance(degree_transformations, int):
             degree_transformations = [degree_transformations] * self.number_variables
-        self.degree_transformations = degree_transformations
-        self.degree_decorrelation = degree_decorrelation
+        self.degree_transformations: List[int] = degree_transformations
+        self.degree_decorrelation: int = degree_decorrelation
 
-        self.spline_transformation = spline_transformation
-        self.spline_decorrelation = spline_decorrelation
+        self.spline_transformation: Literal['bspline'] | Literal['bernstein'] = spline_transformation
+        self.spline_decorrelation: Literal['bspline'] | Literal['bernstein'] = spline_decorrelation
 
-        self.span_factor = span_factor
+        self.span_factor: torch.Tensor = span_factor
         self.span_restriction = span_restriction
 
-        self.device = device
+        self.device: str | torch.device = device
 
-        self.number_covariates = number_covariates
+        self.number_covariates: Literal[False] = number_covariates
 
-        self.num_trans_layers = number_transformation_layers
+        self.num_trans_layers: Literal[0] | Literal[1] = number_transformation_layers
 
-        self.initial_log_transform = initial_log_transform
+        self.initial_log_transform: Literal[False] = initial_log_transform
 
         self.covariate_effect = covariate_effect
 
@@ -195,9 +211,9 @@ class GTM(nn.Module):
 
         self.spline_order = spline_order
 
-        self.affine_decorr_layer = affine_decorr_layer
+        self.affine_decorr_layer: Literal[False] = affine_decorr_layer
 
-        self.degree_multi = degree_multi
+        self.degree_multi: Literal[False] = degree_multi
 
         if self.num_trans_layers > 0:
             self.transformation = Transformation(
@@ -240,6 +256,8 @@ class GTM(nn.Module):
                         spline_order=self.spline_order,
                         affine_layer=self.affine_decorr_layer,
                         degree_multi=self.degree_multi,
+                        inference=self.inference,
+                        hyperparamter= self.hyperparameter_decorrelation,
                         device=device,
                     )
                     for i in range(self.number_decorrelation_layers)
@@ -343,7 +361,8 @@ class GTM(nn.Module):
                 else:
                     return_dict_nf_mctm["output"] = y.clone()
                     return_dict_nf_mctm["log_d"] = torch.zeros(
-                        y.size(), device=self.device
+                        size=y.size(), 
+                        device=self.device
                     ).float()
 
             elif evaluate:
@@ -364,7 +383,8 @@ class GTM(nn.Module):
                 else:
                     return_dict_nf_mctm["output"] = y.clone()
                     return_dict_nf_mctm["log_d"] = torch.zeros(
-                        y.size(), device=self.device
+                        size=y.size(), 
+                        device=self.device
                     ).float()
 
             if self.transform_only == True:
@@ -1567,24 +1587,24 @@ class GTM(nn.Module):
                 if cross_validation_folds == False:
                     # define model, train the model with tuning params and return the objective value on the given validation set
                     target = self.__return_objective_for_hyperparameters__(
-                        train_dataloader,
-                        validate_dataloader,
-                        train_covariates,
-                        validate_covariates,
-                        penalty_params_opt,
-                        adaptive_lasso_weights_matrix,
-                        penalty_lasso_conditional_independence_opt,
-                        learning_rate,
-                        iterations,
-                        patience,
-                        min_delta,
-                        optimizer,
-                        lambda_penalty_mode,
-                        objective_type,
-                        seperate_copula_training,
-                        max_batches_per_iter,
-                        pretrained_transformation_layer,
-                        cross_validation_folds,
+                        train_dataloader=train_dataloader,
+                        validate_dataloader=validate_dataloader,
+                        train_covariates=train_covariates,
+                        validate_covariates=validate_covariates,
+                        penalty_params=penalty_params_opt,
+                        adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+                        lambda_penalty_param=penalty_lasso_conditional_independence_opt,
+                        learning_rate=learning_rate,
+                        iterations=iterations,
+                        patience=patience,
+                        min_delta=min_delta,
+                        optimizer=optimizer,
+                        lambda_penalty_mode=lambda_penalty_mode,
+                        objective_type=objective_type,
+                        seperate_copula_training=seperate_copula_training,
+                        max_batches_per_iter=max_batches_per_iter,
+                        pretrained_transformation_layer=pretrained_transformation_layer,
+                        cross_validation_folds=cross_validation_folds,
                     )
 
                     return target
