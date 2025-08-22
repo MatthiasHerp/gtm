@@ -6,16 +6,23 @@ import os
 import pickle
 import time
 from functools import reduce
-
+from typing import Literal, TYPE_CHECKING
+from math import pi, cos
 # import warnings
 # from torch import nn
 import numpy as np
 import torch
+
 # from torch.distributions import Normal, Laplace
 # import matplotlib.pyplot as plt
-from torch import optim
-from torch.optim.optimizer import Optimizer
+from torch import optim, Tensor
+from torch.optim.lr_scheduler import LambdaLR
+from torch.optim import Optimizer, Adam
+from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+if TYPE_CHECKING:
+    from ..gtm_model.gtm import GTM # type-only; no runtime import
 
 # from torch_ema import ExponentialMovingAverage
 
@@ -539,58 +546,62 @@ class EarlyStopper:
         return False
 
 
-import math
-
-
-def get_cosine_schedule_with_warmup(
-    optimizer, num_warmup_steps, num_training_steps, num_cycles=0.5, last_epoch=-1
-):
+def get_cosine_schedule_with_warmup(optimizer: Adam,
+                                    num_warmup_steps: int,
+                                    num_training_steps: int,
+                                    num_cycles: float=0.5,
+                                    last_epoch: int=-1
+                                    ) -> LambdaLR:
     """Create a schedule with a learning rate that decreases following the
     values of the cosine function between 0 and ⁠ pi * cycles ⁠ after a warmup
     period during which it increases linearly between 0 and 1.
     """
-
-    def lr_lambda(current_step):
+    
+    def lr_lambda(current_step) -> float:
+        
+        current_step:float = float(current_step)
+        
         if current_step < num_warmup_steps:
-            return float(current_step) / float(max(1, num_warmup_steps))
-        progress = float(current_step - num_warmup_steps) / float(
-            max(1, num_training_steps - num_warmup_steps)
+            
+            return current_step/ max(1, num_warmup_steps)
+            
+        progress: float = (current_step - num_warmup_steps) / max(
+            1, num_training_steps - num_warmup_steps
         )
-        return max(
-            0.0, 0.5 * (1.0 + math.cos(math.pi * float(num_cycles) * 2.0 * progress))
-        )
+        
+        return max(0.0, 0.5 * (1.0 + cos(pi * num_cycles * 2.0 * progress)))
 
-    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda, last_epoch)
+    return LambdaLR(optimizer=optimizer, lr_lambda=lr_lambda, last_epoch=last_epoch)
 
 
 def train(
-    model,
-    train_dataloader,
-    validate_dataloader=False,
-    train_covariates=False,
-    validate_covariates=False,
-    penalty_params=torch.FloatTensor([0, 0, 0, 0]),
-    lambda_penalty_params=False,
-    learning_rate=1,
-    iterations=2000,
-    verbose=True,
-    patience=5,
-    min_delta=1e-7,
-    global_min_loss=-np.inf,
-    optimizer="LBFGS",
-    lambda_penalty_mode="square",
-    objective_type="negloglik",  # ema_decay=False,
-    adaptive_lasso_weights_matrix=False,
-    max_batches_per_iter=False,
-):
-    # max_batches_per_iter infos
+    model: "GTM",
+    train_dataloader: DataLoader,
+    validate_dataloader: DataLoader|bool=False,
+    train_covariates:DataLoader|bool=False,
+    validate_covariates:DataLoader|bool=False,
+    penalty_params=torch.FloatTensor([0, 0, 0, 0]), 
+    #param_ridge_pen_global, first_order_ridge_pen_global, second_order_ridge_pen_global, transformation_second_order_ridge_pen_global
+    lambda_penalty_params:Tensor|bool=False,
+    learning_rate: float=1.0,
+    iterations:int=2000,
+    verbose:bool=True,
+    patience:int=5,
+    min_delta:float=1e-7,
+    global_min_loss:float=-np.inf,
+    optimizer:Literal['LBFGS', 'Adam']="LBFGS",
+    lambda_penalty_mode:Literal['square']="square",
+    objective_type:Literal['negloglik']="negloglik",  # ema_decay=False,
+    adaptive_lasso_weights_matrix: Tensor| bool=False,
+    max_batches_per_iter:bool|int|None=False,
+) -> dict[str, Tensor]:    # max_batches_per_iter infos
     # then use random sampling data_loader
     # always 1 for validation data
 
-    start = time.time()
+    start: float = time.time()
 
-    opt = LBFGS(
-        model.parameters(),
+    opt:LBFGS = LBFGS(
+        params=model.parameters(),
         lr=learning_rate,
         history_size=1,
         line_search_fn="strong_wolfe",
@@ -601,11 +612,11 @@ def train(
     # if ema_decay is not False:
     #    ema = ExponentialMovingAverage(model.parameters(), decay=ema_decay)
 
-    def closure():
+    def closure() -> Tensor:
         opt.zero_grad()
-        return_dict_model_objective = model.__training_objective__(
-            y_train,
-            penalty_params,
+        return_dict_model_objective: dict[str, Tensor] = model.__training_objective__(
+            samples=y_train,
+            penalty_params=penalty_params,
             lambda_penalty_params=lambda_penalty_params,
             train_covariates=train_covariates,
             lambda_penalty_mode=lambda_penalty_mode,
@@ -613,9 +624,9 @@ def train(
             adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
         )  # use the `objective` function
 
-        loss = return_dict_model_objective["loss_with_penalties"].mean()
+        loss: Tensor = return_dict_model_objective["loss_with_penalties"].mean()
 
-        if verbose == True:
+        if verbose:
             print("current_loss:", loss)
 
         # Note to myself:
@@ -624,50 +635,51 @@ def train(
         if objective_type == "score_matching":
 
             loss.backward(retain_graph=True)
+            
         else:
             loss.backward()
+            
         return loss
 
-    early_stopper = EarlyStopper(
-        patience=patience, min_delta=min_delta, global_min_loss=global_min_loss
-    )
+    early_stopper: EarlyStopper = EarlyStopper(patience=patience, min_delta=min_delta, global_min_loss=global_min_loss)
 
     if optimizer == "Adam":
-        opt = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=0)
-        scheduler = get_cosine_schedule_with_warmup(
-            opt,
+        opt:Adam = Adam(params=model.parameters(), lr=learning_rate, weight_decay=0)
+        scheduler: LambdaLR = get_cosine_schedule_with_warmup(
+            optimizer=opt,
             num_warmup_steps=5,
             num_training_steps=iterations,
             num_cycles=0.5,
             last_epoch=-1,
         )  ##3,4,5 warmup steps machen
 
-    loss_list = []
-    loss_list_val = []
+    loss_list: list = []
+    loss_list_val: list = []
 
     if validate_dataloader is not False:
         with open("model.pkl", "wb") as f:
             pickle.dump(model, f)
         with open("model.pkl", "rb") as f:
-            model_val = pickle.load(f)
+            model_val: "GTM" = pickle.load(f)
         os.remove("model.pkl")
         if model_val.num_trans_layers > 0:
             model_val.transformation.multivariate_basis = False
             model_val.transformation.multivariate_basis_derivativ_1 = False
 
-    for i in tqdm(range(iterations)):
-        number_iterations = i
-        num_processed_batches = 0
+    for i in tqdm(iterable=range(iterations)):
+        number_iterations: int = i
+        num_processed_batches:int = 0
+        
         for y_train in train_dataloader:
+            
             num_processed_batches += 1
-
-            y_train = y_train.to(model.device)
+            y_train: Tensor = y_train.to(device=model.device)
 
             if optimizer == "Adam":
                 opt.zero_grad()
-                return_dict_model_objective = model.__training_objective__(
-                    y_train,
-                    penalty_params,
+                return_dict_model_objective: dict[str, Tensor] = model.__training_objective__(
+                    samples=y_train,
+                    penalty_params=penalty_params,
                     lambda_penalty_params=lambda_penalty_params,
                     train_covariates=train_covariates,
                     lambda_penalty_mode=lambda_penalty_mode,
@@ -675,11 +687,11 @@ def train(
                     adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
                 )  # use the `objective` function
 
-                loss = return_dict_model_objective["loss_with_penalties"].mean()
+                loss: Tensor = return_dict_model_objective["loss_with_penalties"].mean()
                 loss.backward()
                 opt.step()
                 scheduler.step()
-                current_loss = loss
+                current_loss: Tensor = loss
                 if verbose == True:
                     print("current_loss:", loss)
             elif optimizer == "LBFGS":
@@ -688,37 +700,35 @@ def train(
             # if ema_decay is not False:
             #    ema.update()
 
-            if (
-                max_batches_per_iter is not False
-                and num_processed_batches >= max_batches_per_iter
-            ):
+            if max_batches_per_iter and num_processed_batches >= max_batches_per_iter:
                 break
 
         loss_list.append(current_loss.item())
 
         if validate_dataloader is not False:
-            y_validate = next(iter(validate_dataloader))
+            y_validate: Tensor = next(iter(validate_dataloader))
             y_validate = y_validate.to(model.device)
             model_val.load_state_dict(model.state_dict())
 
             if objective_type is "negloglik":
+                
                 with torch.no_grad():
-                    return_dict_model_objective_val = model_val.__training_objective__(
-                        y_validate,
-                        penalty_params,
+                    return_dict_model_objective_val: dict[str, Tensor] = model_val.__training_objective__(
+                        samples=y_validate,
+                        penalty_params=penalty_params,
                         lambda_penalty_params=lambda_penalty_params,
                         train_covariates=validate_covariates,
                         lambda_penalty_mode=lambda_penalty_mode,
                         objective_type=objective_type,
                         adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
                     )
-                    current_loss_val = return_dict_model_objective_val[
+                    current_loss_val: Tensor = return_dict_model_objective_val[
                         "loss_without_penalties"
                     ].mean()  # No penalties as on validation set
             else:
-                return_dict_model_objective_val = model.__training_objective__(
-                    y_validate,
-                    penalty_params,
+                return_dict_model_objective_val: dict[str, Tensor] = model.__training_objective__(
+                    samples=y_validate,
+                    penalty_params=penalty_params,
                     lambda_penalty_params=lambda_penalty_params,
                     train_covariates=validate_covariates,
                     lambda_penalty_mode=lambda_penalty_mode,
@@ -734,7 +744,7 @@ def train(
             if verbose:
                 print("current_loss_val: ", current_loss_val.item())
 
-            if early_stopper.early_stop(current_loss_val, model):
+            if early_stopper.early_stop(current_loss=current_loss_val, model=model):
                 if verbose:
                     print(
                         "Early Stop at iteration",
@@ -747,7 +757,7 @@ def train(
                         min_delta,
                     )
                 # early stop means best model was at current iteration - patience
-                number_iterations = number_iterations - patience
+                number_iterations -= patience
                 break
         else:
             if early_stopper.early_stop(current_loss, model):
@@ -763,16 +773,16 @@ def train(
                         min_delta,
                     )
                 # early stop means best model was at current iteration - patience
-                number_iterations = number_iterations - patience
+                number_iterations -= patience
                 break
 
     # Return the best model which is not necessarily the last model
     model.load_state_dict(early_stopper.best_model_state)
 
     # Rerun model at the end to get final penalties
-    return_dict_model_training = model.__training_objective__(
-        y_train,
-        penalty_params,
+    return_dict_model_training: dict[str, Tensor] = model.__training_objective__(
+        samples=y_train,
+        penalty_params=penalty_params,
         lambda_penalty_params=lambda_penalty_params,
         train_covariates=train_covariates,
         lambda_penalty_mode=lambda_penalty_mode,
@@ -783,15 +793,15 @@ def train(
     return_dict_model_training["loss_list_validation"] = loss_list_val
     return_dict_model_training["number_iterations"] = number_iterations
 
-    end = time.time()
+    end: float = time.time()
 
-    training_time = end - start
+    training_time: float = end - start
     return_dict_model_training["training_time"] = training_time
 
     return return_dict_model_training
 
 
-def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars):
+def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars) -> Tensor:
 
     lambda_penalty_params = torch.tensor(lambda_penalty_params, dtype=torch.float32)
     if lambda_penalty_params.size() == torch.Size([]):

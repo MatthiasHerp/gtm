@@ -70,7 +70,7 @@ if __name__ == "__main__":
                 device="cpu",
             )
 
-            model.to(device)
+            model.to(device=device)
 
             study = model.hyperparameter_tune_penalties(
                 train_dataloader=dataloader_train,

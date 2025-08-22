@@ -3,7 +3,9 @@ import warnings
 import numpy as np
 # from functorch import vmap  # Requires PyTorch 1.10+
 import torch
-from torch import nn
+from torch import nn, Tensor
+from torch.distributions import InverseGamma
+from typing import List,Literal
 
 from gtm.gtm_splines.bernstein_prediction_vectorized import (
     bernstein_prediction_vectorized, binomial_coeffs)
@@ -14,33 +16,39 @@ from gtm.gtm_splines.bspline_prediction_vectorized import \
 class Decorrelation(nn.Module):
     def __init__(
         self,
-        degree,
-        number_variables,
-        spline_range,
-        hyperparameters,
-        spline="bspline",
-        span_factor=torch.tensor(0.1),
-        span_restriction="reluler",
-        number_covariates=False,
-        covariate_effect="multiplicativ",
+        degree: int,
+        number_variables: int,
+        spline_range: List[List[float]],
+        #hyperparameters:dict,
+        #diff_order:int= 2,
+        spline: Literal['bspline'] | Literal['bernstein'] ="bspline",
+        span_factor: Tensor =torch.tensor(0.1),
+        span_restriction: Literal['reluler'] ="reluler",
+        number_covariates: bool =False,
+        covariate_effect: str ="multiplicativ",
         calc_method_bspline="deBoor",
         affine_layer=False,
         degree_multi=False,
         spline_order=3,
         inference="frequentist",
         device="cpu",
-    ):
+    ) -> None:
         super().__init__()
         self.type = "decorrelation"
         self.degree = degree
         self.number_variables = number_variables
         self.spline_range = torch.FloatTensor(spline_range)
         self.inference = inference
-        self.hyperparameters = hyperparameters
+        self.hyperparameters = {
+                        'alpha_sigma': 1.0,
+                        'beta_sigma': 0.005,
+                        'alpha_tau': 1.0,
+                        'beta_tau': 0.005
+                        } #hyperparameters
         self.device = device
 
         self.num_lambdas = number_variables * (number_variables - 1) / 2
-        self.spline = spline
+        self.spline: Literal['bspline'] | Literal['bernstein'] = spline
         if spline == "bernstein":
             warnings.warn(
                 "Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct"
@@ -50,7 +58,7 @@ class Decorrelation(nn.Module):
             self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
             self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
 
-        self.span_factor = span_factor
+        self.span_factor: Tensor = span_factor
 
         self.span_restriction = span_restriction
 
@@ -60,21 +68,55 @@ class Decorrelation(nn.Module):
             self.spline_prediction = self.bernstein_prediction_method
         else:
             warnings.warn(
-                "Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default."
+                message="Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default."
             )
-            
 
-        self.spline_order = spline_order
-        
-        self.params = self.compute_starting_values_bspline(start_value=0.001)
 
-        self.number_covariates = number_covariates
+        self.spline_order: int = spline_order
+
+        self.params: torch.Tensor = self.compute_starting_values_bspline(start_value=0.001)
+
+        self.number_covariates: bool = number_covariates
+
+
+        if self.number_covariates is not False:
+            if self.number_covariates > 1:
+                print("Warning, covariates not implemented for more than 1 covariate")
+            self.params_covariate: torch.Tensor = self.compute_starting_values_bspline(
+                start_value=0.001
+            )
+        else:
+            self.params_covariate = False
+
+        # Defines wether we have an additive or an affine (multiplicative) coupling layer
+        self.affine_layer: bool = affine_layer
+        self.degree_multi: bool = degree_multi
+        if self.affine_layer is not False:
+            self.params_multiplier: torch.Tensor = self.compute_starting_values_bspline(
+                start_value=1.0
+            )
+        else:
+            self.params_multiplier = False
+
+        self.covariate_effect: str = covariate_effect
+
+        if self.inference == 'bayesian':
+            ## Hierarchical Bayes
+            # Error of Regression
+            self.alpha_sigma = torch.tensor([self.hyperparameters['alpha_sigma']])
+            self.beta_sigma = torch.tensor([self.hyperparameters['beta_sigma']])
+            # Random Walk Error
+            self.alpha_tau = torch.tensor([self.hyperparameters['alpha_tau']])
+            self.beta_tau= torch.tensor([self.hyperparameters['beta_tau']])
             
-        if self.inference is 'bayesian':
             
-            self.order_prior_diff = 2 # Standard 2 order random walk....
-            
-            self.K_prior: torch.Tensor = torch.tensor(
+            ## Defining HyperParameters
+            self.tau2_prior = InverseGamma(self.alpha_tau,self.beta_tau)
+            self.sigma2_prior = InverseGamma(self.alpha_sigma,self.beta_sigma)
+
+            self.order_prior_diff: int = 2#diff_order # Standard 2 order random walk.... #TODO Generalize
+
+            self.K_prior = torch.tensor(
                 data=self._difference_penalty_matrix(
                     order=self.order_prior_diff,
                     n_params=self.params.shape[0]
@@ -83,30 +125,11 @@ class Decorrelation(nn.Module):
                 device=self.device
                 )
             
-            self.log_tau2_prior = nn.Parameter(data=torch.tensor(data=0.0))
+            self.prior_epsilon = torch.exp(-self.beta_sigma/self.sigma2_prior)/torch.pow(self.sigma2_prior, self.alpha_sigma + 1)
+            self.prior_rw = torch.exp(-self.beta_tau/self.tau2_prior)/torch.pow(self.tau2_prior, self.alpha_tau + 1)
+            self.tau_given_gamma = torch.log(torch.exp(-self.K_prior/(2*self.tau2_prior, 2))/self.tau2_prior) #TODO Generalize with RANK
 
-        if self.number_covariates is not False:
-            if self.number_covariates > 1:
-                print("Warning, covariates not implemented for more than 1 covariate")
-            self.params_covariate = self.compute_starting_values_bspline(
-                start_value=0.001
-            )
-        else:
-            self.params_covariate = False
-
-        # Defines wether we have an additive or an affine (multiplicative) coupling layer
-        self.affine_layer = affine_layer
-        self.degree_multi = degree_multi
-        if self.affine_layer is not False:
-            self.params_multiplier = self.compute_starting_values_bspline(
-                start_value=1.0
-            )
-        else:
-            self.params_multiplier = False
-
-        self.covariate_effect = covariate_effect
-
-        self.calc_method_bspline = calc_method_bspline
+        self.calc_method_bspline: str = calc_method_bspline
 
         # TODO: Sort this out, I fixed the values here as it is currently the fastest computation by far
         self.vmap = True  # False #True
@@ -168,7 +191,7 @@ class Decorrelation(nn.Module):
     def log_prior(self):
 
         K = self.K_prior
-        sigma2 = torch.exp(self.log_sigma2_prior)
+        sigma2 = torch.exp(self.log_tau2_prior)
         log_prior = 0.0
         for j in range(self.params.shape[1]):
             theta_j = self.params[:, j]
