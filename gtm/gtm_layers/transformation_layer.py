@@ -4,8 +4,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch
-from torch import nn, optim
+from torch import nn, optim, Tensor
 from tqdm import tqdm
+from typing import List, Literal
+
+from torch.distributions import InverseGamma, Normal
+
 
 from gtm.gtm_splines.bernstein_basis import (
     compute_multivariate_bernstein_basis, restrict_parameters)
@@ -18,55 +22,58 @@ from gtm.gtm_splines.bspline_prediction_vectorized import (
 class Transformation(nn.Module):
     def __init__(
         self,
-        degree,
-        number_variables,
-        spline_range,
-        monotonically_increasing=True,
-        spline="bspline",
-        span_factor=torch.tensor(0.1),
-        number_covariates=False,
-        initial_log_transform=False,
-        calc_method_bspline="deBoor",
-        span_restriction="reluler",
-        spline_order=3,
+        degree:List[int],
+        number_variables:int,
+        spline_range: List[List[float]],
+        #hyperparameters:dict,
+        monotonically_increasing:bool=True,
+        spline: Literal['bspline'] | Literal['bernstein']="bspline",
+        #ridge_eps:float=1e-6,
+        #diff_order:int=2,
+        #init_value:float=1.0,
+        span_factor: Tensor=  torch.tensor(0.1, dtype=torch.float32),
+        number_covariates:bool=False,
+        initial_log_transform:bool=False,
+        calc_method_bspline:Literal['deBoor']="deBoor",
+        span_restriction:Literal['reluler']="reluler",
+        spline_order:int=3,
+        inference:Literal['frequentist', 'bayesian'] ='frequentist',
         device="cpu",
-    ):  # device=None
+    ) -> None:  # device=None
         super().__init__()
 
-        self.device = device
+        self.device: str = device
+        self.inference: Literal['frequentist', 'bayesian'] = inference
 
-        self.type = "transformation"
-        self.degree = degree
-        self.number_variables = number_variables
-        self.spline_range = (
-            torch.FloatTensor(spline_range)
-            if isinstance(spline_range, list)
-            else spline_range.cpu()
-        )
-        self.monotonically_increasing = monotonically_increasing
+        self.type: Literal['transformation'] = "transformation"
+        self.degree: List[int] = degree
+        self.number_variables: int = number_variables
+        self.spline_range: Tensor = (torch.FloatTensor(spline_range) if isinstance(spline_range, list) else spline_range.cpu())
+        self.monotonically_increasing: bool = monotonically_increasing
 
         # For padding!
-        self.max_degree = max(self.degree)
+        self.max_degree: int = max(self.degree)
 
-        self.span_factor = span_factor
+        self.span_factor: Tensor = span_factor
 
         self.multivariate_basis = False
         self.multivariate_basis_derivativ_1 = False
 
-        self.number_covariates = number_covariates
+        self.number_covariates: bool = number_covariates
         # TODO: solve how covariate effect is implemented
         self.params_covariate = False
         self.covariate_effect = False
 
-        self.initial_log_transform = initial_log_transform
+        self.initial_log_transform: bool = initial_log_transform
 
         self.calc_method_bspline = calc_method_bspline
 
-        self.spline_order = spline_order
+        self.spline_order: int = spline_order
 
         self.span_restriction = span_restriction
 
-        self.spline = spline
+        self.spline: Literal['bspline'] | Literal['bernstein'] = spline
+        
         # param dims: 0: basis, 1: variable
         self.params = nn.ParameterList(self.compute_starting_values())
 
@@ -137,7 +144,50 @@ class Transformation(nn.Module):
         self.padded_knots = self.padded_knots.to(self.device)
 
         self.spline_range = self.spline_range.to(self.device)
+        if self.inference == 'bayesian':
+            self.hyperparameters = hyperparameters
+            self.ridge_eps= ridge_eps
+            self.diff_order= diff_order
+            self.init_value=init_value
+            
+            """Bayesian extension: if inference == "bayesian", this layer exposes:
+            - self.log_prior()           -> log p(beta | tau2)   (unnormalized)
+            - self.log_hyperprior()      -> log p(tau2)          (optional)
+            - return_dict["log_prior"]   in forward()
+            - return_dict["log_hyper"]   in forward()
+            """
+            self._K0_list = []   # K0_j = D^T D (without 1/tau^2), one per variable
+            self._ranks = []     # effective penalty ranks (for diagnostics if needed)
 
+            for var in range(self.number_variables):
+                n_par = self.params[var].numel()
+                D = self._diff_matrix(
+                    n=n_par,
+                    order=self.diff_order,
+                    device=self.params[var].device,
+                )
+                K0 = D.T @ D
+                K0 = self._safe_psd(K0, eps=self._prior_cfg["ridge_eps"])
+                self._K0_list.append(K0)
+                self._ranks.append(int(torch.linalg.matrix_rank(K0).item()))
+
+            # tau^2 hyper(s); we keep them as buffers so *this* layer does not optimize.
+            self.is_same_tau = True #TODO Implement this in the setting dict, to share the same tau across all vars
+            if self.is_same_tau: 
+                self.register_buffer(
+                    "tau2", torch.tensor(self._prior_cfg["tau2_init"], dtype=torch.float32, device=self.device)
+                )
+            else:
+                self.register_buffer(
+                    "tau2",
+                    torch.full(
+                        (self.number_variables,),
+                        float(self._prior_cfg["tau2_init"]),
+                        dtype=torch.float32,
+                        device=self.device,
+                    ),
+                )
+                
         ##### Update
         ## Defining knots for vectorized compute
         # max_cols = max(self.degree)+1
@@ -201,7 +251,26 @@ class Transformation(nn.Module):
         # self.calc_method_bspline = "deBoor" #"deBoor" #"deBoor" #"Naive"
 
         self.params_inverse = None
+        
+    ##### Bayesian HelperMethods (START) #######
+    
+    def _diff_matrix(self, n: int, order: int = 2, device: str = "cpu") -> torch.Tensor:
+        """
+        Forward-difference operator of given order.
+        Shape: (n-order) x n. Requires n >= order+1.
+        """
+        if n < order + 1:
+            raise ValueError(f"Need at least {order+1} parameters, got {n}.")
+        D = torch.eye(n, device=device)
+        for _ in range(order):
+            D = D[1:] - D[:-1]
+        return D  # (n-order, n)
 
+    def _safe_psd(self, K: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        """Numerical stabilizer to ensure positive definiteness."""
+        return K + eps * torch.eye(K.shape[0], device=K.device)
+        
+    ##### Bayesian HelperMethods (END) #######
     def compute_starting_values(self):
         """
         Computes Starting Values for the Transformation layer with variable knots for different data dimensions.
