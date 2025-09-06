@@ -88,7 +88,6 @@ class GTM(nn.Module):
         spline_decorrelation: Literal["bspline", "bernstein"] = "bspline",
         transformation_spline_range: Tuple[float, float] = (-15, 15),
         inference: Literal['frequentist', 'bayesian'] = 'frequentist',
-        bayesian_setup: dict | None = None,
         device: str | torch.device = "cpu",
     ) -> None:
         """
@@ -134,7 +133,8 @@ class GTM(nn.Module):
         decorrelation_spline_range: List[List[float]] = [[-15], [15]]
         span_factor: torch.Tensor = torch.tensor(0.1)
         span_restriction : Literal['reluler'] = "reluler"
-        number_covariates: bool | int = False  # False means no covariates, or its the count
+        number_covariates: bool | int = False  # False means no covariates, or its count
+        #ALLWAYS FALSE FOR THIS VERSION, Till the number of cov is finally implemented.
         initial_log_transform: bool = False
         covariate_effect: str = "multiplicativ"
         calc_method_bspline: Literal['deBoor'] = "deBoor"
@@ -148,41 +148,6 @@ class GTM(nn.Module):
 
         self.number_variables: int = number_variables
         self.inference: Literal['frequentist'] | Literal['bayesian'] = inference
-        # Bayes Hyperparameters 
-        if bayesian_setup is None and self.inference == 'bayesian':
-            self.bayesian_setup = {
-                'hyperparameters': {
-                    'transformation': {
-                        'alpha_sigma': 1,
-                        'beta_sigma': 0.005,
-                        'alpha_tau': 1,
-                        'beta_tau': 0.005
-                        },
-                    'decorrelation': {
-                        'alpha_sigma': 1,
-                        'beta_sigma': 0.005,
-                        'alpha_tau': 1,
-                        'beta_tau': 0.005
-                        },
-                    },
-                'setup': {
-                    'diff_order': {
-                        'transformation': 2,
-                        'decorrelation': 2
-                    },
-                    'init_values': {
-                        'transformation': {
-                            "tau2_init": 0
-                            }
-                        },
-                    'ridge_eps': {
-                        'transformation': 1e-6
-                        }
-                    }
-                }
-        if self.inference == 'bayesian':
-            self.hyperparameter_transformation = bayesian_setup.get('hyperparameters').get('transformation')
-            self.hyperparameter_decorrelation = bayesian_setup.get('hyperparameters').get('decorrelation')
 
         # Repeat polynomial ranges for all variables as this is the range for the bsplines essentially
         self.transformation_spline_range: List[List[float]] = [
@@ -194,17 +159,17 @@ class GTM(nn.Module):
             decorrelation_spline_range[0] * self.number_variables,
             decorrelation_spline_range[1] * self.number_variables
         ]
-
+        
         # required for the varying degree of the transformation layer to work
         # if it is a number then transform into a repeating list of length of number of varaibles
         if isinstance(degree_transformations, int):
             degree_transformations = [degree_transformations] * self.number_variables
         self.degree_transformations: List[int] = degree_transformations
         self.degree_decorrelation: int = degree_decorrelation
-
+        
         self.spline_transformation: Literal['bspline'] | Literal['bernstein'] = spline_transformation
         self.spline_decorrelation: Literal['bspline'] | Literal['bernstein'] = spline_decorrelation
-
+        
         self.span_factor: Tensor = span_factor
         self.span_restriction = span_restriction
 
@@ -251,9 +216,7 @@ class GTM(nn.Module):
                 "Model is only implemented to have 0 or 1 transformation layer. This is enough as a TM with enough degrees can model any arbitrary continious distribution."
             )
 
-        self.flip_matrix: torch.Tensor = generate_diagonal_matrix(self.number_variables).to(
-            device=self.device
-        )
+        self.flip_matrix: torch.Tensor = generate_diagonal_matrix(self.number_variables).to(device=self.device)
 
         self.number_decorrelation_layers = number_decorrelation_layers
         if self.number_decorrelation_layers > 0:
@@ -380,7 +343,7 @@ class GTM(nn.Module):
             log_d: Tensor = -torch.log(y)  # = log(1/y)
             y = torch.log(y)
         else:
-            log_d = 0
+            log_d: float = 0.0
 
         # Training or evaluation
         #if train or evaluate:    
@@ -390,8 +353,8 @@ class GTM(nn.Module):
                     # new input false to not recompute basis each iteration
                     # forwards Transformation  
                     return_dict_transformation = self.transformation(
-                        y,
-                        covariate,
+                        input=y,
+                        covariate=covariate,
                         log_d=log_d,
                         return_log_d=True,
                         new_input=False,
@@ -1206,7 +1169,7 @@ class GTM(nn.Module):
         # If cross_validation_folds is False then only in the first trial we do a pretrain and then store the transformation layer pretrained model
         # In each subsequent trial we load the pretrained model and directly do the joint training
         # This only works if we pretrain without a penalty on the transformation layer
-        if pretrained_transformation_layer == True:
+        if pretrained_transformation_layer:
             if hasattr(self, "pretrained_transformation_layer_model_state_dict"):  # pretrained_transformation_layer_model
                 
                 #gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model.state_dict())
@@ -1264,7 +1227,7 @@ class GTM(nn.Module):
                 batch: Tensor = gtm_tuning.log_likelihood(y=y_validate, mean_loss=covar_batch)
                 target += batch.cpu().detach().numpy().mean()
                 
-            elif (objective_type == "score_matching" or objective_type == "single_sliced_score_matching"):
+            elif objective_type in ("score_matching", "single_sliced_score_matching"):
                 
                 # TODO: does the -1 * make sense is it not already in the exact_score_loss method
                 target += (
@@ -1414,10 +1377,7 @@ class GTM(nn.Module):
         # penalty_lasso_conditional_independence]
         # hyperparameter_combinations_list = list(itertools.product(*list_of_lists))
 
-        if train_covariates is False:
-            number_covariates = 0
-        else:
-            number_covariates = 1
+        number_covariates = 1 if train_covariates else 0
 
         if tuning_mode == "optuna":
             # From Old version where one could pass lists to do tuning using list of hyperparameters passed
@@ -1560,7 +1520,7 @@ class GTM(nn.Module):
                     ]
                 )
 
-                if cross_validation_folds == False:
+                if not cross_validation_folds:
                     # define model, train the model with tuning params and return the objective value on the given validation set
                     target:float = self.__return_objective_for_hyperparameters__(
                         train_dataloader=train_dataloader,

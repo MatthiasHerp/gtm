@@ -30,7 +30,7 @@ class Decorrelation(nn.Module):
         affine_layer=False,
         degree_multi=False,
         spline_order=3,
-        inference="frequentist",
+        inference: Literal['frequentist'] | Literal['bayesian'] ='frequentist',
         device="cpu",
     ) -> None:
         super().__init__()
@@ -38,26 +38,17 @@ class Decorrelation(nn.Module):
         self.degree = degree
         self.number_variables = number_variables
         self.spline_range = torch.FloatTensor(spline_range)
-        self.inference = inference
-        self.hyperparameters = {
+        self.inference: Literal['frequentist'] | Literal['bayesian'] = inference
+        """self.hyperparameters: dict[str, float] = {
                         'alpha_sigma': 1.0,
                         'beta_sigma': 0.005,
                         'alpha_tau': 1.0,
                         'beta_tau': 0.005
-                        } #hyperparameters
+                        } #hyperparameters"""
         self.device = device
 
         self.num_lambdas = number_variables * (number_variables - 1) / 2
         self.spline: Literal['bspline'] | Literal['bernstein'] = spline
-        if spline == "bernstein":
-            warnings.warn(
-                "Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct"
-            )
-            n = self.degree + 1
-            self.binom_n = binomial_coeffs(n, device=self.device)
-            self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
-            self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
-
         self.span_factor: Tensor = span_factor
 
         self.span_restriction = span_restriction
@@ -66,20 +57,27 @@ class Decorrelation(nn.Module):
             self.spline_prediction = self.bspline_prediction_method
         elif self.spline == "bernstein":
             self.spline_prediction = self.bernstein_prediction_method
+            
+            # Bernstein Polynomial Init
+            warnings.warn(
+                "Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct"
+            )
+            n = self.degree + 1
+            self.binom_n = binomial_coeffs(n, device=self.device)
+            self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
+            self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
         else:
             warnings.warn(
                 message="Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default."
             )
 
-
         self.spline_order: int = spline_order
 
         self.params: torch.Tensor = self.compute_starting_values_bspline(start_value=0.001)
 
-        self.number_covariates: bool = number_covariates
+        self.num_covariates: int = int(number_covariates or 0)
 
-
-        if self.number_covariates is not False:
+        if self.number_covariates > 0:
             if self.number_covariates > 1:
                 print("Warning, covariates not implemented for more than 1 covariate")
             self.params_covariate: torch.Tensor = self.compute_starting_values_bspline(
@@ -91,17 +89,19 @@ class Decorrelation(nn.Module):
         # Defines wether we have an additive or an affine (multiplicative) coupling layer
         self.affine_layer: bool = affine_layer
         self.degree_multi: bool = degree_multi
-        if self.affine_layer is not False:
+        
+        if self.affine_layer:
             self.params_multiplier: torch.Tensor = self.compute_starting_values_bspline(
                 start_value=1.0
             )
         else:
             self.params_multiplier = False
-
+            
         self.covariate_effect: str = covariate_effect
-
+        
         if self.inference == 'bayesian':
-            ## Hierarchical Bayes
+            self.hyperparameters = None
+            """## Hierarchical Bayes
             # Error of Regression
             self.alpha_sigma = torch.tensor([self.hyperparameters['alpha_sigma']])
             self.beta_sigma = torch.tensor([self.hyperparameters['beta_sigma']])
@@ -127,32 +127,31 @@ class Decorrelation(nn.Module):
             
             self.prior_epsilon = torch.exp(-self.beta_sigma/self.sigma2_prior)/torch.pow(self.sigma2_prior, self.alpha_sigma + 1)
             self.prior_rw = torch.exp(-self.beta_tau/self.tau2_prior)/torch.pow(self.tau2_prior, self.alpha_tau + 1)
-            self.tau_given_gamma = torch.log(torch.exp(-self.K_prior/(2*self.tau2_prior, 2))/self.tau2_prior) #TODO Generalize with RANK
-
+            self.tau_given_gamma = torch.log(torch.exp(-self.K_prior/(2*self.tau2_prior, 2))/self.tau2_prior) #TODO Generalize with RANK"""
+            
         self.calc_method_bspline: str = calc_method_bspline
-
+        
         # TODO: Sort this out, I fixed the values here as it is currently the fastest computation by far
         self.vmap = True  # False #True
         # self.calc_method_bspline = "deBoor" #"deBoor" #"Naive"
-
+        
         ### Old
         # The following code ensures that:
         # we have knots equally spanning the range of the number of degrees
         # we have the first an last knot on the bound of the span
         # we get equally space boundary knots outside the spane to ensure that at the boundary of the span we get bspline predicitons without errors
-
+        
         # The distance between knots is the span divided by the number of knots minus 1
         # because between D points where we have one point at the min and one at the max of a span we have D-1 intervals between knots
-        distance_between_knots_in_bounds = (
+        
+        distance_between_knots_in_bounds: Tensor = (
             self.spline_range[1, 0] - self.spline_range[0, 0]
         ) / (self.degree - 1)
-
-        number_of_bound_knots_per_side = (
-            self.spline_order
-        )  # for cubcic splines (order 3) we need 2 knots on each side
-
+        
+        number_of_bound_knots_per_side: int = self.spline_order # for cubcic splines (order 3) we need 2 knots on each side
+        
         # We get the eqully spaced knots by equal spacing on the extended span
-        self.knots = torch.linspace(
+        self.knots: Tensor = torch.linspace(
             self.spline_range[0, 0]
             - number_of_bound_knots_per_side * distance_between_knots_in_bounds,
             self.spline_range[1, 0]
@@ -160,10 +159,10 @@ class Decorrelation(nn.Module):
             self.degree + 2 * number_of_bound_knots_per_side,  # 2* because of two sides
             dtype=torch.float32,
         )
-
+        
         self.knots = self.knots.to(self.device)
-
-        ##### Update
+        
+        """##### Update
         # if self.spline_order == 2:
         #    n = self.degree + 1
         # elif self.spline_order == 3:
@@ -174,8 +173,8 @@ class Decorrelation(nn.Module):
         #
         # self.knots = torch.linspace(self.spline_range[0,0] * (1 + self.span_factor) - self.spline_order * distance_between_knots,
         #                    self.spline_range[1,0] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
-        #                    n + 4, dtype=torch.float32)
-
+        #                    n + 4, dtype=torch.float32)"""
+        
         self.var_num_list, self.covar_num_list = torch.tril_indices(
             self.number_variables, self.number_variables, offset=-1
         )
@@ -187,9 +186,9 @@ class Decorrelation(nn.Module):
         for _ in range(order):
             D = np.diff(D, n=1, axis=0)
         return D.T @ D # K = DᵀD
-
+    
     def log_prior(self):
-
+        
         K = self.K_prior
         sigma2 = torch.exp(self.log_tau2_prior)
         log_prior = 0.0

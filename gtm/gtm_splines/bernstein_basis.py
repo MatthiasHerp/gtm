@@ -1,4 +1,6 @@
 import torch
+from torch import Tensor
+from torch.nn.functional import softplus
 
 from gtm.gtm_splines.splines_utils import adjust_ploynomial_range
 
@@ -189,15 +191,20 @@ def compute_multivariate_bernstein_basis(
 
 # Updated version that is vectorised (no for loop over dimensions)
 def restrict_parameters(
-    params_a, covariate, degree, monotonically_increasing, device=None
-):
+    params_a: Tensor,
+    covariate: bool,
+    degree: int,
+    monotonically_increasing: bool,
+    device: torch.device=None
+    ) -> Tensor:
+    
     if not monotonically_increasing:
         return params_a.clone()
 
-    params_restricted = params_a.clone().T  # [B, K]
+    params_restricted: Tensor = params_a.clone().T  # [B, K]
     B, K = params_restricted.shape
 
-    if covariate == 1:
+    if covariate:
         # Infer number of variables
         num_vars = K // (degree + 1)
         if K % (degree + 1) != 0:
@@ -224,15 +231,17 @@ def restrict_parameters(
 
     else:
         # Apply softplus to non-intercept parameters (index 1 onward)
-        params_restricted[:, 1:] = torch.log(
-            1 + torch.exp(params_restricted[:, 1:])
-        )  # torch.nn.functional.softplus(params_restricted[:, 1:])
-
+        #params_restricted[:, 1:] = torch.log(
+        #    1 + torch.exp(params_restricted[:, 1:])
+        #)  # torch.nn.functional.
+        
+        params_restricted[:, 1:] = softplus(params_restricted[:, 1:])
+        
         # Create upper triangular summing matrix: [K, K]
-        sum_matrix = torch.triu(torch.ones(K, K, device=device))  # [K, K]
-
+        sum_matrix: Tensor = torch.triu(input=torch.ones(K, K, device=device))  # [K, K]
+        
         # Apply cumulative sum: [B, K] x [K, K]ᵗ = [B, K]
-        params_restricted = torch.matmul(params_restricted, sum_matrix)
+        params_restricted: Tensor = torch.matmul(input=params_restricted, other=sum_matrix)
 
     return params_restricted.T
 
