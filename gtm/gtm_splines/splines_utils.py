@@ -1,7 +1,7 @@
 import warnings
 
 import torch
-from torch import nn
+from torch import nn, Tensor
 
 
 def adjust_ploynomial_range(polynomial_range: object, span_factor: object) -> object:
@@ -18,7 +18,7 @@ def adjust_ploynomial_range(polynomial_range: object, span_factor: object) -> ob
 
 
 class ReLULeR:  # nn.Module
-    def __init__(self, polynomial_range: torch.Tensor):
+    def __init__(self, polynomial_range: Tensor):
         # super().__init__()
         self.polynomial_range = (
             0.9 * polynomial_range
@@ -42,18 +42,15 @@ class ReLULeR:  # nn.Module
         return x_well_behaved
 
 
-def custom_sigmoid(input: torch.Tensor, polynomial_range: torch.Tensor):
-    input_01 = (input - polynomial_range[0]) / (
+def custom_sigmoid(input: Tensor, polynomial_range: Tensor) -> Tensor:
+    
+    input_01: Tensor = (input - polynomial_range[0]) / (
         polynomial_range[1] - polynomial_range[0]
     )
-    input_11 = input_01 * 2 - 1
-    input_bounded_01 = 1 / (1 + torch.exp(-input_11 * 4))
-    input_bounded = (
-        input_bounded_01 * (polynomial_range[1] - polynomial_range[0])
-        + polynomial_range[0]
-    )
+    input_11: Tensor = input_01 * 2 - 1
+    input_bounded_01: Tensor = 1 / (1 + torch.exp(-input_11 * 4))
 
-    return input_bounded
+    return input_bounded_01 * (polynomial_range[1] - polynomial_range[0]) + polynomial_range[0]
 
 
 if __name__ == "__main__":

@@ -14,8 +14,10 @@ import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+from optuna import Study
 import torch
 from torch.utils.data import DataLoader
+from torch import Tensor
 
 from dataset_helpers import Generic_Dataset
 from load_analyze_magic_data_helpers import load_magic_data
@@ -72,7 +74,7 @@ if __name__ == "__main__":
 
             model.to(device=device)
 
-            study = model.hyperparameter_tune_penalties(
+            study: Study | None = model.hyperparameter_tune_penalties(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
                 penalty_decorrelation_ridge_param=None,
@@ -94,7 +96,7 @@ if __name__ == "__main__":
                 study_name=None,
             )
 
-            penalty_splines_params = torch.FloatTensor(
+            penalty_splines_params: Tensor = torch.FloatTensor(
                 [
                     0,  # study.best_params["penalty_decorrelation_ridge_param"],
                     study.best_params["penalty_decorrelation_ridge_first_difference"],
@@ -113,7 +115,7 @@ if __name__ == "__main__":
             )
 
             # train the joint model
-            _ = model.train(
+            _: dict[str, Tensor] = model.train(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
                 iterations=1000,
