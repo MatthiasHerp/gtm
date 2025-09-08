@@ -3,12 +3,12 @@ import torch
 import math
 
 from torch.distributions import Normal
-
+from torch import nn
 
 from ..gtm_model.gtm import GTM
 
 
-class variational_inference:
+class variational_inference(nn.Module):
     def __init__(self):
         pass
     
@@ -41,3 +41,7 @@ class variational_inference:
 
         # ELBO
         return loglik - kl
+    
+    
+    def forward(self):
+        pass

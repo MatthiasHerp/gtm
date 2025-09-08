@@ -145,6 +145,10 @@ def bayesian_training_objective(
     
     torch.manual_seed(seed) 
     
+    
+    
+    
+    
     if objective_type == "negloglik":
         
         start_gamma = torch.zeros(model.params.shape[0])

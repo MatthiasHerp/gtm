@@ -20,6 +20,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.optim import Optimizer, Adam
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from training_bayes import variational_inference
 
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
@@ -806,21 +807,36 @@ def train_freq(
 def train_bayes(
     model: GTM,
     train_dataloader: DataLoader,
-    validate_dataloader: DataLoader|bool,
-    hyperparameters: dict[float],
+    validate_dataloader: DataLoader,
+    hyperparameters: dict[str, dict[str, float]],
     learning_rate,
+    optimizer: Literal["LBFGS", "Adam"],
     iterations,
-    penalty,
     verbose,
-    penalty_lasso_conditional_independence # makes objective not check lambda matrix
+    patience
     ):
     
     
     if hyperparameters is None:
-        hyperparameters: dict[str, float] = model.DEFAULT_HYPERPARAMETER.get('transformation')
+        hyperparameters_transformation: dict[str, float] = model.hyperparameter.get('transformation')
+        hyperparameters_transformation: dict[str, float] = model.hyperparameter.get('decorrelation')
     
-    
-    opt: Adam = Adam(params=model.parameters(), lr=learning_rate, weight_decay=0)
+
+    if optimizer == 'Adam':
+        opt: Adam = Adam(
+            params=model.parameters(),
+            lr=learning_rate, weight_decay=0
+            )
+    elif optimizer == 'LBFGS':
+        opt: LBFGS = LBFGS(
+        params=model.parameters(),
+        lr=learning_rate,
+        history_size=1,
+        line_search_fn="strong_wolfe",
+        max_iter=1,
+        max_eval=40,
+    )
+        
     scheduler: LambdaLR = get_cosine_schedule_with_warmup(
             optimizer=opt,
             num_warmup_steps=5,
@@ -829,12 +845,34 @@ def train_bayes(
             last_epoch=-1,
         )  ##3,4,5 warmup steps machen
     
+    VI_Model = variational_inference()
+    start: float = time.time()
+    
+    for iter in iterations:
+        number_iterations: int = iter
+        
+        for y_train in train_dataloader:
+            loss = variational_inference()
+            
+            loss.backward()
+            opt.step()
+            scheduler.step()
+            current_loss: Tensor = loss
+            if verbose:
+                print("current_loss:", loss)
+            
+    
     
     return_dict_model_training = model.__bayesian_training_objective__(
         samples=train_dataloader,
         objective_type='negloglik'
         
     )
+    end: float = time.time()
+
+    training_time: float = end - start
+    return_dict_model_training['training_time'] = training_time
+    
     
     return return_dict_model_training
     
