@@ -164,6 +164,10 @@ class Transformation(nn.Module):
             self.prior_distr_sigma = priors.prior_distr_sigma
             self.prior_distr_alpha = priors.prior_distr_alpha"""
     
+    
+    def _generating_prior(self):
+        return 
+    
     def _defining_knots_list(self) -> List[Tensor]:
         
         number_of_bound_knots_per_side: int = self.spline_order 
@@ -202,7 +206,6 @@ class Transformation(nn.Module):
                 )  # additional padding to ensure that all knots are of the same size
             )
         return knots_list
-        
     
     def compute_starting_values(self) -> List[nn.ParameterList]:
         """
@@ -322,7 +325,7 @@ class Transformation(nn.Module):
             varying_degrees=False,
             params_a_mask=None,
         )
-
+        
     def bernstein_prediction_method(
         self,
         input,
@@ -817,9 +820,7 @@ class Transformation(nn.Module):
                     input=input, covariate=covariate, log_d=0, inverse=inverse
                 )
             else:
-                return_dict = self.vmap_forward(
-                    input, covariate, log_d=0, inverse=inverse
-                )
+                return_dict = self.vmap_forward(input=input, covariate=covariate, log_d=0, inverse=inverse)
 
         return return_dict
 

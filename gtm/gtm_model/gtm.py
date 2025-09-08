@@ -603,8 +603,6 @@ class GTM(nn.Module):
             samples= samples,
             objective_type= objective_type
         )
-        
-        
 
     def train(
         self,
@@ -621,7 +619,7 @@ class GTM(nn.Module):
         patience: int = 5,
         min_delta: float = 1e-7,
         seperate_copula_training: bool = False,
-        max_batches_per_iter: int | bool = False,
+        max_batches_per_iter: int | bool = False
     ) -> dict[str, Tensor]:
         
         """
@@ -697,12 +695,6 @@ class GTM(nn.Module):
         lambda_penalty_mode: Literal['square']= "square"  # Literal["square", "absolute"]
         # ema_decay: float | bool = False, used to have ema_decay in training
 
-        if penalty_lasso_conditional_independence is not False:
-            penalty_lasso_conditional_independence = penalty_lasso_conditional_independence.to(self.device)
-
-        if adaptive_lasso_weights_matrix is not False:
-            adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix.to(self.device)
-
         if seperate_copula_training:
             self.transformation.params.requires_grad = False
 
@@ -717,25 +709,48 @@ class GTM(nn.Module):
             self.transformation.binom_n1 = self.transformation.binom_n1.to(self.device)
             self.transformation.binom_n2 = self.transformation.binom_n2.to(self.device)
 
-        return_dict_model_training: dict[str, Tensor]= train_freq(
-            model=self,
-            train_dataloader=train_dataloader,
-            validate_dataloader=validate_dataloader,
-            train_covariates=train_covariates,
-            validate_covariates=validate_covariates,
-            penalty_params=penalty_splines_params,
-            lambda_penalty_params=penalty_lasso_conditional_independence,
-            learning_rate=learning_rate,
-            iterations=iterations,
-            verbose=verbose,
-            patience=patience,
-            min_delta=min_delta,
-            optimizer=optimizer,
-            lambda_penalty_mode=lambda_penalty_mode,
-            objective_type=objective_type,
-            adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
-            max_batches_per_iter=max_batches_per_iter,
-        )
+        if self.inference == 'frequentist':
+            
+            if penalty_lasso_conditional_independence is not False:
+                penalty_lasso_conditional_independence = penalty_lasso_conditional_independence.to(self.device)
+
+            if adaptive_lasso_weights_matrix is not False:
+                adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix.to(self.device)
+            
+            return_dict_model_training: dict[str, Tensor]= train_freq(
+                model=self,
+                train_dataloader=train_dataloader,
+                validate_dataloader=validate_dataloader,
+                train_covariates=train_covariates,
+                validate_covariates=validate_covariates,
+                penalty_params=penalty_splines_params,
+                lambda_penalty_params=penalty_lasso_conditional_independence,
+                learning_rate=learning_rate,
+                iterations=iterations,
+                verbose=verbose,
+                patience=patience,
+                min_delta=min_delta,
+                optimizer=optimizer,
+                lambda_penalty_mode=lambda_penalty_mode,
+                objective_type=objective_type,
+                adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+                max_batches_per_iter=max_batches_per_iter,
+            )
+            
+        elif self.inference == 'bayesian':
+            return_dict_model_training = train_bayes(
+                model= self,
+                train_dataloader=train_dataloader,
+                validate_dataloader=validate_covariates,
+                hyperparameters=None,
+                iterations=iterations,
+                verbose=verbose,
+                optimizer=optimizer,
+                learning_rate=learning_rate,
+                patience = patience,
+                
+                
+                )
 
         if seperate_copula_training:
             self.transformation.params.requires_grad = True
@@ -815,45 +830,28 @@ class GTM(nn.Module):
         self.transform_only = True
         penalty_lasso_conditional_independence = False  # makes objective not check lambda matrix
 
-        if inference == 'frequentist':
+        lambda_penalty_mode: Literal['square'] = "square"  # Literal["square", "absolute"]
+        train_covariates:bool = False
+        validate_covariates:bool = False
             
-            lambda_penalty_mode: Literal['square'] = "square"  # Literal["square", "absolute"]
-            train_covariates:bool = False
-            validate_covariates:bool = False
-            
-            return_dict_model_training: None = train_freq(
-                model=self,
-                train_dataloader=train_dataloader,
-                validate_dataloader=validate_dataloader,
-                train_covariates=train_covariates,
-                validate_covariates=validate_covariates,
-                penalty_params=penalty_splines_params,
-                lambda_penalty_params=penalty_lasso_conditional_independence,
-                learning_rate=learning_rate,
-                iterations=iterations,
-                verbose=verbose,
-                patience=patience,
-                min_delta=min_delta,
-                optimizer=optimizer,
-                lambda_penalty_mode=lambda_penalty_mode,
-                objective_type=objective_type,
-                max_batches_per_iter=max_batches_per_iter,
+        return_dict_model_training: None = train_freq(
+            model=self,
+            train_dataloader=train_dataloader,
+            validate_dataloader=validate_dataloader,
+            train_covariates=train_covariates,
+            validate_covariates=validate_covariates,
+            penalty_params=penalty_splines_params,
+            lambda_penalty_params=penalty_lasso_conditional_independence,
+            learning_rate=learning_rate,
+            iterations=iterations,
+            verbose=verbose,
+            patience=patience,
+            min_delta=min_delta,
+            optimizer=optimizer,
+            lambda_penalty_mode=lambda_penalty_mode,
+            objective_type=objective_type,
+            max_batches_per_iter=max_batches_per_iter
             )
-            
-        elif inference == 'bayesian':
-            
-            return_dict_model_training: None = train_bayes(
-                model = self,
-                train_dataloader=train_dataloader,
-                validate_dataloader= validate_dataloader,
-                penalty_lasso_conditional_independence= penalty_lasso_conditional_independence,
-                verbose= verbose,
-                hyperparameters= hyperparameters_transformation_layer
-            )
-            
-            
-        else:
-            raise ValueError(f"Unknown inference mode: {inference!r}")
 
         self.transform_only = False
 
