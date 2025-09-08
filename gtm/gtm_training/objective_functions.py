@@ -2,6 +2,8 @@ import torch
 from torch import Tensor
 from torch.distributions import Normal
 from typing import Literal, TYPE_CHECKING
+from ..gtm_layers.layer_utils import bayesian_splines
+
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
 
@@ -132,3 +134,67 @@ def training_objective(
         "pen_second_ridge": pen_second_ridge,
         "pen_lambda_lasso": pen_lambda_lasso,
     }
+
+def bayesian_training_objective(
+    model: "GTM",
+    samples: Tensor,
+    objective_type:Literal['negloglik']="negloglik",
+    sample_size: int = 1000,
+    seed = 1998
+) -> Tensor:
+    
+    torch.manual_seed(seed) 
+    
+    if objective_type == "negloglik":
+        
+        start_gamma = torch.zeros(model.params.shape[0])
+        
+        
+        ## Storage ##
+        sigmas2: Tensor = torch.empty(sample_size, device=model.device, dtype=torch.float64)
+        taus2: Tensor = torch.empty(sample_size, device=model.device, dtype=torch.float64)
+        
+        
+        return_dict_model_loss: dict[str, Tensor | float | None] = model.__log_likelihood_loss__(
+            y=samples, mean_loss=True # True mean for init
+        )
+        
+        log_likelihood: Tensor = return_dict_model_loss["negative_log_likelihood_data"]
+        
+        for _ in sample_size:
+            
+            alpha_T_samples: Tensor = model.transformation.priors.prior_distr_alpha.sample((1,))
+            sigma_T_samples: Tensor = model.transformation.priors.prior_distr_sigma.sample((1,))    
+            
+            
+            print(_)
+            
+            
+        
+        # Transformation
+        
+        
+        """# Decorrelation
+        alpha_D_samples: Tensor = model.transformation.priors.prior_distr_alpha.sample((sample_size,))
+        sigma_D_samples: Tensor = model.transformation.priors.prior_distr_sigma.sample((sample_size,))
+        """
+        
+        #Sigma
+        log_prior_sigma: Tensor = bayesian_splines.log_gamma_prior(
+            a=model.transformation.priors.sigma_a,
+            b=model.transformation.priors.sigma_b,
+            x=sigma_T_samples
+            )
+        log_prior_alpha: Tensor = bayesian_splines.log_gamma_prior(
+            a=model.transformation.priors.sigma_a,
+            b=model.transformation.priors.sigma_b,
+            x=alpha_T_samples
+            )
+        
+        log_prior_gamma_given_tau: Tensor = bayesian_splines.log_gamma_given_tau(
+            K=model.transformation.priors.K_prior,
+            alpha_2= log_prior_alpha,
+            gamma=start_gamma
+            )
+        
+    return log_likelihood + log_prior_gamma_given_tau + log_prior_sigma + log_prior_alpha

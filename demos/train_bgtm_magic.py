@@ -25,19 +25,14 @@ if __name__ == "__main__":
 
     for num_decorr_layers in [3, 4, 5, 6, 7, 8, 9]:
         for group in ["h", "g"]:
-            print(
-                "Running for group:",
-                group,
-                " with num_decorr_layers:",
-                num_decorr_layers,
-            )
+            print("Running for group:",group," with num_decorr_layers:",num_decorr_layers)
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
             if group == "h":
-                variable_degree_list = [20, 35, 10, 10, 5, 30, 30, 40, 40, 10]
+                variable_degree_list: list[int]=[20, 35, 10, 10, 5, 30, 30, 40, 40, 10]
             elif group == "g":
-                variable_degree_list = [145, 150, 15, 5, 10, 30, 55, 60, 150, 10]
+                variable_degree_list: list[int]=[145, 150, 15, 5, 10, 30, 55, 60, 150, 10]
 
             y_train, y_validate, y_test = load_magic_data(
                 group=group,
@@ -68,53 +63,23 @@ if __name__ == "__main__":
                 spline_decorrelation="bspline",
                 transformation_spline_range=(-15, 15),
                 inference = 'bayesian',
-                device="cpu",
+                device="cpu"
             )
 
             model.to(device)
-
-            study = model.hyperparameter_tune_penalties(
-                train_dataloader=dataloader_train,
-                validate_dataloader=dataloader_validate,
-                penalty_decorrelation_ridge_param=None,
-                penalty_decorrelation_ridge_first_difference="sample",
-                penalty_decorrelation_ridge_second_difference="sample",
-                penalty_transformation_ridge_second_difference="sample",
-                penalty_lasso_conditional_independence=None,
-                adaptive_lasso_weights_matrix=False,
-                optimizer="LBFGS",
-                learning_rate=1,
-                iterations=2000,
-                patience=20,
-                min_delta=1e-7,
-                seperate_copula_training=False,
-                max_batches_per_iter=False,
-                pretrained_transformation_layer=True,
-                n_trials=40,
-                temp_folder=".",
-                study_name=None,
-            )
-
-            penalty_splines_params = torch.FloatTensor(
-                [
-                    0,  # study.best_params["penalty_decorrelation_ridge_param"],
-                    study.best_params["penalty_decorrelation_ridge_first_difference"],
-                    study.best_params["penalty_decorrelation_ridge_second_difference"],
-                    study.best_params["penalty_transformation_ridge_second_difference"],
-                ]
-            )
+            
             adaptive_lasso_weights_matrix = False
             penalty_lasso_conditional_independence = False
 
             # pretrain the marginal transformations
             _ = model.pretrain_transformation_layer(
-                dataloader_train,
+                train_dataloader=dataloader_train,
                 iterations=1000,
-                penalty_splines_params=penalty_splines_params,
+                #penalty_splines_params=penalty_splines_params,
             )
 
             # train the joint model
-            _ = model.train(
+            _: dict[str, torch.Tensor] = model.train(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
                 iterations=1000,

@@ -574,33 +574,34 @@ def get_cosine_schedule_with_warmup(optimizer: Adam,
     return LambdaLR(optimizer=optimizer, lr_lambda=lr_lambda, last_epoch=last_epoch)
 
 
-def train(
+def train_freq(
     model: "GTM",
     train_dataloader: DataLoader,
     validate_dataloader: DataLoader|bool=False,
     train_covariates:DataLoader|bool=False,
-    validate_covariates:DataLoader|bool=False,
-    penalty_params=torch.FloatTensor([0, 0, 0, 0]), 
+    validate_covariates: DataLoader|bool=False,
+    penalty_params=None,
     #param_ridge_pen_global, first_order_ridge_pen_global, second_order_ridge_pen_global, transformation_second_order_ridge_pen_global
-    lambda_penalty_params:Tensor|bool=False,
+    lambda_penalty_params: Tensor | bool=False,
     learning_rate: float=1.0,
-    iterations:int=2000,
-    verbose:bool=True,
-    patience:int=5,
-    min_delta:float=1e-7,
-    global_min_loss:float=-np.inf,
-    optimizer:Literal['LBFGS', 'Adam']="LBFGS",
-    lambda_penalty_mode:Literal['square']="square",
-    objective_type:Literal['negloglik']="negloglik",  # ema_decay=False,
+    iterations: int=2000,
+    verbose: bool=True,
+    patience: int=5,
+    min_delta: float=1e-7,
+    global_min_loss: float=-np.inf,
+    optimizer: Literal['LBFGS', 'Adam']="LBFGS",
+    lambda_penalty_mode: Literal['square']="square",
+    objective_type: Literal['negloglik']="negloglik",  # ema_decay=False,
     adaptive_lasso_weights_matrix: Tensor| bool=False,
-    max_batches_per_iter:bool|int|None=False,
+    max_batches_per_iter: bool|int|None=False,
 ) -> dict[str, Tensor]:    # max_batches_per_iter infos
     # then use random sampling data_loader
     # always 1 for validation data
 
+    penalty_params: Tensor = torch.FloatTensor([0, 0, 0, 0]) if penalty_params is None else penalty_params
     start: float = time.time()
 
-    opt:LBFGS = LBFGS(
+    opt: LBFGS = LBFGS(
         params=model.parameters(),
         lr=learning_rate,
         history_size=1,
@@ -644,7 +645,7 @@ def train(
     early_stopper: EarlyStopper = EarlyStopper(patience=patience, min_delta=min_delta, global_min_loss=global_min_loss)
 
     if optimizer == "Adam":
-        opt:Adam = Adam(params=model.parameters(), lr=learning_rate, weight_decay=0)
+        opt: Adam = Adam(params=model.parameters(), lr=learning_rate, weight_decay=0)
         scheduler: LambdaLR = get_cosine_schedule_with_warmup(
             optimizer=opt,
             num_warmup_steps=5,
@@ -692,7 +693,7 @@ def train(
                 opt.step()
                 scheduler.step()
                 current_loss: Tensor = loss
-                if verbose == True:
+                if verbose:
                     print("current_loss:", loss)
             elif optimizer == "LBFGS":
                 current_loss = opt.step(closure)
@@ -710,7 +711,7 @@ def train(
             y_validate = y_validate.to(model.device)
             model_val.load_state_dict(model.state_dict())
 
-            if objective_type is "negloglik":
+            if objective_type == "negloglik":
                 
                 with torch.no_grad():
                     return_dict_model_objective_val: dict[str, Tensor] = model_val.__training_objective__(
@@ -801,6 +802,42 @@ def train(
     return return_dict_model_training
 
 
+
+def train_bayes(
+    model: GTM,
+    train_dataloader: DataLoader,
+    validate_dataloader: DataLoader|bool,
+    hyperparameters: dict[float],
+    learning_rate,
+    iterations,
+    penalty,
+    verbose,
+    penalty_lasso_conditional_independence # makes objective not check lambda matrix
+    ):
+    
+    
+    if hyperparameters is None:
+        hyperparameters: dict[str, float] = model.DEFAULT_HYPERPARAMETER.get('transformation')
+    
+    
+    opt: Adam = Adam(params=model.parameters(), lr=learning_rate, weight_decay=0)
+    scheduler: LambdaLR = get_cosine_schedule_with_warmup(
+            optimizer=opt,
+            num_warmup_steps=5,
+            num_training_steps=iterations,
+            num_cycles=0.5,
+            last_epoch=-1,
+        )  ##3,4,5 warmup steps machen
+    
+    
+    return_dict_model_training = model.__bayesian_training_objective__(
+        samples=train_dataloader,
+        objective_type='negloglik'
+        
+    )
+    
+    return return_dict_model_training
+    
 def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars) -> Tensor:
 
     lambda_penalty_params = torch.tensor(lambda_penalty_params, dtype=torch.float32)

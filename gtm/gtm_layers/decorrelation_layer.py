@@ -11,6 +11,7 @@ from gtm.gtm_splines.bernstein_prediction_vectorized import (
     bernstein_prediction_vectorized, binomial_coeffs)
 from gtm.gtm_splines.bspline_prediction_vectorized import \
     bspline_prediction_vectorized
+from layer_utils import *
 
 
 class Decorrelation(nn.Module):
@@ -19,8 +20,7 @@ class Decorrelation(nn.Module):
         degree: int,
         number_variables: int,
         spline_range: List[List[float]],
-        #hyperparameters:dict,
-        #diff_order:int= 2,
+        hyperparameter: dict[str, float] | dict,
         spline: Literal['bspline'] | Literal['bernstein'] ="bspline",
         span_factor: Tensor =torch.tensor(0.1),
         span_restriction: Literal['reluler'] ="reluler",
@@ -73,7 +73,7 @@ class Decorrelation(nn.Module):
 
         self.spline_order: int = spline_order
 
-        self.params: torch.Tensor = self.compute_starting_values_bspline(start_value=0.001)
+        self.params: Tensor = self.compute_starting_values_bspline(start_value=0.001)
 
         self.num_covariates: int = int(number_covariates or 0)
 
@@ -91,43 +91,28 @@ class Decorrelation(nn.Module):
         self.degree_multi: bool = degree_multi
         
         if self.affine_layer:
-            self.params_multiplier: torch.Tensor = self.compute_starting_values_bspline(
-                start_value=1.0
-            )
+            self.params_multiplier: torch.Tensor = self.compute_starting_values_bspline(start_value=1.0)
         else:
             self.params_multiplier = False
             
         self.covariate_effect: str = covariate_effect
         
         if self.inference == 'bayesian':
-            self.hyperparameters = None
-            """## Hierarchical Bayes
-            # Error of Regression
-            self.alpha_sigma = torch.tensor([self.hyperparameters['alpha_sigma']])
-            self.beta_sigma = torch.tensor([self.hyperparameters['beta_sigma']])
-            # Random Walk Error
-            self.alpha_tau = torch.tensor([self.hyperparameters['alpha_tau']])
-            self.beta_tau= torch.tensor([self.hyperparameters['beta_tau']])
+            hyperparameter_transformation:dict[str, float] = hyperparameter.get('transformation')
             
+            priors: BayesianPriors = BayesianInitializer.build(model=self, hyperparameter=hyperparameter_transformation or {})
+            # Either store the whole dataclass…
+            self.priors: BayesianPriors = priors
             
-            ## Defining HyperParameters
-            self.tau2_prior = InverseGamma(self.alpha_tau,self.beta_tau)
-            self.sigma2_prior = InverseGamma(self.alpha_sigma,self.beta_sigma)
-
-            self.order_prior_diff: int = 2#diff_order # Standard 2 order random walk.... #TODO Generalize
-
-            self.K_prior = torch.tensor(
-                data=self._difference_penalty_matrix(
-                    order=self.order_prior_diff,
-                    n_params=self.params.shape[0]
-                    ),
-                dtype=torch.float32,
-                device=self.device
-                )
-            
-            self.prior_epsilon = torch.exp(-self.beta_sigma/self.sigma2_prior)/torch.pow(self.sigma2_prior, self.alpha_sigma + 1)
-            self.prior_rw = torch.exp(-self.beta_tau/self.tau2_prior)/torch.pow(self.tau2_prior, self.alpha_tau + 1)
-            self.tau_given_gamma = torch.log(torch.exp(-self.K_prior/(2*self.tau2_prior, 2))/self.tau2_prior) #TODO Generalize with RANK"""
+            """# …or copy the attributes you need on self:
+            self.sigma_a = priors.sigma_a
+            self.sigma_b = priors.sigma_b
+            self.alpha_a = priors.alpha_a
+            self.alpha_b = priors.alpha_b
+            self.order_prior_diff = priors.order_prior_diff
+            self.K_prior = priors.K_prior
+            self.prior_distr_sigma = priors.prior_distr_sigma
+            self.prior_distr_alpha = priors.prior_distr_alpha"""
             
         self.calc_method_bspline: str = calc_method_bspline
         
@@ -180,12 +165,6 @@ class Decorrelation(nn.Module):
         )
         
     ####### BAYESIAN DECOLAYER ###########
-        
-    def _difference_penalty_matrix(self, order, n_params):
-        D = np.eye(n_params)
-        for _ in range(order):
-            D = np.diff(D, n=1, axis=0)
-        return D.T @ D # K = DᵀD
     
     def log_prior(self):
         
@@ -210,9 +189,7 @@ class Decorrelation(nn.Module):
         )
         return {
             "output": input.clone(),  # .requires_grad_(True),
-            "log_d": torch.zeros(
-                input.size(), device=self.device
-            ),  # .requires_grad_(True),
+            "log_d": torch.zeros(input.size(), device=self.device),  # .requires_grad_(True),
             "transformation_second_order_ridge_pen_sum": 0,
             "second_order_ridge_pen_sum": 0,
             "first_order_ridge_pen_sum": 0,
@@ -222,7 +199,7 @@ class Decorrelation(nn.Module):
             # "der2_lambda_matrix": lambda_matrix_general.clone()
         }
 
-    def compute_starting_values_bspline(self, start_value=0.001):
+    def compute_starting_values_bspline(self, start_value=0.001) -> Tensor:
         p = torch.FloatTensor(
             np.repeat(
                 np.repeat(start_value, self.degree + self.spline_order - 1),
@@ -231,15 +208,16 @@ class Decorrelation(nn.Module):
         )
 
         if self.num_lambdas == 1:
-            params = nn.Parameter(p.unsqueeze(1))
+            return nn.Parameter(p.unsqueeze(1))
+        
         else:
-            params = nn.Parameter(
+            
+            return nn.Parameter(
                 torch.reshape(
                     p, (self.degree + self.spline_order - 1, int(self.num_lambdas))
                 )
             )
 
-        return params
 
     def bspline_prediction_method(
         self,
@@ -511,16 +489,12 @@ class Decorrelation(nn.Module):
                             multi=True,
                         )
 
-                        return_dict[
-                            "second_order_ridge_pen_sum"
-                        ] += second_order_ridge_pen_current
-                        return_dict[
-                            "first_order_ridge_pen_sum"
-                        ] += first_order_ridge_pen_current
-                        return_dict["param_ridge_pen_sum"] += param_ridge_pen_current
+                        return_dict["second_order_ridge_pen_sum"] = return_dict["second_order_ridge_pen_sum"] + second_order_ridge_pen_current
+                        return_dict["first_order_ridge_pen_sum"] = return_dict["first_order_ridge_pen_sum"] + first_order_ridge_pen_current
+                        return_dict["param_ridge_pen_sum"] = return_dict["param_ridge_pen_sum"] + param_ridge_pen_current
 
-                    if return_scores_hessian == True:
-                        if self.params_multiplier is not False:
+                    if return_scores_hessian:
+                        if self.params_multiplier:
                             warnings.warn(
                                 "Warning: return_scores_hessian not implemented for multiplicative effect. The der_lambda_matrix and der2_lambda_matrix will be wrong."
                             )
@@ -550,10 +524,9 @@ class Decorrelation(nn.Module):
                         der_lambda_value = 0
                         der2_lambda_value = 0
 
-                    if self.params_multiplier is not False:
-                        lambda_value_multiplier_total = (
-                            lambda_value_multiplier_total * lambda_value_multiplier
-                        )
+                    if self.params_multiplier:
+                        lambda_value_multiplier_total = lambda_value_multiplier_total * lambda_value_multiplier
+                    
                     lambda_value_total += lambda_value * input[:, covar_num]
 
                     params_index += 1
@@ -566,18 +539,11 @@ class Decorrelation(nn.Module):
                     # return_dict["der2_lambda_matrix"][:, var_num, covar_num] = der_lambda_value + der2_lambda_value * input[:, covar_num] + der_lambda_value
 
                 # filling in the multiplicative effect into the lambda matrix
-                return_dict["lambda_matrix"][
-                    :, var_num, var_num
-                ] = lambda_value_multiplier_total
+                return_dict["lambda_matrix"][:, var_num, var_num] = lambda_value_multiplier_total
 
-                return_dict["output"][:, var_num] = (
-                    lambda_value_multiplier_total * input[:, var_num]
-                    + lambda_value_total
-                )
-
-                return_dict["log_d"][:, var_num] += torch.log(
-                    torch.abs(lambda_value_multiplier_total)
-                )
+                return_dict["output"][:, var_num] = lambda_value_multiplier_total * input[:, var_num] + lambda_value_total
+                
+                return_dict["log_d"][:, var_num] += torch.log(torch.abs(lambda_value_multiplier_total))
 
         return return_dict
 
@@ -591,9 +557,11 @@ class Decorrelation(nn.Module):
         return_penalties=False,
         return_scores_hessian=False,
     ):
+        
+        use_loop : bool = inverse or self.number_variables == 2 or not self.vmap
 
-        if inverse == True or self.number_variables == 2 or self.vmap == False:
-            return_dict = self.for_loop_forward(
+        if use_loop:
+            return self.for_loop_forward(
                 input,
                 log_d,
                 covariate,
@@ -602,12 +570,11 @@ class Decorrelation(nn.Module):
                 return_scores_hessian=return_scores_hessian,
             )
         # elif self.vmap == True and self.number_variables > 2:
+        
         else:
-            return_dict = self.vmap_forward(
+            return self.vmap_forward(
                 input, log_d, covariate, return_penalties=return_penalties
             )
-
-        return return_dict
 
     def __repr__(self):
         return f"Decorrelation(degree={self.degree}, number_variables={self.number_variables}, spline_range={self.spline_range}, spline={self.spline}, span_factor={self.span_factor}, span_restriction={self.span_restriction}, number_covariates={self.number_covariates}, vectorised_mapping={self.vmap})"
