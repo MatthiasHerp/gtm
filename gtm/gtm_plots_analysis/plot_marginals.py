@@ -1,5 +1,3 @@
-import warnings
-from itertools import combinations
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -56,7 +54,7 @@ def plot_marginals(
             )
         else:
             sns.histplot(x=data[:, y_num], ax=axs[row, col])
-        if names == False:
+        if not names:
             axs[row, col].set_xlabel("y_" + str(y_num))
         else:
             axs[row, col].set_xlabel(names[y_num])
@@ -66,7 +64,7 @@ def plot_marginals(
 
     if storage:
         plt.savefig(storage, bbox_inches="tight")
-    if show_plot == True:
+    if show_plot:
         plt.show()
     else:
         plt.close(fig)

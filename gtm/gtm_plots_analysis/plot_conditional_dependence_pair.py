@@ -122,7 +122,7 @@ def plot_conditional_dependence_pair(
     if storage:
         plt.savefig(storage, bbox_inches="tight")
 
-    if show_plot == True:
+    if show_plot:
         plt.show()
     else:
         plt.close(fig)

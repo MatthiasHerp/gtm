@@ -48,7 +48,7 @@ def plot_graph_conditional_independencies_with_pairplots(
 
     # Get edge attributes
     widths = nx.get_edge_attributes(G, "weight")
-    edge_labels = {edge: round(weight, 2) for edge, weight in widths.items()}
+    {edge: round(weight, 2) for edge, weight in widths.items()}
 
     # Initialize figure and layout
     fig, ax = plt.subplots(figsize=(12, 8))
@@ -161,7 +161,7 @@ def plot_graph_conditional_independencies_with_pairplots(
     if storage:
         plt.savefig(storage, bbox_inches="tight")
 
-    if show_plot == True:
+    if show_plot:
         plt.show()
     else:
         plt.close(fig)

@@ -3,7 +3,6 @@ from itertools import combinations
 
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import torch
 
 
@@ -114,15 +113,15 @@ def plot_metric_scatter(
                     axs[row, col].set_yticks([])  # Remove y-axis ticks
 
                 if strength_value is not False:
-                    if after_marginal_transformation == False:
+                    if not after_marginal_transformation:
                         axs[row, col].set_title(
-                            f"({a+1}) $Y_{i}$,$Y_{j}$ "
+                            f"({a + 1}) $Y_{i}$,$Y_{j}$ "
                             + strength_name.upper()
                             + ": "
                             + str(np.round(strength_value[a], 3)),
                             fontsize=sub_title_fontsize,
                         )
-                    elif after_marginal_transformation == True:
+                    elif after_marginal_transformation:
                         axs[row, col].set_title(
                             r"(%d) $\tilde{Z}_{%d}, \tilde{Z}_{%d}$ " % (a + 1, i, j)
                             + strength_name.upper()
@@ -134,7 +133,7 @@ def plot_metric_scatter(
                 a += 1
 
         # Add a colorbar to the last plot
-        if show_colorbar == True:
+        if show_colorbar:
             cb = fig.colorbar(hb, ax=axs, orientation="vertical")
             cb.set_label(label=label_metric, fontsize=sub_title_fontsize)
 
@@ -172,14 +171,14 @@ def plot_metric_scatter(
             ax.set_ylim(y_lim)
 
         if strength_value is not False:
-            if after_marginal_transformation == False:
+            if not after_marginal_transformation:
                 ax.set_title(
                     f"($Y_{0}$,$Y_{1}$)   "
                     + strength_name
                     + str(np.round(strength_value[0], 3)),
                     fontsize=sub_title_fontsize,
                 )
-            elif after_marginal_transformation == True:
+            elif after_marginal_transformation:
                 ax.set_title(
                     r"($\tilde{Z}_{0}, \tilde{Z}_{1}$)"
                     + strength_name
@@ -188,7 +187,7 @@ def plot_metric_scatter(
                 )
 
         # Add a colorbar
-        if show_colorbar == True:
+        if show_colorbar:
             cb = fig.colorbar(hb, ax=ax, orientation="vertical")
             cb.set_label(label=label_metric, fontsize=sub_title_fontsize)
 
@@ -197,7 +196,7 @@ def plot_metric_scatter(
 
     if storage:
         plt.savefig(storage, bbox_inches="tight")
-    if show_plot == True:
+    if show_plot:
         plt.show()
     else:
         plt.close(fig)

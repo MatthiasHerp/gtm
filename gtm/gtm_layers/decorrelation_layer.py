@@ -1,14 +1,16 @@
 import warnings
 
 import numpy as np
+
 # from functorch import vmap  # Requires PyTorch 1.10+
 import torch
 from torch import nn
 
 from gtm.gtm_splines.bernstein_prediction_vectorized import (
-    bernstein_prediction_vectorized, binomial_coeffs)
-from gtm.gtm_splines.bspline_prediction_vectorized import \
-    bspline_prediction_vectorized
+    bernstein_prediction_vectorized,
+    binomial_coeffs,
+)
+from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
 
 
 class Decorrelation(nn.Module):
@@ -188,7 +190,6 @@ class Decorrelation(nn.Module):
         monotonically_increasing=False,
         multi=False,
     ):
-
         # return bspline_prediction(
         #                    self.params[:, params_index] if multi==False else self.params_multiplier[:, params_index],
         #                    input[:, covar_num],
@@ -208,7 +209,7 @@ class Decorrelation(nn.Module):
         return bspline_prediction_vectorized(
             (
                 self.params[:, params_index].unsqueeze(1)
-                if multi == False
+                if not multi
                 else self.params_multiplier[:, params_index].unsqueeze(1)
             ),
             input[:, covar_num].unsqueeze(1),
@@ -240,11 +241,10 @@ class Decorrelation(nn.Module):
         monotonically_increasing=False,
         multi=False,
     ):
-
         return bernstein_prediction_vectorized(
             params_a=(
                 self.params[:, params_index].unsqueeze(1)
-                if multi == False
+                if not multi
                 else self.params_multiplier[:, params_index].unsqueeze(1)
             ),
             input_a=input[:, covar_num].unsqueeze(1),
@@ -263,7 +263,6 @@ class Decorrelation(nn.Module):
         )  # self.params_covariate[:, covar_num])
 
     def vmap_forward(self, input, log_d, covariate, return_penalties=True):
-
         return_dict = self.create_return_dict_decorrelation(input)
 
         self.var_num_list = self.var_num_list.to(input.device)
@@ -341,22 +340,18 @@ class Decorrelation(nn.Module):
         return_penalties=True,
         return_scores_hessian=False,
     ):
-
         return_dict = self.create_return_dict_decorrelation(input)
 
         params_index = 0
 
         if inverse:
-
             for var_num in range(self.number_variables):
-
                 # loop over all before variables
                 lambda_value_multiplier_total = torch.ones(
                     input.size(0), device=input.device
                 )
                 lambda_value_total = torch.zeros(input.size(0), device=input.device)
                 for covar_num in range(var_num):
-
                     lambda_value = self.spline_prediction(
                         input,
                         params_index,
@@ -399,14 +394,12 @@ class Decorrelation(nn.Module):
             return_dict["output"] = input
         else:
             for var_num in range(self.number_variables):
-
                 # loop over all before variables
                 lambda_value_multiplier_total = torch.ones(
                     input.size(0), device=input.device
                 )
                 lambda_value_total = torch.zeros(input.size(0), device=input.device)
                 for covar_num in range(var_num):
-
                     (
                         lambda_value,
                         second_order_ridge_pen_current,
@@ -422,12 +415,12 @@ class Decorrelation(nn.Module):
                         monotonically_increasing=False,
                     )
 
-                    return_dict[
-                        "second_order_ridge_pen_sum"
-                    ] += second_order_ridge_pen_current
-                    return_dict[
-                        "first_order_ridge_pen_sum"
-                    ] += first_order_ridge_pen_current
+                    return_dict["second_order_ridge_pen_sum"] += (
+                        second_order_ridge_pen_current
+                    )
+                    return_dict["first_order_ridge_pen_sum"] += (
+                        first_order_ridge_pen_current
+                    )
                     return_dict["param_ridge_pen_sum"] += param_ridge_pen_current
 
                     if self.params_multiplier is not False:
@@ -447,21 +440,21 @@ class Decorrelation(nn.Module):
                             multi=True,
                         )
 
-                        return_dict[
-                            "second_order_ridge_pen_sum"
-                        ] += second_order_ridge_pen_current
-                        return_dict[
-                            "first_order_ridge_pen_sum"
-                        ] += first_order_ridge_pen_current
+                        return_dict["second_order_ridge_pen_sum"] += (
+                            second_order_ridge_pen_current
+                        )
+                        return_dict["first_order_ridge_pen_sum"] += (
+                            first_order_ridge_pen_current
+                        )
                         return_dict["param_ridge_pen_sum"] += param_ridge_pen_current
 
-                    if return_scores_hessian == True:
+                    if return_scores_hessian:
                         if self.params_multiplier is not False:
                             warnings.warn(
                                 "Warning: return_scores_hessian not implemented for multiplicative effect. The der_lambda_matrix and der2_lambda_matrix will be wrong."
                             )
 
-                        der_lambda_value = self.spline_prediction(
+                        self.spline_prediction(
                             input,
                             params_index,
                             covariate,
@@ -472,7 +465,7 @@ class Decorrelation(nn.Module):
                             multi=False,
                         )
 
-                        der2_lambda_value = self.spline_prediction(
+                        self.spline_prediction(
                             input,
                             params_index,
                             covariate,
@@ -483,8 +476,7 @@ class Decorrelation(nn.Module):
                             multi=False,
                         )
                     else:
-                        der_lambda_value = 0
-                        der2_lambda_value = 0
+                        pass
 
                     if self.params_multiplier is not False:
                         lambda_value_multiplier_total = (
@@ -502,9 +494,9 @@ class Decorrelation(nn.Module):
                     # return_dict["der2_lambda_matrix"][:, var_num, covar_num] = der_lambda_value + der2_lambda_value * input[:, covar_num] + der_lambda_value
 
                 # filling in the multiplicative effect into the lambda matrix
-                return_dict["lambda_matrix"][
-                    :, var_num, var_num
-                ] = lambda_value_multiplier_total
+                return_dict["lambda_matrix"][:, var_num, var_num] = (
+                    lambda_value_multiplier_total
+                )
 
                 return_dict["output"][:, var_num] = (
                     lambda_value_multiplier_total * input[:, var_num]
@@ -527,8 +519,7 @@ class Decorrelation(nn.Module):
         return_penalties=False,
         return_scores_hessian=False,
     ):
-
-        if inverse == True or self.number_variables == 2 or self.vmap == False:
+        if inverse or self.number_variables == 2 or not self.vmap:
             return_dict = self.for_loop_forward(
                 input,
                 log_d,

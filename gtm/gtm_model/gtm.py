@@ -1,4 +1,3 @@
-import itertools
 from typing import List, Literal, Tuple  # Still needed
 
 import optuna
@@ -9,31 +8,30 @@ from torch import nn
 
 from gtm.gtm_layers.decorrelation_layer import Decorrelation
 from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
+
 # from gtm.layers.flip import Flip
 from gtm.gtm_layers.transformation_layer import *
 from gtm.gtm_plots_analysis.compute_conditional_independence_kld import *
-from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import \
-    plot_conditional_dependence_pair
-from gtm.gtm_plots_analysis.plot_conditional_independence_graph import \
-    plot_graph_conditional_independencies
-from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import \
-    plot_graph_conditional_independencies_with_pairplots
+from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import (
+    plot_conditional_dependence_pair,
+)
+from gtm.gtm_plots_analysis.plot_conditional_independence_graph import (
+    plot_graph_conditional_independencies,
+)
+from gtm.gtm_plots_analysis.plot_conditional_independence_graphs_pairplots import (
+    plot_graph_conditional_independencies_with_pairplots,
+)
 from gtm.gtm_plots_analysis.plot_densities import plot_densities
 from gtm.gtm_plots_analysis.plot_marginals import plot_marginals
-from gtm.gtm_plots_analysis.plot_metric_hist import plot_metric_hist
 from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
 from gtm.gtm_plots_analysis.plot_splines import plot_splines
-from gtm.gtm_training.objective_functions import (log_likelihood,
-                                                  training_objective)
+from gtm.gtm_training.objective_functions import log_likelihood, training_objective
 from gtm.gtm_training.training_helpers import (
-    if_float_create_lambda_penalisation_matrix, train)
+    if_float_create_lambda_penalisation_matrix,
+    train,
+)
 
 # from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
-
-
-
-
-
 
 
 class GTM(nn.Module):
@@ -315,7 +313,7 @@ class GTM(nn.Module):
             # if subset dimension is set then only use this dimension
             y = y[:, self.subset_dimension].unsqueeze(1)
 
-        if self.initial_log_transform == True:
+        if self.initial_log_transform:
             y = y + 0.01  # log(0) does not work
             log_d = -torch.log(y)  # = log(1/y)
             y = torch.log(y)
@@ -324,7 +322,6 @@ class GTM(nn.Module):
 
         # Training or evaluation
         if train or evaluate:
-
             if train:
                 if self.num_trans_layers > 0:
                     # new input false to not recompute basis each iteration
@@ -367,11 +364,10 @@ class GTM(nn.Module):
                         y.size(), device=self.device
                     ).float()
 
-            if self.transform_only == True:
+            if self.transform_only:
                 return return_dict_nf_mctm
 
-            if self.num_trans_layers > 0 and return_scores_hessian == True:
-
+            if self.num_trans_layers > 0 and return_scores_hessian:
                 return_dict_nf_mctm["der_lambda_matrix_global"] = (
                     return_dict_transformation["scores"]
                 )  # .unsqueeze(2)
@@ -382,7 +378,6 @@ class GTM(nn.Module):
 
             if self.number_decorrelation_layers > 0:
                 for i in range(self.number_decorrelation_layers):
-
                     if ((i + 1) % 2) == 0:
                         # even: 2,4, 6, ...
                         return_dict_nf_mctm["output"] = (
@@ -404,32 +399,32 @@ class GTM(nn.Module):
                     return_dict_nf_mctm["log_d"] += return_dict_decorrelation[
                         "log_d"
                     ]  # required if the layers are multiplicative
-                    return_dict_nf_mctm[
-                        "second_order_ridge_pen_global"
-                    ] += return_dict_decorrelation["second_order_ridge_pen_sum"]
-                    return_dict_nf_mctm[
-                        "first_order_ridge_pen_global"
-                    ] += return_dict_decorrelation["first_order_ridge_pen_sum"]
-                    return_dict_nf_mctm[
-                        "param_ridge_pen_global"
-                    ] += return_dict_decorrelation["param_ridge_pen_sum"]
+                    return_dict_nf_mctm["second_order_ridge_pen_global"] += (
+                        return_dict_decorrelation["second_order_ridge_pen_sum"]
+                    )
+                    return_dict_nf_mctm["first_order_ridge_pen_global"] += (
+                        return_dict_decorrelation["first_order_ridge_pen_sum"]
+                    )
+                    return_dict_nf_mctm["param_ridge_pen_global"] += (
+                        return_dict_decorrelation["param_ridge_pen_sum"]
+                    )
 
                     if ((i + 1) % 2) == 0:
                         # even
-                        if return_lambda_matrix == True:
+                        if return_lambda_matrix:
                             lambda_matrix_upper = (
                                 self.flip_matrix
                                 @ return_dict_decorrelation["lambda_matrix"]
                                 @ self.flip_matrix
                             )
 
-                        if return_lambda_matrix == True:
+                        if return_lambda_matrix:
                             return_dict_nf_mctm["lambda_matrix_global"] = (
                                 lambda_matrix_upper
                                 @ return_dict_nf_mctm["lambda_matrix_global"]
                             )
 
-                        if return_scores_hessian == True:
+                        if return_scores_hessian:
                             der_lambda_matrix_upper = (
                                 self.flip_matrix
                                 @ return_dict_decorrelation["der_lambda_matrix"]
@@ -468,13 +463,13 @@ class GTM(nn.Module):
 
                     else:
                         # odd
-                        if return_lambda_matrix == True:
+                        if return_lambda_matrix:
                             return_dict_nf_mctm["lambda_matrix_global"] = (
                                 return_dict_decorrelation["lambda_matrix"]
                                 @ return_dict_nf_mctm["lambda_matrix_global"]
                             )
 
-                        if return_scores_hessian == True:
+                        if return_scores_hessian:
                             return_dict_nf_mctm["der_lambda_matrix_global"] = torch.bmm(
                                 return_dict_decorrelation["der_lambda_matrix"],
                                 return_dict_nf_mctm["der_lambda_matrix_global"],
@@ -509,7 +504,7 @@ class GTM(nn.Module):
                     # else:
                     #    # odd
 
-                if return_scores_hessian == True:
+                if return_scores_hessian:
                     return_dict_nf_mctm["scores"] = (
                         -1
                         * return_dict_nf_mctm["output"]
@@ -601,7 +596,6 @@ class GTM(nn.Module):
         lambda_penalty_mode="square",
         objective_type="negloglik",
     ):
-
         return training_objective(
             self,
             samples=samples,
@@ -711,7 +705,7 @@ class GTM(nn.Module):
                 self.device
             )
 
-        if seperate_copula_training == True:
+        if seperate_copula_training:
             self.transformation.params.requires_grad = False
 
         if self.spline_decorrelation == "bernstein":
@@ -744,7 +738,7 @@ class GTM(nn.Module):
             max_batches_per_iter=max_batches_per_iter,
         )
 
-        if seperate_copula_training == True:
+        if seperate_copula_training:
             self.transformation.params.requires_grad = True
 
         return return_dict_model_training
@@ -888,7 +882,6 @@ class GTM(nn.Module):
                     "Starting run for data dim ", dimension, " with degrees of ", degree
                 )
                 try:
-
                     tm_model = GTM(
                         number_variables=1,
                         transformation_spline_range=[
@@ -905,7 +898,7 @@ class GTM(nn.Module):
                     #                                        self.transformation_spline_range[1][dimension]])
                     tm_model.subset_dimension = dimension
 
-                    train_dict = tm_model.train(
+                    tm_model.train(
                         train_dataloader=train_dataloader,
                         validate_dataloader=train_dataloader,
                         iterations=iterations,
@@ -934,7 +927,6 @@ class GTM(nn.Module):
                     # plt.show()
                     # plt.hist(z_tilde,bins=100)
                     if pv >= 0.05:
-
                         print(
                             "pvalue is ",
                             pv,
@@ -994,9 +986,7 @@ class GTM(nn.Module):
 
     def compute_pseudo_conditional_correlation_matrix(
         self, y: torch.Tensor
-    ) -> (
-        torch.Tensor
-    ):  # , covariate=False): #TODO: is pseudo conditional indepednence matrix! standardisted p matrix
+    ) -> torch.Tensor:  # , covariate=False): #TODO: is pseudo conditional indepednence matrix! standardisted p matrix
         """
         Computes the pseudo conditional correlation matrix from the data `y` based on the lambda matrices of the full GTM model.
         This is essentially the standardised precision matrix, that way off diagonal elements represent the pseudo conditional correlations between the different dimensions.
@@ -1062,7 +1052,6 @@ class GTM(nn.Module):
             self.approximate_transformation_inverse()
 
         with torch.no_grad():
-
             z = (
                 torch.distributions.Normal(0, 1)
                 .sample((n_samples, self.number_variables))
@@ -1071,7 +1060,6 @@ class GTM(nn.Module):
 
             if self.number_decorrelation_layers > 0:
                 for i in range(self.number_decorrelation_layers - 1, -1, -1):
-
                     if ((i + 1) % 2) == 0:
                         # even
                         z = (self.flip_matrix @ z.T).T
@@ -1101,14 +1089,14 @@ class GTM(nn.Module):
             else:
                 y = z
 
-            if self.initial_log_transform == True:
+            if self.initial_log_transform:
                 y = torch.exp(y)
                 y = y - 0.01
 
             return y
 
     def after_transformation(self, y, covariate=False):
-        if self.initial_log_transform == True:
+        if self.initial_log_transform:
             y = y + 0.01
             y = torch.log(y)
         else:
@@ -1201,7 +1189,6 @@ class GTM(nn.Module):
         pretrained_transformation_layer=False,
         cross_validation_folds=False,
     ):
-
         import copy
 
         gtm_tuning = copy.deepcopy(self)
@@ -1215,8 +1202,7 @@ class GTM(nn.Module):
         # If cross_validation_folds is False then only in the first trial we do a pretrain and then store the transformation layer pretrained model
         # In each subsequent trial we load the pretrained model and directly do the joint training
         # This only works if we pretrain without a penalty on the transformation layer
-        if pretrained_transformation_layer == True:
-
+        if pretrained_transformation_layer:
             if hasattr(
                 self, "pretrained_transformation_layer_model_state_dict"
             ):  # pretrained_transformation_layer_model
@@ -1240,7 +1226,7 @@ class GTM(nn.Module):
                     max_batches_per_iter=max_batches_per_iter,
                 )
 
-                if cross_validation_folds == False:
+                if not cross_validation_folds:
                     # self.pretrained_transformation_layer_model = copy.deepcopy(gtm_tuning)
                     self.pretrained_transformation_layer_model_state_dict = (
                         gtm_tuning.state_dict()
@@ -1429,9 +1415,9 @@ class GTM(nn.Module):
         # hyperparameter_combinations_list = list(itertools.product(*list_of_lists))
 
         if train_covariates is False:
-            number_covariates = 0
+            pass
         else:
-            number_covariates = 1
+            pass
 
         if tuning_mode == "optuna":
             # From Old version where one could pass lists to do tuning using list of hyperparameters passed
@@ -1442,8 +1428,7 @@ class GTM(nn.Module):
                 train_dataloader=train_dataloader,
                 validate_dataloader=validate_dataloader,
             ):
-
-                if penalty_decorrelation_ridge_param == None:
+                if penalty_decorrelation_ridge_param is None:
                     penalty_decorrelation_ridge_param_opt = 0
                 elif isinstance(penalty_decorrelation_ridge_param, float) or isinstance(
                     penalty_decorrelation_ridge_param, int
@@ -1460,7 +1445,7 @@ class GTM(nn.Module):
                         'penalty_decorrelation_ridge_param not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_decorrelation_ridge_first_difference == None:
+                if penalty_decorrelation_ridge_first_difference is None:
                     penalty_decorrelation_ridge_first_difference_opt = 0
                 elif isinstance(
                     penalty_decorrelation_ridge_first_difference, float
@@ -1482,7 +1467,7 @@ class GTM(nn.Module):
                         'penalty_decorrelation_ridge_first_difference not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_decorrelation_ridge_second_difference == None:
+                if penalty_decorrelation_ridge_second_difference is None:
                     penalty_decorrelation_ridge_second_difference_opt = 0
                 elif isinstance(
                     penalty_decorrelation_ridge_second_difference, float
@@ -1504,7 +1489,7 @@ class GTM(nn.Module):
                         'penalty_decorrelation_ridge_second_difference not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_transformation_ridge_second_difference == None:
+                if penalty_transformation_ridge_second_difference is None:
                     penalty_transformation_ridge_second_difference_opt = 0
                 elif isinstance(
                     penalty_transformation_ridge_second_difference, float
@@ -1526,7 +1511,7 @@ class GTM(nn.Module):
                         'penalty_transformation_ridge_second_difference not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_lasso_conditional_independence == None:
+                if penalty_lasso_conditional_independence is None:
                     penalty_lasso_conditional_independence_opt = 0
                 elif isinstance(
                     penalty_lasso_conditional_independence, float
@@ -1564,7 +1549,7 @@ class GTM(nn.Module):
                     ]
                 )
 
-                if cross_validation_folds == False:
+                if not cross_validation_folds:
                     # define model, train the model with tuning params and return the objective value on the given validation set
                     target = self.__return_objective_for_hyperparameters__(
                         train_dataloader,
@@ -2003,7 +1988,7 @@ class GTM(nn.Module):
             threshholding_metric_values = False
             strength_name = ""
 
-        if after_marginal_transformation == True:
+        if after_marginal_transformation:
             data_plotting = self.after_transformation(data).detach()
         else:
             data_plotting = data
@@ -2145,7 +2130,6 @@ class GTM(nn.Module):
             ci_matrix[int(row["var_row"]), int(row["var_col"])] = row[dependence_metric]
 
         if pair_plots is False:
-
             plot_graph_conditional_independencies(
                 ci_matrix,
                 gene_names=names,
@@ -2159,8 +2143,7 @@ class GTM(nn.Module):
             )
 
         elif pair_plots is True:
-
-            if after_marginal_transformation == True:
+            if after_marginal_transformation:
                 data_plotting = self.after_transformation(data).detach().numpy()
             else:
                 data_plotting = data
