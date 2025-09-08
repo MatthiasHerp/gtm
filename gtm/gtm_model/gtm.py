@@ -25,8 +25,8 @@ from gtm.gtm_plots_analysis.plot_marginals import plot_marginals
 from gtm.gtm_plots_analysis.plot_metric_hist import plot_metric_hist
 from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
 from gtm.gtm_plots_analysis.plot_splines import plot_splines
-from gtm.gtm_training.objective_functions import (log_likelihood, training_objective)
-from gtm.gtm_training.training_helpers import (if_float_create_lambda_penalisation_matrix, train)
+from gtm.gtm_training.objective_functions import (log_likelihood, training_objective, bayesian_training_objective)
+from gtm.gtm_training.training_helpers import (if_float_create_lambda_penalisation_matrix, train_freq, train_bayes)
 
 # from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
 
@@ -88,6 +88,7 @@ class GTM(nn.Module):
         spline_decorrelation: Literal["bspline", "bernstein"] = "bspline",
         transformation_spline_range: Tuple[float, float] = (-15, 15),
         inference: Literal['frequentist', 'bayesian'] = 'frequentist',
+        hyperparameter: dict[str, dict[str, float]] | None = None,
         device: str | torch.device = "cpu",
     ) -> None:
         """
@@ -133,8 +134,7 @@ class GTM(nn.Module):
         decorrelation_spline_range: List[List[float]] = [[-15], [15]]
         span_factor: torch.Tensor = torch.tensor(0.1)
         span_restriction : Literal['reluler'] = "reluler"
-        number_covariates: bool | int = False  # False means no covariates, or its count
-        #ALLWAYS FALSE FOR THIS VERSION, Till the number of cov is finally implemented.
+        number_covariates: bool | int = False  # False means no covariates, or its count #ALLWAYS FALSE FOR THIS VERSION, Till the number of cov is finally implemented.
         initial_log_transform: bool = False
         covariate_effect: str = "multiplicativ"
         calc_method_bspline: Literal['deBoor'] = "deBoor"
@@ -190,13 +190,32 @@ class GTM(nn.Module):
         self.affine_decorr_layer: Literal[False] = affine_decorr_layer
 
         self.degree_multi: Literal[False] = degree_multi
+        
+        if self.inference == 'bayesian' and hyperparameter is None:
+                self.hyperparameter: dict[str, dict[str, float]] = {
+                    'transformation': {
+                        'sigma_a':0.0,
+                        'sigma_b':0.0001,
+                        'tau_a': 0.0,
+                        'tau_b': 0.0001
+                        },
+                    'decorrelation': {
+                        'sigma_a':0.0,
+                        'sigma_b':0.0001,
+                        'tau_a': 0.0,
+                        'tau_b': 0.0001
+                        }
+                    }
+        else:
+            self.hyperparameter = hyperparameter if self.inference == 'bayesian' else {}
+
 
         if self.num_trans_layers > 0:
             self.transformation = Transformation(
                 degree=self.degree_transformations,
                 number_variables=self.number_variables,
                 spline_range=self.transformation_spline_range,
-                #hyperparameters=self.hyperparameter_transformation, #
+                hyperparameters= self.hyperparameter.get('transformation'),
                 #ridge_eps=bayesian_setup.get('setup').get('ridge_eps').get('transformation'), #
                 #diff_order=bayesian_setup.get('setup').get('diff_order').get('transformation'), #
                 #init_value=bayesian_setup.get('setup').get('init_values').get('transformation').get('tau_init'), #
@@ -207,7 +226,7 @@ class GTM(nn.Module):
                 calc_method_bspline=self.calc_method_bspline,
                 span_restriction=self.span_restriction,
                 spline_order=self.spline_order,
-                inference=self.inference, #
+                inference=self.inference, 
                 device=device,
             )
 
@@ -226,8 +245,7 @@ class GTM(nn.Module):
                         degree=self.degree_decorrelation,
                         number_variables=self.number_variables,
                         spline_range=self.decorrelation_spline_range,
-                        #hyperparamter=self.hyperparameter_decorrelation,
-                        #diff_order= bayesian_setup.get('setup').get('diff_order').get('decorrelation'),
+                        hyperparamter=self.hyperparameter.get('decorrelation'),
                         span_factor=self.span_factor,
                         span_restriction=self.span_restriction,
                         spline=self.spline_decorrelation,
@@ -270,24 +288,25 @@ class GTM(nn.Module):
     def __create_return_dict_nf_mctm__(self, input: Tensor) -> dict[str, Tensor|float|None]:
         
         output: Tensor = input.clone() if input.dim() > 1 else input.clone().unsqueeze(1)
-        log_d: Tensor = torch.zeros(
+        log_d_init: Tensor = torch.zeros(
             input.size() if input.dim() > 1 else input.unsqueeze(1).size()
             ).to(self.device)
+        
+        
         lambda_matrix_global: Tensor = torch.eye(self.number_variables).to(self.device)
-        
-        
         return {
-            "output": output,
-            "log_d": log_d,
-            "transformation_second_order_ridge_pen_global": 0.0,
-            "second_order_ridge_pen_global": 0.0,
-            "first_order_ridge_pen_global": 0.0,
-            "param_ridge_pen_global": 0.0,
-            "lambda_matrix_global": lambda_matrix_global,
-            "der_lambda_matrix_global": None,
-            "der2_lambda_matrix_global": None,
+                "output": output,
+                "log_d": log_d_init,
+                "transformation_second_order_ridge_pen_global": 0.0,
+                "second_order_ridge_pen_global": 0.0,
+                "first_order_ridge_pen_global": 0.0,
+                "param_ridge_pen_global": 0.0,
+                "lambda_matrix_global": lambda_matrix_global,
+                "der_lambda_matrix_global": None,
+                "der2_lambda_matrix_global": None
         }
-
+        
+        
     def forward(
         self,
         y: Tensor,
@@ -338,7 +357,7 @@ class GTM(nn.Module):
             # if subset dimension is set then only use this dimension
             y = y[:, self.subset_dimension].unsqueeze(1)
 
-        if self.initial_log_transform == True:
+        if self.initial_log_transform:
             y = y + 0.01  # log(0) does not work
             log_d: Tensor = -torch.log(y)  # = log(1/y)
             y = torch.log(y)
@@ -559,7 +578,7 @@ class GTM(nn.Module):
     ) -> dict[str, Tensor]:
 
         return training_objective(
-            self,
+            model=self,
             samples=samples,
             penalty_params=penalty_params,
             train_covariates=train_covariates,
@@ -569,6 +588,23 @@ class GTM(nn.Module):
             lambda_penalty_mode=lambda_penalty_mode,
             objective_type=objective_type,
         )
+        
+    def __bayesian_training_objective__(
+        self, 
+        samples: Tensor,
+        hyperparameters: Tensor,
+        objective_type: Literal['negloglik'] = "negloglik"
+    ):
+        
+        
+        
+        return bayesian_training_objective(
+            model = self,
+            samples= samples,
+            objective_type= objective_type
+        )
+        
+        
 
     def train(
         self,
@@ -587,6 +623,7 @@ class GTM(nn.Module):
         seperate_copula_training: bool = False,
         max_batches_per_iter: int | bool = False,
     ) -> dict[str, Tensor]:
+        
         """
         Trains the GTM iteratively using gradient-based optimization.
 
@@ -680,7 +717,7 @@ class GTM(nn.Module):
             self.transformation.binom_n1 = self.transformation.binom_n1.to(self.device)
             self.transformation.binom_n2 = self.transformation.binom_n2.to(self.device)
 
-        return_dict_model_training: dict[str, Tensor]= train(
+        return_dict_model_training: dict[str, Tensor]= train_freq(
             model=self,
             train_dataloader=train_dataloader,
             validate_dataloader=validate_dataloader,
@@ -709,7 +746,7 @@ class GTM(nn.Module):
         self,
         train_dataloader: DataLoader,
         validate_dataloader: DataLoader | bool = False,
-        penalty_splines_params: FloatTensor = FloatTensor([0, 0, 0, 0]),
+        penalty_splines_params: FloatTensor = None,
         penalty_lasso_param: float | bool = False,
         learning_rate: float = 1,
         iterations: int = 2000,
@@ -717,7 +754,10 @@ class GTM(nn.Module):
         min_delta: float = 1e-7,
         optimizer: Literal["LBFGS", "Adam"] = "LBFGS",
         max_batches_per_iter: int | bool = False,
+        inference: Literal['frequentist'] | Literal['bayesian'] = 'frequentist',
+        hyperparameters_transformation_layer: dict = None 
     ) -> None:
+        
         """
         Pretrains only the transformation layer of the GTM using gradient-based optimization.
 
@@ -762,11 +802,11 @@ class GTM(nn.Module):
             - "training_time": total training time in seconds
             - other output keys from the forward pass of the final model state.
         """
+        
         objective_type:Literal['negloglik'] = "negloglik"
-        train_covariates:bool = False
-        validate_covariates:bool = False
+        
         verbose:bool = False
-        lambda_penalty_mode: Literal['square'] = "square"  # Literal["square", "absolute"]
+        
         # ema_decay: float | bool = False, used to have ema_decay in training
 
         # optimizer='LBFGS'
@@ -775,24 +815,45 @@ class GTM(nn.Module):
         self.transform_only = True
         penalty_lasso_conditional_independence = False  # makes objective not check lambda matrix
 
-        return_dict_model_training: None = train(
-            model=self,
-            train_dataloader=train_dataloader,
-            validate_dataloader=validate_dataloader,
-            train_covariates=train_covariates,
-            validate_covariates=validate_covariates,
-            penalty_params=penalty_splines_params,
-            lambda_penalty_params=penalty_lasso_conditional_independence,
-            learning_rate=learning_rate,
-            iterations=iterations,
-            verbose=verbose,
-            patience=patience,
-            min_delta=min_delta,
-            optimizer=optimizer,
-            lambda_penalty_mode=lambda_penalty_mode,
-            objective_type=objective_type,
-            max_batches_per_iter=max_batches_per_iter,
-        )
+        if inference == 'frequentist':
+            
+            lambda_penalty_mode: Literal['square'] = "square"  # Literal["square", "absolute"]
+            train_covariates:bool = False
+            validate_covariates:bool = False
+            
+            return_dict_model_training: None = train_freq(
+                model=self,
+                train_dataloader=train_dataloader,
+                validate_dataloader=validate_dataloader,
+                train_covariates=train_covariates,
+                validate_covariates=validate_covariates,
+                penalty_params=penalty_splines_params,
+                lambda_penalty_params=penalty_lasso_conditional_independence,
+                learning_rate=learning_rate,
+                iterations=iterations,
+                verbose=verbose,
+                patience=patience,
+                min_delta=min_delta,
+                optimizer=optimizer,
+                lambda_penalty_mode=lambda_penalty_mode,
+                objective_type=objective_type,
+                max_batches_per_iter=max_batches_per_iter,
+            )
+            
+        elif inference == 'bayesian':
+            
+            return_dict_model_training: None = train_bayes(
+                model = self,
+                train_dataloader=train_dataloader,
+                validate_dataloader= validate_dataloader,
+                penalty_lasso_conditional_independence= penalty_lasso_conditional_independence,
+                verbose= verbose,
+                hyperparameters= hyperparameters_transformation_layer
+            )
+            
+            
+        else:
+            raise ValueError(f"Unknown inference mode: {inference!r}")
 
         self.transform_only = False
 
@@ -1390,16 +1451,13 @@ class GTM(nn.Module):
             ):
                 
                 ##### DEFINING PENALISATION PARAMETERS (START) ####
-                if penalty_decorrelation_ridge_param == None:
+                if penalty_decorrelation_ridge_param is None:
                     
                     penalty_decorrelation_ridge_param_opt = 0
                     
-                elif isinstance(penalty_decorrelation_ridge_param, float) or isinstance(
-                    penalty_decorrelation_ridge_param, int
-                ):
-                    penalty_decorrelation_ridge_param_opt: float | int = (
-                        penalty_decorrelation_ridge_param
-                    )
+                elif isinstance(penalty_decorrelation_ridge_param, (float, int)):
+                    penalty_decorrelation_ridge_param_opt: float | int = penalty_decorrelation_ridge_param
+                    
                 elif penalty_decorrelation_ridge_param == "sample":
                     penalty_decorrelation_ridge_param_opt = trial.suggest_float(
                         "penalty_decorrelation_ridge_param",
@@ -1412,13 +1470,11 @@ class GTM(nn.Module):
                         'penalty_decorrelation_ridge_param not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_decorrelation_ridge_first_difference == None:
+                if penalty_decorrelation_ridge_first_difference is None:
                     
                     penalty_decorrelation_ridge_first_difference_opt = 0
                     
-                elif isinstance(
-                    penalty_decorrelation_ridge_first_difference, float
-                ) or isinstance(penalty_decorrelation_ridge_first_difference, int):
+                elif isinstance(penalty_decorrelation_ridge_first_difference, (float, int)):
                     
                     penalty_decorrelation_ridge_first_difference_opt: float | int = penalty_decorrelation_ridge_first_difference
                     
@@ -1434,13 +1490,11 @@ class GTM(nn.Module):
                         'penalty_decorrelation_ridge_first_difference not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_decorrelation_ridge_second_difference == None:
+                if penalty_decorrelation_ridge_second_difference is None:
                     
                     penalty_decorrelation_ridge_second_difference_opt = 0
                 
-                elif isinstance(
-                    penalty_decorrelation_ridge_second_difference, float
-                ) or isinstance(penalty_decorrelation_ridge_second_difference, int):
+                elif isinstance(penalty_decorrelation_ridge_second_difference, (float, int)):
                     
                     penalty_decorrelation_ridge_second_difference_opt: float | int = penalty_decorrelation_ridge_second_difference
                     
@@ -1456,13 +1510,11 @@ class GTM(nn.Module):
                         'penalty_decorrelation_ridge_second_difference not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_transformation_ridge_second_difference == None:
+                if penalty_transformation_ridge_second_difference is None:
                     
                     penalty_transformation_ridge_second_difference_opt = 0
                     
-                elif isinstance(
-                    penalty_transformation_ridge_second_difference, float
-                ) or isinstance(penalty_transformation_ridge_second_difference, int):
+                elif isinstance(penalty_transformation_ridge_second_difference, (float, int)):
                     
                     penalty_transformation_ridge_second_difference_opt: float | int = penalty_transformation_ridge_second_difference
                     
@@ -1478,11 +1530,11 @@ class GTM(nn.Module):
                         'penalty_transformation_ridge_second_difference not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_lasso_conditional_independence == None:
+                if penalty_lasso_conditional_independence is None:
+                    
                     penalty_lasso_conditional_independence_opt = 0
-                elif isinstance(
-                    penalty_lasso_conditional_independence, float
-                ) or isinstance(penalty_lasso_conditional_independence, int):
+                elif isinstance(penalty_lasso_conditional_independence, (float, int)):
+                    
                     penalty_lasso_conditional_independence_opt: float | int = penalty_lasso_conditional_independence
                     
                 elif penalty_lasso_conditional_independence == "sample":
@@ -1575,7 +1627,7 @@ class GTM(nn.Module):
                     prior_weight=0,  # 1.0, #default value 1.0 but then does not explore the space as good I think
                     multivariate=True,  # experimental but very useful here as our parameters are highly correlated
                 ),
-                storage="sqlite:///" + temp_folder + "/hyperparameter_tuning_study.db",
+                storage = f"sqlite:///{temp_folder}/hyperparameter_tuning_study.db",
                 # hyperparameter_tuning_study.db',
                 direction="maximize",
                 study_name=study_name,
