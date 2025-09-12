@@ -14,11 +14,11 @@ def generate_diagonal_matrix(n):
 
 class bayesian_splines:
     @staticmethod
-    def difference_penalty_matrix(self, order, n_params):
+    def difference_penalty_matrix(order, n_params) -> Tensor:
         D = np.eye(n_params)
         for _ in range(order):
             D = np.diff(D, n=1, axis=0)
-        return D.T @ D # K = DᵀD
+        return torch.tensor(D.T @ D, dtype=torch.float32) # K = DᵀD
     
     @staticmethod
     def gamma_hyperprior_distribution(a,b) -> InverseGamma:
@@ -33,11 +33,15 @@ class bayesian_splines:
         return -(a + 1) * torch.log(x) - b / x
     
     @staticmethod
-    def log_gamma_given_tau(K: Tensor, alpha_2: Tensor, gamma: Tensor) -> Tensor:
+    def log_normal_distr(K: Tensor, alpha_2: Tensor, gamma: Tensor) -> Tensor:
+        
+        if K.shape[0] != gamma.shape[1]:
+            raise KeyError('Dimensions does not coincide')
+            
+            
         r: int = matrix_rank(K).item()
-        return -0.5 * r * torch.log(alpha_2) - gamma.T @ K @ gamma
-    
-    
+        cov: Tensor = (gamma.T @ K @ gamma) / (2*alpha_2)
+        return -0.5 * r * torch.log(alpha_2) - cov
 
 @dataclass(frozen=True)
 class BayesianPriors:
@@ -48,16 +52,21 @@ class BayesianPriors:
     order_prior_diff: int
     K_prior: Tensor
     hyperprior_sigma_dist: InverseGamma
-    hyperprior_sigma_dist: InverseGamma
+    hyperprior_alpha_dist: InverseGamma
+    prior_gamma_given_tau : callable
 
 
 class BayesianInitializer:
     """Builds Bayesian prior tensors/distributions for a model instance."""
 
     REQUIRED_KEYS = ("sigma_a", "sigma_b", "tau_a", "tau_b")
-
+    
     @staticmethod
-    def build(model, hyperparameter: Mapping[str, float]) -> BayesianPriors:
+    def build(
+        model,
+        hyperparameter: Mapping[str, float],
+        n_params: int
+        ) -> BayesianPriors:
         # Guard rails
         if getattr(model, "spline", None) == "bernstein":
             raise NotImplementedError(
@@ -78,15 +87,17 @@ class BayesianInitializer:
 
         # Difference penalty matrix K = DᵀD
         order_prior_diff = 2
-        n_params = int(model.params.shape[0])
-        K_np = bayesian_splines.difference_penalty_matrix(order=order_prior_diff, n_params=n_params)
-        K_prior: Tensor = torch.tensor(K_np, dtype=dtype, device=device)
+        #n_params = int(model.padded_params.shape[0])
+        K_prior: Tensor = bayesian_splines.difference_penalty_matrix(order=order_prior_diff, n_params=n_params).to(device=device)
 
         # Priors (note: torch.distributions.InverseGamma expects concentration/rate)
         hyperprior_sigma_dist: InverseGamma = bayesian_splines.gamma_hyperprior_distribution(a=sigma_a, b=sigma_b)
         hyperprior_alpha_dist: InverseGamma = bayesian_splines.gamma_hyperprior_distribution(a=alpha_a, b=alpha_b)
         
-
+        
+        log_norm_distr_for_gamma_given_tau = bayesian_splines.log_normal_distr
+        
+        
         return BayesianPriors(
             sigma_a=sigma_a,
             sigma_b=sigma_b,
@@ -96,5 +107,6 @@ class BayesianInitializer:
             K_prior=K_prior,
             hyperprior_sigma_dist=hyperprior_sigma_dist,
             hyperprior_alpha_dist=hyperprior_alpha_dist,
+            prior_gamma_given_tau= log_norm_distr_for_gamma_given_tau
         )
     

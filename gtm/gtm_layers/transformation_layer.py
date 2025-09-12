@@ -11,11 +11,10 @@ from typing import List, Literal
 from torch.distributions import InverseGamma, Normal
 
 
-from gtm.gtm_layers.layer_utils import BayesianPriors
+from gtm.gtm_layers.layer_utils import *
 from gtm.gtm_splines.bernstein_basis import compute_multivariate_bernstein_basis, restrict_parameters
 from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction_vectorized, binomial_coeffs
 from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized, compute_multivariate_bspline_basis
-from layer_utils import *
 
 class Transformation(nn.Module):
     def __init__(
@@ -23,7 +22,7 @@ class Transformation(nn.Module):
         degree:List[int],
         number_variables:int,
         spline_range: List[List[float]],
-        hyperparameter: dict[str, float] | dict,
+        hyperparameters: dict[str, float] | None = None ,
         monotonically_increasing:bool=True,
         spline: Literal['bspline'] | Literal['bernstein']="bspline",
         span_factor: Tensor = torch.tensor(0.1, dtype=torch.float32),
@@ -64,27 +63,10 @@ class Transformation(nn.Module):
         self.spline: Literal['bspline'] | Literal['bernstein'] = spline
         
         # param dims: 0: basis, 1: variable
-        self.params = nn.ParameterList(values=self.compute_starting_values())
-
-        if spline == "bspline":
-            self.spline_prediction = self.bspline_prediction_method
-        elif spline == "bernstein":
-            self.spline_prediction = self.bernstein_prediction_method
-            warnings.warn(
-                "Warning: Varying Spline Degree for each Dimension is not implemented for Bernstein, only for B-Spline."
-            )
-            
-            # Bernstein Polynomial Init
-            warnings.warn(
-                "Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct"
-            )
-            n = self.max_degree + 1
-            self.binom_n = binomial_coeffs(n, device=self.device)
-            self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
-            self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
-            
-        else: 
-            warnings.warn("Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default.")
+        self.params = nn.ParameterList(values=self._compute_starting_values_for_params())
+        
+        # >>> Single source of truth for spline selection <<<
+        self._configure_spline(self.spline)
 
         self.knots_list = self._defining_knots_list()
         self.padded_knots: Tensor = torch.vstack(self.knots_list).T
@@ -127,7 +109,7 @@ class Transformation(nn.Module):
         self.varying_degrees: bool = len(set(self.degree)) > 1
         self.padded_knots = self.padded_knots.to(self.device) if self.varying_degrees else self.padded_knots[:, 0].to(self.device)
         # Create a mask to track valid values
-        max_params : int = max(self.degree) + self.spline_order - 1
+        max_params: int = max(self.degree) + self.spline_order - 1
         # num_params = inner_knots + degree_spline -1 e.g. degree + 3 -1 = degree +2
         
         self.padded_params_mask: Tensor = torch.vstack([
@@ -148,9 +130,10 @@ class Transformation(nn.Module):
         self.params_inverse: nn.ParameterList = None
         
         if self.inference == "bayesian":
-            hyperparameter_transformation:dict[str, float] = hyperparameter.get('transformation')
+            self.hyperparameter_transformation: dict[str, float] = hyperparameters
             
-            priors: BayesianPriors = BayesianInitializer.build(model=self, hyperparameter=hyperparameter_transformation or {})
+            priors: BayesianPriors = BayesianInitializer.build(model=self, hyperparameter=self.hyperparameter_transformation or {},
+                                                               n_params=max_params)
             # Either store the whole dataclass…
             self.priors: BayesianPriors = priors
             
@@ -207,7 +190,7 @@ class Transformation(nn.Module):
             )
         return knots_list
     
-    def compute_starting_values(self) -> List[nn.ParameterList]:
+    def _compute_starting_values_for_params(self) -> List[nn.ParameterList]:
         """
         Computes Starting Values for the Transformation layer with variable knots for different data dimensions.
 
@@ -258,6 +241,46 @@ class Transformation(nn.Module):
             "output_third_derivativ": init_dev,
         }
 
+    def _configure_spline(self, spline: Literal['bspline', 'bernstein']) -> None:
+        """
+        Centralizes selection-specific setup so it's not duplicated.
+        Safe to call any time you switch spline types.
+        """
+        if spline == "bspline":
+            self.spline_prediction = self.bspline_prediction_method
+
+        elif spline == "bernstein":
+            self.spline_prediction = self.bernstein_prediction_method
+
+            warnings.warn(
+                "Warning: Varying Spline Degree for each Dimension is not implemented for Bernstein, only for B-Spline.",
+                stacklevel=2,
+            )
+
+            warnings.warn(
+                "Bernstein polynomial penalization is not implemented yet; "
+                "returns zeros hardcoded in bernstein_prediction.py.",
+                stacklevel=2,
+            )
+
+            # Bernstein Polynomial Init
+            n = self.max_degree + 1
+            self._init_bernstein_binomials(n)
+
+        else:
+            warnings.warn(
+                "Warning: Unknown Spline string passed; use 'bspline' or 'bernstein'. Defaulting to 'bspline'.",
+                stacklevel=2,
+            )
+            self.spline = "bspline"
+            self.spline_prediction = self.bspline_prediction_method
+    
+    def _init_bernstein_binomials(self, n: int) -> None:
+        """Precompute binomial coefficients needed by Bernstein implementation."""
+        self.binom_n = binomial_coeffs(n, device=self.device)
+        self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
+        self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
+    
     def bspline_prediction_method(
         self,
         input: Tensor,
