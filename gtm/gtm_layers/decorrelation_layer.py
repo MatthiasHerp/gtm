@@ -7,11 +7,9 @@ from torch import nn, Tensor
 from torch.distributions import InverseGamma
 from typing import List,Literal
 
-from gtm.gtm_splines.bernstein_prediction_vectorized import (
-    bernstein_prediction_vectorized, binomial_coeffs)
-from gtm.gtm_splines.bspline_prediction_vectorized import \
-    bspline_prediction_vectorized
-from layer_utils import *
+from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction_vectorized, binomial_coeffs
+from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
+from gtm.gtm_layers.layer_utils import *
 
 
 class Decorrelation(nn.Module):
@@ -35,41 +33,19 @@ class Decorrelation(nn.Module):
     ) -> None:
         super().__init__()
         self.type = "decorrelation"
-        self.degree = degree
-        self.number_variables = number_variables
+        self.degree: int = degree
+        self.number_variables: int = number_variables
         self.spline_range = torch.FloatTensor(spline_range)
         self.inference: Literal['frequentist'] | Literal['bayesian'] = inference
-        """self.hyperparameters: dict[str, float] = {
-                        'alpha_sigma': 1.0,
-                        'beta_sigma': 0.005,
-                        'alpha_tau': 1.0,
-                        'beta_tau': 0.005
-                        } #hyperparameters"""
-        self.device = device
+        self.device: torch.device = device
 
-        self.num_lambdas = number_variables * (number_variables - 1) / 2
+        self.num_lambdas: float = number_variables * (number_variables - 1) / 2
         self.spline: Literal['bspline'] | Literal['bernstein'] = spline
         self.span_factor: Tensor = span_factor
 
         self.span_restriction = span_restriction
-
-        if self.spline == "bspline":
-            self.spline_prediction = self.bspline_prediction_method
-        elif self.spline == "bernstein":
-            self.spline_prediction = self.bernstein_prediction_method
-            
-            # Bernstein Polynomial Init
-            warnings.warn(
-                "Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct"
-            )
-            n = self.degree + 1
-            self.binom_n = binomial_coeffs(n, device=self.device)
-            self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
-            self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
-        else:
-            warnings.warn(
-                message="Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default."
-            )
+        
+        self._configure_spline(self.spline)
 
         self.spline_order: int = spline_order
 
@@ -77,12 +53,10 @@ class Decorrelation(nn.Module):
 
         self.num_covariates: int = int(number_covariates or 0)
 
-        if self.number_covariates > 0:
+        if self.num_covariates > 0:
             if self.number_covariates > 1:
                 print("Warning, covariates not implemented for more than 1 covariate")
-            self.params_covariate: torch.Tensor = self.compute_starting_values_bspline(
-                start_value=0.001
-            )
+            self.params_covariate: torch.Tensor = self.compute_starting_values_bspline(start_value=0.001)
         else:
             self.params_covariate = False
 
@@ -97,23 +71,6 @@ class Decorrelation(nn.Module):
             
         self.covariate_effect: str = covariate_effect
         
-        if self.inference == 'bayesian':
-            hyperparameter_transformation:dict[str, float] = hyperparameter.get('transformation')
-            
-            priors: BayesianPriors = BayesianInitializer.build(model=self, hyperparameter=hyperparameter_transformation or {})
-            # Either store the whole dataclass…
-            self.priors: BayesianPriors = priors
-            
-            """# …or copy the attributes you need on self:
-            self.sigma_a = priors.sigma_a
-            self.sigma_b = priors.sigma_b
-            self.alpha_a = priors.alpha_a
-            self.alpha_b = priors.alpha_b
-            self.order_prior_diff = priors.order_prior_diff
-            self.K_prior = priors.K_prior
-            self.prior_distr_sigma = priors.prior_distr_sigma
-            self.prior_distr_alpha = priors.prior_distr_alpha"""
-            
         self.calc_method_bspline: str = calc_method_bspline
         
         # TODO: Sort this out, I fixed the values here as it is currently the fastest computation by far
@@ -160,27 +117,69 @@ class Decorrelation(nn.Module):
         #                    self.spline_range[1,0] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
         #                    n + 4, dtype=torch.float32)"""
         
-        self.var_num_list, self.covar_num_list = torch.tril_indices(
-            self.number_variables, self.number_variables, offset=-1
-        )
+        self.var_num_list, self.covar_num_list = torch.tril_indices(self.number_variables, self.number_variables, offset=-1)
         
-    ####### BAYESIAN DECOLAYER ###########
-    
-    def log_prior(self):
         
-        K = self.K_prior
-        sigma2 = torch.exp(self.log_tau2_prior)
-        log_prior = 0.0
-        for j in range(self.params.shape[1]):
-            theta_j = self.params[:, j]
-            quad_form = theta_j @ K @ theta_j
-            log_prior += -0.5 * quad_form / sigma2
+        
+        if self.inference == 'bayesian':
+            max_params: int = self.degree + self.spline_order - 1 #self.params.shape[0]
+            self.hyperparameter_decorrelation: dict[str, float] = hyperparameter
+            priors: BayesianPriors = BayesianInitializer.build(model=self, hyperparameter=self.hyperparameter_decorrelation or {},
+                                                               n_params=max_params)
+            # Either store the whole dataclass…
+            self.priors: BayesianPriors = priors
+            
+            """# …or copy the attributes you need on self:
+            self.sigma_a = priors.sigma_a
+            self.sigma_b = priors.sigma_b
+            self.alpha_a = priors.alpha_a
+            self.alpha_b = priors.alpha_b
+            self.order_prior_diff = priors.order_prior_diff
+            self.K_prior = priors.K_prior
+            self.prior_distr_sigma = priors.prior_distr_sigma
+            self.prior_distr_alpha = priors.prior_distr_alpha"""
+            
+    def _configure_spline(self, spline: Literal['bspline', 'bernstein']) -> None:
+        """
+        Centralizes selection-specific setup so it's not duplicated.
+        Safe to call any time you switch spline types.
+        """
+        if spline == "bspline":
+            self.spline_prediction = self.bspline_prediction_method
 
-        log_det_term = -0.5 * self.params.shape[1] * K.shape[0] * torch.log(sigma2)
-        return log_prior + log_det_term
+        elif spline == "bernstein":
+            self.spline_prediction = self.bernstein_prediction_method
+
+            warnings.warn(
+                "Warning: Varying Spline Degree for each Dimension is not implemented for Bernstein, only for B-Spline.",
+                stacklevel=2,
+            )
+
+            warnings.warn(
+                "Bernstein polynomial penalization is not implemented yet; "
+                "returns zeros hardcoded in bernstein_prediction.py.",
+                stacklevel=2,
+            )
+
+            # Bernstein Polynomial Init
+            n = self.max_degree + 1
+            self._init_bernstein_binomials(n)
+
+        else:
+            warnings.warn(
+                "Warning: Unknown Spline string passed; use 'bspline' or 'bernstein'. Defaulting to 'bspline'.",
+                stacklevel=2,
+            )
+            self.spline = "bspline"
+            self.spline_prediction = self.bspline_prediction_method
     
-    ####### BAYESIAN DECORELATION LAYER ###########
-
+    def _init_bernstein_binomials(self, n: int) -> None:
+        """Precompute binomial coefficients needed by Bernstein implementation."""
+        self.binom_n = binomial_coeffs(n, device=self.device)
+        self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
+        self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
+    
+    
     def create_return_dict_decorrelation(self, input):
         lambda_matrix_general = (
             torch.eye(self.number_variables, device=input.device)

@@ -20,7 +20,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.optim import Optimizer, Adam
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from training_bayes import variational_inference
+from gtm.gtm_training.training_bayes import variational_inference
 
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
@@ -805,75 +805,87 @@ def train_freq(
 
 
 def train_bayes(
-    model: GTM,
+    model: "GTM",
     train_dataloader: DataLoader,
-    validate_dataloader: DataLoader,
-    hyperparameters: dict[str, dict[str, float]],
-    learning_rate,
-    optimizer: Literal["LBFGS", "Adam"],
-    iterations,
-    verbose,
-    patience
-    ):
-    
-    
+    validate_dataloader,
+    iterations: int,
+    optimizer: str = "Adam",
+    lr: float = 1e-3,
+    hyperparameters: dict | None = None,
+    verbose: bool = False,
+    max_batches_per_iter= False,
+    patience = None
+):
+    # ----- hyperparameters -----
     if hyperparameters is None:
-        hyperparameters_transformation: dict[str, float] = model.hyperparameter.get('transformation')
-        hyperparameters_transformation: dict[str, float] = model.hyperparameter.get('decorrelation')
-    
+        hyperparameters_transformation: dict[str, float] = model.hyperparameter.get("transformation")
+        hyperparameters_decorrelation: dict[str, float] = model.hyperparameter.get("decorrelation")
+    else:
+        hyperparameters_transformation: dict[str, float] = hyperparameters.get("transformation", {})
+        hyperparameters_decorrelation: dict[str, float] = hyperparameters.get("decorrelation", {})
 
-    if optimizer == 'Adam':
-        opt: Adam = Adam(
-            params=model.parameters(),
-            lr=learning_rate, weight_decay=0
-            )
-    elif optimizer == 'LBFGS':
-        opt: LBFGS = LBFGS(
-        params=model.parameters(),
-        lr=learning_rate,
-        history_size=1,
-        line_search_fn="strong_wolfe",
-        max_iter=1,
-        max_eval=40,
-    )
-        
+    # ----- optimizer -----
+    if optimizer == "Adam":
+        opt = Adam(model.parameters(), lr=lr)
+    else:
+        raise ValueError(f"Unsupported optimizer: {optimizer}")
+
+    total_steps = max(1, iterations) * max(1, len(train_dataloader))
     scheduler: LambdaLR = get_cosine_schedule_with_warmup(
-            optimizer=opt,
-            num_warmup_steps=5,
-            num_training_steps=iterations,
-            num_cycles=0.5,
-            last_epoch=-1,
-        )  ##3,4,5 warmup steps machen
+        optimizer=opt,
+        num_warmup_steps=5,
+        num_training_steps=total_steps,
+        num_cycles=0.5,
+        last_epoch=-1,
+    )
+
     
-    VI_Model = variational_inference()
-    start: float = time.time()
+    start_mu = 0
+    start_sigma = 1
     
-    for iter in iterations:
-        number_iterations: int = iter
+    VI = variational_inference(
+        start_mu= start_mu, 
+        start_sigma=start_sigma,
+        hyperparameter_decorrelation=hyperparameters_decorrelation,
+        hyperparameter_transformation= hyperparameters_transformation
+        )  # keep a reference; call with your real signature
+    
+    start = time.time()
+    for i in tqdm(iterable=range(iterations)):
+        number_iterations: int = i
+        num_processed_batches:int = 0
         
         for y_train in train_dataloader:
-            loss = variational_inference()
-            
-            loss.backward()
-            opt.step()
-            scheduler.step()
-            current_loss: Tensor = loss
-            if verbose:
-                print("current_loss:", loss)
-            
-    
-    
-    return_dict_model_training = model.__bayesian_training_objective__(
-        samples=train_dataloader,
-        objective_type='negloglik'
-        
-    )
-    end: float = time.time()
+                
+                num_processed_batches += 1
+                y_train: Tensor = y_train.to(device=model.device)
 
-    training_time: float = end - start
-    return_dict_model_training['training_time'] = training_time
-    
-    
+                if optimizer == "Adam":
+                    opt.zero_grad()
+                    return_dict_model_training: dict[str, Tensor] = model.__bayesian_training_objective__(
+                        samples=y_train,
+                        hyperparameters_decorrelation= hyperparameters_decorrelation,
+                        hyperparameters_transformations= hyperparameters_transformation,
+                        VI_model_estimator=VI
+                    )
+
+                    loss: Tensor = return_dict_model_training["loss_with_penalties"].mean()
+                    loss.backward()
+                    opt.step()
+                    scheduler.step()
+                    #current_loss: Tensor = loss
+                    if verbose:
+                        print("current_loss:", loss)
+
+
+                # if ema_decay is not False:
+                #    ema.update()
+
+                if max_batches_per_iter and num_processed_batches >= max_batches_per_iter:
+                    break
+
+    return_dict_model_training["training_time"] = time.time() - start
+    return_dict_model_training["number_iterations"] = number_iterations
     return return_dict_model_training
     
 def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars) -> Tensor:

@@ -71,23 +71,16 @@ if __name__ == "__main__":
             adaptive_lasso_weights_matrix = False
             penalty_lasso_conditional_independence = False
 
-            # pretrain the marginal transformations
-            _ = model.pretrain_transformation_layer(
-                train_dataloader=dataloader_train,
-                iterations=1000,
-                #penalty_splines_params=penalty_splines_params,
-            )
-
             # train the joint model
             _: dict[str, torch.Tensor] = model.train(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
                 iterations=1000,
-                optimizer="LBFGS",
-                penalty_splines_params=penalty_splines_params,
+                optimizer="Adam",
                 adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
                 penalty_lasso_conditional_independence=penalty_lasso_conditional_independence,
                 max_batches_per_iter=False,
+                
             )
 
             torch.save(

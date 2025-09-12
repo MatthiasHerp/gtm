@@ -191,34 +191,32 @@ class GTM(nn.Module):
 
         self.degree_multi: Literal[False] = degree_multi
         
-        if self.inference == 'bayesian' and hyperparameter is None:
-                self.hyperparameter: dict[str, dict[str, float]] = {
-                    'transformation': {
-                        'sigma_a':0.0,
-                        'sigma_b':0.0001,
-                        'tau_a': 0.0,
-                        'tau_b': 0.0001
-                        },
-                    'decorrelation': {
-                        'sigma_a':0.0,
-                        'sigma_b':0.0001,
-                        'tau_a': 0.0,
-                        'tau_b': 0.0001
-                        }
-                    }
+        if self.inference == "bayesian":
+            
+            _COMMON_BAYES: dict[str, float] = {"sigma_a": 1, "sigma_b": 5e-5, "tau_a": 1, "tau_b": 5e-4}
+            _DEFAULT_BAYES_HYPERPARAMS: dict[str, dict[str, float]] = {
+                "transformation": _COMMON_BAYES.copy(),
+                "decorrelation": _COMMON_BAYES.copy(),
+            }
+            
+            if "bernstein" in {self.spline_transformation, self.spline_decorrelation}:
+                raise NotImplementedError(
+                    "Bayesian inference with Bernstein polynomials is not yet implemented."
+                )
+                
+            self.hyperparameter: dict[str, dict[str, float]] = (
+                _DEFAULT_BAYES_HYPERPARAMS if hyperparameter is None else hyperparameter
+            )
         else:
-            self.hyperparameter = hyperparameter if self.inference == 'bayesian' else {}
-
+            self.hyperparameter = {}
+            
 
         if self.num_trans_layers > 0:
             self.transformation = Transformation(
                 degree=self.degree_transformations,
                 number_variables=self.number_variables,
                 spline_range=self.transformation_spline_range,
-                hyperparameters= self.hyperparameter.get('transformation'),
-                #ridge_eps=bayesian_setup.get('setup').get('ridge_eps').get('transformation'), #
-                #diff_order=bayesian_setup.get('setup').get('diff_order').get('transformation'), #
-                #init_value=bayesian_setup.get('setup').get('init_values').get('transformation').get('tau_init'), #
+                hyperparameters= self.hyperparameter.get('transformation', {}),
                 span_factor=self.span_factor,
                 number_covariates=self.number_covariates,
                 spline=self.spline_transformation,
@@ -245,7 +243,7 @@ class GTM(nn.Module):
                         degree=self.degree_decorrelation,
                         number_variables=self.number_variables,
                         spline_range=self.decorrelation_spline_range,
-                        hyperparamter=self.hyperparameter.get('decorrelation'),
+                        hyperparameter=self.hyperparameter.get('decorrelation',  {}),
                         span_factor=self.span_factor,
                         span_restriction=self.span_restriction,
                         spline=self.spline_decorrelation,
@@ -307,73 +305,53 @@ class GTM(nn.Module):
         }
         
         
-    def forward(
-        self,
-        y: Tensor,
-        return_lambda_matrix: bool=True
-        ) -> dict[str, Tensor|float|None]:
+    def forward(self, y, return_lambda_matrix=True):
         """
         GTM forward pass.
 
         Parameters
         ----------
-        y : torch.Tensor
-            The input data (float32 expected); shape (batch, dim).
-        return_lambda_matrix : bool, default True
-            Whether to compute the global lambda matrix in the forward pass. Disable to save compute.
+        y : torch.FloatTensor
+            The input data to pass through the model foward pass.
+        return_lambda_matrix: bool = True
+            Wether to compute the global lambda matrix in the forward pass or not. To not do it save a bit of compute.
 
         Returns
         -------
-        dict
-            A dictionary containing:
-            - "output": latent representation,
-            - "log_d": accumulated log-determinant,
-            - "transformation_second_order_ridge_pen_global",
-            - "second_order_ridge_pen_global",
-            - "first_order_ridge_pen_global",
-            - "param_ridge_pen_global",
-            - and optionally "lambda_matrix_global" (if requested).
-
-        Notes
-        -----
-        - We allow training **batchwise** (typo fix: not “bathwise”); the transformation layer
-          no longer stores basis, so train/evaluate toggles aren’t meaningful here.
-        - Some arguments are intentionally left out for the first release version.
+        A dictionary containing the latent space named "output", the log determinant "log_d", the differences for thes spline penalites
+        "transformation_second_order_ridge_pen_global", "second_order_ridge_pen_global", "second_order_ridge_pen_global", "param_ridge_pen_global"
+        and the full model, hence global, lambda matrix "lambda_matrix_global".
         """
-        
         # Some left out arguements for the first release version
         # evaluate and train do not make sense anymore as we do not store basis in transformation layer
         # a main reason is that we now allow training bathwise which prevents this
-        
-        train: bool = True
-        evaluate: bool = True
-        covariate: bool = False
-        return_scores_hessian: bool = False
-        
-        
-        return_dict_nf_mctm: dict[str, Tensor|float|None] = self.__create_return_dict_nf_mctm__(input=y)
+        covariate = False
+        return_scores_hessian = False
+        train = True
+        evaluate = True
+
+        return_dict_nf_mctm = self.__create_return_dict_nf_mctm__(y)
 
         if self.subset_dimension is not None:
             # if subset dimension is set then only use this dimension
             y = y[:, self.subset_dimension].unsqueeze(1)
 
-        if self.initial_log_transform:
+        if self.initial_log_transform == True:
             y = y + 0.01  # log(0) does not work
-            log_d: Tensor = -torch.log(y)  # = log(1/y)
+            log_d = -torch.log(y)  # = log(1/y)
             y = torch.log(y)
         else:
-            log_d: float = 0.0
+            log_d = 0
 
         # Training or evaluation
-        #if train or evaluate:    
-            
-        if train:
-            if self.num_trans_layers > 0:
+        if train or evaluate:
+
+            if train:
+                if self.num_trans_layers > 0:
                     # new input false to not recompute basis each iteration
-                    # forwards Transformation  
                     return_dict_transformation = self.transformation(
-                        input=y,
-                        covariate=covariate,
+                        y,
+                        covariate,
                         log_d=log_d,
                         return_log_d=True,
                         new_input=False,
@@ -383,12 +361,14 @@ class GTM(nn.Module):
 
                     return_dict_nf_mctm["output"] = return_dict_transformation["output"]
                     return_dict_nf_mctm["log_d"] = return_dict_transformation["log_d"]
-            else:
+                else:
                     return_dict_nf_mctm["output"] = y.clone()
-                    return_dict_nf_mctm["log_d"] = torch.zeros(size=y.size(), device=self.device).float()
+                    return_dict_nf_mctm["log_d"] = torch.zeros(
+                        y.size(), device=self.device
+                    ).float()
 
-        elif evaluate:
-            if self.num_trans_layers > 0:
+            elif evaluate:
+                if self.num_trans_layers > 0:
                     # new input true as we need to recompute the basis for the validation/test set
                     return_dict_transformation = self.transformation(
                         y,
@@ -402,68 +382,104 @@ class GTM(nn.Module):
 
                     return_dict_nf_mctm["output"] = return_dict_transformation["output"]
                     return_dict_nf_mctm["log_d"] = return_dict_transformation["log_d"]
-            else:
+                else:
                     return_dict_nf_mctm["output"] = y.clone()
-                    return_dict_nf_mctm["log_d"] = torch.zeros(size=y.size(), device=self.device).float()
+                    return_dict_nf_mctm["log_d"] = torch.zeros(
+                        y.size(), device=self.device
+                    ).float()
 
-        if self.transform_only:
+            if self.transform_only == True:
                 return return_dict_nf_mctm
 
-        if self.num_trans_layers > 0 and return_scores_hessian:
+            if self.num_trans_layers > 0 and return_scores_hessian == True:
 
-                return_dict_nf_mctm["der_lambda_matrix_global"] = return_dict_transformation["scores"] # .unsqueeze(2)
-                return_dict_nf_mctm["der2_lambda_matrix_global_list"] = [return_dict_transformation["hessian"]]  # .unsqueeze(2)]
+                return_dict_nf_mctm["der_lambda_matrix_global"] = (
+                    return_dict_transformation["scores"]
+                )  # .unsqueeze(2)
 
-        if self.number_decorrelation_layers > 0:
-            
+                return_dict_nf_mctm["der2_lambda_matrix_global_list"] = [
+                    return_dict_transformation["hessian"]
+                ]  # .unsqueeze(2)]
+
+            if self.number_decorrelation_layers > 0:
                 for i in range(self.number_decorrelation_layers):
-                    is_even: bool = ((i + 1) % 2) == 0
-                    
-                    if is_even:
+
+                    if ((i + 1) % 2) == 0:
                         # even: 2,4, 6, ...
-                        #return_dict_nf_mctm["output"] = (self.flip_matrix @ return_dict_nf_mctm["output"].T).T
-                        return_dict_nf_mctm["output"] = return_dict_nf_mctm["output"] @ self.flip_matrix.T
+                        return_dict_nf_mctm["output"] = (
+                            self.flip_matrix @ return_dict_nf_mctm["output"].T
+                        ).T
                     # else:
                     # odd: 1, 3, 5, ...
 
-                    return_dict_decorrelation: Tensor = self.decorrelation_layers[i](
+                    return_dict_decorrelation = self.decorrelation_layers[i](
                         return_dict_nf_mctm["output"],
                         covariate,
                         0,
                         return_log_d=True,
                         return_penalties=True,
-                        return_scores_hessian=return_scores_hessian
+                        return_scores_hessian=return_scores_hessian,
                     )
 
                     return_dict_nf_mctm["output"] = return_dict_decorrelation["output"]
-                    return_dict_nf_mctm["log_d"] += return_dict_decorrelation["log_d"]  # required if the layers are multiplicative
-                    
-                    return_dict_nf_mctm["second_order_ridge_pen_global"] += return_dict_decorrelation["second_order_ridge_pen_sum"]
-                    return_dict_nf_mctm["first_order_ridge_pen_global"] += return_dict_decorrelation["first_order_ridge_pen_sum"]
-                    return_dict_nf_mctm["param_ridge_pen_global"] += return_dict_decorrelation["param_ridge_pen_sum"]
+                    return_dict_nf_mctm["log_d"] += return_dict_decorrelation[
+                        "log_d"
+                    ]  # required if the layers are multiplicative
+                    return_dict_nf_mctm[
+                        "second_order_ridge_pen_global"
+                    ] += return_dict_decorrelation["second_order_ridge_pen_sum"]
+                    return_dict_nf_mctm[
+                        "first_order_ridge_pen_global"
+                    ] += return_dict_decorrelation["first_order_ridge_pen_sum"]
+                    return_dict_nf_mctm[
+                        "param_ridge_pen_global"
+                    ] += return_dict_decorrelation["param_ridge_pen_sum"]
 
-                    if is_even:
+                    if ((i + 1) % 2) == 0:
                         # even
-                        if return_lambda_matrix:
-                            
-                            lambda_matrix_upper:Tensor = self.flip_matrix @ return_dict_decorrelation["lambda_matrix"] @ self.flip_matrix
-                            return_dict_nf_mctm["lambda_matrix_global"] = lambda_matrix_upper @ return_dict_nf_mctm["lambda_matrix_global"]
-                            
-                        if return_scores_hessian:
-                            
-                            der_lambda_matrix_upper: Tensor = self.flip_matrix @ return_dict_decorrelation["der_lambda_matrix"] @ self.flip_matrix
-                            return_dict_nf_mctm["der_lambda_matrix_global"] = torch.bmm(der_lambda_matrix_upper, return_dict_nf_mctm["der_lambda_matrix_global"])
-                            
-                            der2_lambda_matrix_upper: Tensor = self.flip_matrix @ return_dict_decorrelation["der2_lambda_matrix"] @ self.flip_matrix
-                            
-                            return_dict_nf_mctm["der2_lambda_matrix_global_list"].append(
-                                torch.bmm(der2_lambda_matrix_upper,return_dict_nf_mctm["der_lambda_matrix_global"])
+                        if return_lambda_matrix == True:
+                            lambda_matrix_upper = (
+                                self.flip_matrix
+                                @ return_dict_decorrelation["lambda_matrix"]
+                                @ self.flip_matrix
+                            )
+
+                        if return_lambda_matrix == True:
+                            return_dict_nf_mctm["lambda_matrix_global"] = (
+                                lambda_matrix_upper
+                                @ return_dict_nf_mctm["lambda_matrix_global"]
+                            )
+
+                        if return_scores_hessian == True:
+                            der_lambda_matrix_upper = (
+                                self.flip_matrix
+                                @ return_dict_decorrelation["der_lambda_matrix"]
+                                @ self.flip_matrix
+                            )
+                            return_dict_nf_mctm["der_lambda_matrix_global"] = torch.bmm(
+                                der_lambda_matrix_upper,
+                                return_dict_nf_mctm["der_lambda_matrix_global"],
+                            )
+
+                            der2_lambda_matrix_upper = (
+                                self.flip_matrix
+                                @ return_dict_decorrelation["der2_lambda_matrix"]
+                                @ self.flip_matrix
+                            )
+
+                            return_dict_nf_mctm[
+                                "der2_lambda_matrix_global_list"
+                            ].append(
+                                torch.bmm(
+                                    der2_lambda_matrix_upper,
+                                    return_dict_nf_mctm["der_lambda_matrix_global"],
+                                )
                                 * return_dict_nf_mctm["der_lambda_matrix_global"]
                             )
 
-                        for j in range(i + 1):  # j are all sum elements prior to i
-                            return_dict_nf_mctm["der2_lambda_matrix_global_list"][
-                                j
+                            for j in range(i + 1):  # j are all sum elements prior to i
+                                return_dict_nf_mctm["der2_lambda_matrix_global_list"][
+                                    j
                                 ] = torch.bmm(
                                     der_lambda_matrix_upper,
                                     return_dict_nf_mctm[
@@ -473,14 +489,25 @@ class GTM(nn.Module):
 
                     else:
                         # odd
-                        if return_lambda_matrix:
-                            return_dict_nf_mctm["lambda_matrix_global"] = return_dict_decorrelation["lambda_matrix"] @ return_dict_nf_mctm["lambda_matrix_global"]
+                        if return_lambda_matrix == True:
+                            return_dict_nf_mctm["lambda_matrix_global"] = (
+                                return_dict_decorrelation["lambda_matrix"]
+                                @ return_dict_nf_mctm["lambda_matrix_global"]
+                            )
 
-                        if return_scores_hessian:
-                            return_dict_nf_mctm["der_lambda_matrix_global"] = torch.bmm(return_dict_decorrelation["der_lambda_matrix"],return_dict_nf_mctm["der_lambda_matrix_global"])
+                        if return_scores_hessian == True:
+                            return_dict_nf_mctm["der_lambda_matrix_global"] = torch.bmm(
+                                return_dict_decorrelation["der_lambda_matrix"],
+                                return_dict_nf_mctm["der_lambda_matrix_global"],
+                            )
 
-                            return_dict_nf_mctm["der2_lambda_matrix_global_list"].append(
-                                torch.bmm(return_dict_decorrelation["der2_lambda_matrix"],return_dict_nf_mctm["der_lambda_matrix_global"])
+                            return_dict_nf_mctm[
+                                "der2_lambda_matrix_global_list"
+                            ].append(
+                                torch.bmm(
+                                    return_dict_decorrelation["der2_lambda_matrix"],
+                                    return_dict_nf_mctm["der_lambda_matrix_global"],
+                                )
                                 * return_dict_nf_mctm["der_lambda_matrix_global"]
                             )
 
@@ -494,25 +521,42 @@ class GTM(nn.Module):
                                     ][j],
                                 )
 
-                    if is_even:
+                    if ((i + 1) % 2) == 0:
                         # even
-                        #return_dict_nf_mctm["output"] = (self.flip_matrix @ return_dict_nf_mctm["output"].T).T
-                        return_dict_nf_mctm["output"] = self.flip_matrix.T @ return_dict_nf_mctm["output"]
+                        # output = (self.flip_matrix @ output.T).T
+                        return_dict_nf_mctm["output"] = (
+                            self.flip_matrix @ return_dict_nf_mctm["output"].T
+                        ).T
                     # else:
                     #    # odd
-                    
-                if return_scores_hessian:
-                    return_dict_nf_mctm["scores"] = -1 * return_dict_nf_mctm["output"] * return_dict_nf_mctm["der_lambda_matrix_global"].squeeze(1)
-                    
-                    for j in range(i + 1):  # j are all sum elements prior to i
-                        return_dict_nf_mctm["der2_lambda_matrix_global_list"][j] = -1 * return_dict_nf_mctm["output"].unsqueeze(2) * return_dict_nf_mctm["der2_lambda_matrix_global_list"][j]
-                        
-                    return_dict_nf_mctm["der2_lambda_matrix_global_list"][i + 1] = -1 * return_dict_nf_mctm["der2_lambda_matrix_global_list"][i + 1]
-                    
-                    return_dict_nf_mctm["hessian"] = torch.stack(return_dict_nf_mctm["der2_lambda_matrix_global_list"], dim=0).sum(0).squeeze(2)
-                    
-        return return_dict_nf_mctm
 
+                if return_scores_hessian == True:
+                    return_dict_nf_mctm["scores"] = (
+                        -1
+                        * return_dict_nf_mctm["output"]
+                        * return_dict_nf_mctm["der_lambda_matrix_global"].squeeze(1)
+                    )
+
+                    for j in range(i + 1):  # j are all sum elements prior to i
+                        return_dict_nf_mctm["der2_lambda_matrix_global_list"][j] = (
+                            -1
+                            * return_dict_nf_mctm["output"].unsqueeze(2)
+                            * return_dict_nf_mctm["der2_lambda_matrix_global_list"][j]
+                        )
+                    return_dict_nf_mctm["der2_lambda_matrix_global_list"][i + 1] = (
+                        -1
+                        * return_dict_nf_mctm["der2_lambda_matrix_global_list"][i + 1]
+                    )
+
+                    return_dict_nf_mctm["hessian"] = (
+                        torch.stack(
+                            return_dict_nf_mctm["der2_lambda_matrix_global_list"], dim=0
+                        )
+                        .sum(0)
+                        .squeeze(2)
+                    )
+
+            return return_dict_nf_mctm
     def latent_space_representation(self, y) -> Tensor:
         """
         Returns the fully transformed latent space Z for a given input Y. Z is distributed as a Gaussian N(0,I).
@@ -592,16 +636,22 @@ class GTM(nn.Module):
     def __bayesian_training_objective__(
         self, 
         samples: Tensor,
-        hyperparameters: Tensor,
+        VI_model_estimator,
+        hyperparameters_transformations: dict[str, float],
+        hyperparameters_decorrelation: dict [str, float],
         objective_type: Literal['negloglik'] = "negloglik"
+        
     ):
         
         
         
         return bayesian_training_objective(
             model = self,
+            hyperparameter_decorrelation=hyperparameters_decorrelation,
+            hyperparameter_transformation =hyperparameters_transformations,
             samples= samples,
-            objective_type= objective_type
+            objective_type= objective_type,
+            vi_model=VI_model_estimator
         )
 
     def train(
@@ -610,7 +660,7 @@ class GTM(nn.Module):
         validate_dataloader: DataLoader | bool = False,
         # train_covariates: Tensor | bool = False,
         # validate_covariates: Tensor | bool = False,
-        penalty_splines_params: FloatTensor = FloatTensor([0, 0, 0, 0]),
+        penalty_splines_params: FloatTensor = None,
         penalty_lasso_conditional_independence: float | bool = False,
         adaptive_lasso_weights_matrix: Tensor | bool = False,
         optimizer: Literal["LBFGS", "Adam"] = "LBFGS",
@@ -691,6 +741,7 @@ class GTM(nn.Module):
         train_covariates: bool = False
         validate_covariates: bool = False
         ### HARDCODED, Not Implemented yet ###
+        
         verbose: bool = False
         lambda_penalty_mode: Literal['square']= "square"  # Literal["square", "absolute"]
         # ema_decay: float | bool = False, used to have ema_decay in training
@@ -741,16 +792,18 @@ class GTM(nn.Module):
             return_dict_model_training = train_bayes(
                 model= self,
                 train_dataloader=train_dataloader,
-                validate_dataloader=validate_covariates,
+                validate_dataloader=validate_dataloader,
                 hyperparameters=None,
                 iterations=iterations,
                 verbose=verbose,
                 optimizer=optimizer,
-                learning_rate=learning_rate,
+                lr=learning_rate,
                 patience = patience,
                 
                 
                 )
+        else:
+            raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')
 
         if seperate_copula_training:
             self.transformation.params.requires_grad = True
