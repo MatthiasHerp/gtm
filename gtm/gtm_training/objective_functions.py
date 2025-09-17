@@ -4,9 +4,10 @@ from torch.distributions import Normal
 from typing import Literal, TYPE_CHECKING, Callable
 from ..gtm_layers.layer_utils import bayesian_splines
 
+from gtm.gtm_training.training_bayes import VI_Model
+
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM 
-    from training_bayes import variational_inference# type-only; no runtime import
 
 
 def log_likelihood(model:"GTM", samples:torch.FloatTensor, mean_loss:bool=False)  -> dict[str, Tensor | float | None]:
@@ -136,119 +137,61 @@ def training_objective(
         "pen_lambda_lasso": pen_lambda_lasso,
     }
 
-def bayesian_training_objective(
+
+
+def bayesian_traininig_objective(
     model: "GTM",
-    samples: Tensor,
-    vi_model: "variational_inference",
+    samples,
     hyperparameter_transformation,
-    hyperparameter_decorrelation,
-    objective_type:Literal['negloglik']="negloglik",
-    sample_size: int = 1000,
-    seed = 1998
-) -> Tensor:
+    hyperparameter_decorrelation
+):
     
-    torch.manual_seed(seed) 
     
     #Likelihood
     return_dict_model_loss: Tensor = model.__log_likelihood_loss__(y=samples)
-    log_likelihood = return_dict_model_loss.get('log_likelihood_data')
-    
-    
-    ##Priors
+    neg_log_likelihood: Tensor = return_dict_model_loss.get('negative_log_likelihood_data')
+        
+        
+    ##Priors Init
     #Transformation
-    a = model.transformation.priors.hyperprior_sigma_dist
-    #Decorrelation
-    samples_deco_sigma = [
-        layer.priors.hyperprior_sigma_dist  # distribution objects
-        for layer in model.decorrelation_layers
-        ]
-    samples_deco_alpha = [
-        layer.priors.hyperprior_alpha_dist  # distribution objects
-        for layer in model.decorrelation_layers
-        ]
-    
-    
-    sigma2_deco_samples: list[Tensor]= [d.sample(()) for d in samples_deco_sigma] 
-    alpha2_deco_samples: list[Tensor] = [d.sample(()) for d in samples_deco_alpha]     
-    
-    # stack per-sample results into a single tensor
-    sigmas_prior = torch.stack([
-    bayesian_splines.log_gamma_prior(
-        hyperparameter_decorrelation['sigma_a'],
-        hyperparameter_decorrelation['sigma_b'],
-        s
-    )
-    for s in sigma2_deco_samples
-    ])
-    
-    log_prior_sigma = sigmas_prior.sum()
-    
-    alphas_prior = torch.stack([
-    bayesian_splines.log_gamma_prior(
-        hyperparameter_decorrelation['tau_a'],
-        hyperparameter_decorrelation['tau_b'],
-        s
-    )
-    for s in alpha2_deco_samples
-    ])
-    
-    log_prior_alpha = alphas_prior.sum()
-    
-    
-    
-    
-    
-    
-    if objective_type == "negloglik":
-        
-        start_gamma = torch.zeros(model.params.shape[0])
-        
-        
-        ## Storage ##
-        sigmas2: Tensor = torch.empty(sample_size, device=model.device, dtype=torch.float64)
-        taus2: Tensor = torch.empty(sample_size, device=model.device, dtype=torch.float64)
-        
-        
-        return_dict_model_loss: dict[str, Tensor | float | None] = model.__log_likelihood_loss__(
-            y=samples, mean_loss=True # True mean for init
+    neg_transformation_prior, gammas_T = bayesian_splines.defining_prior(
+            model=model, hyperparameter= hyperparameter_transformation, is_init=True, is_transformation=True
         )
         
-        log_likelihood: Tensor = return_dict_model_loss["negative_log_likelihood_data"]
-        
-        for _ in sample_size:
-            
-            alpha_T_samples: Tensor = model.transformation.priors.prior_distr_alpha.sample((1,))
-            sigma_T_samples: Tensor = model.transformation.priors.prior_distr_sigma.sample((1,))    
-            
-            
-            print(_)
-            
-            
-        
-        # Transformation
-        
-        
-        """# Decorrelation
-        alpha_D_samples: Tensor = model.transformation.priors.prior_distr_alpha.sample((sample_size,))
-        sigma_D_samples: Tensor = model.transformation.priors.prior_distr_sigma.sample((sample_size,))
-        """
-        
-        #Sigma
-        log_prior_sigma: Tensor = bayesian_splines.log_gamma_prior(
-            a=model.transformation.priors.sigma_a,
-            b=model.transformation.priors.sigma_b,
-            x=sigma_T_samples
-            )
-        log_prior_alpha: Tensor = bayesian_splines.log_gamma_prior(
-            a=model.transformation.priors.sigma_a,
-            b=model.transformation.priors.sigma_b,
-            x=alpha_T_samples
+    #Decorrelation
+    neg_decorrelation_prior, gammas_D = bayesian_splines.defining_prior(
+            model=model, hyperparameter=hyperparameter_decorrelation, is_init=True
             )
         
-        log_prior_gamma_given_tau: Tensor = bayesian_splines.log_normal_distr(
-            K=model.transformation.priors.K_prior,
-            alpha_2= log_prior_alpha,
-            gamma=start_gamma
+    return {
+        'neg_posterior':neg_log_likelihood + neg_decorrelation_prior + neg_transformation_prior,
+        'decorrelation_prior': neg_decorrelation_prior,
+        'transformation_prior': neg_transformation_prior,
+        }
+
+def VI_bayesian_training_objective(
+    model: "GTM",
+    samples: Tensor,
+    hyperparameter_transformation,
+    hyperparameter_decorrelation,
+    objective_type:Literal['negloglik']="negloglik",
+    vi_model: VI_Model= None,
+    sample_size: int = 1000,
+    seed = 11041998
+)-> dict[str, Tensor]:
+    
+    #torch.manual_seed(seed) 
+    if objective_type == "negloglik":
+        
+        return_unnorm_post= bayesian_traininig_objective(
+            model=model,
+            samples=samples,
+            hyperparameter_transformation=hyperparameter_transformation,
+            hyperparameter_decorrelation= hyperparameter_decorrelation
             )
         
-    return log_likelihood + log_prior_gamma_given_tau + log_prior_sigma + log_prior_alpha
+        
+        vi_model
+        
+        
+    return return_unnorm_post

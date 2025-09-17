@@ -1,12 +1,17 @@
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, TYPE_CHECKING
 
 import torch
 import numpy as np
 
 from torch.distributions import InverseGamma, Laplace
 from torch import Tensor
+from torch.nn.functional import softplus
 from torch.linalg import matrix_rank
+
+
+if TYPE_CHECKING:
+    from gtm_model.gtm import GTM 
 
 def generate_diagonal_matrix(n):
     matrix = torch.eye(n, dtype=torch.float32)  # Create an identity matrix of size n
@@ -35,13 +40,158 @@ class bayesian_splines:
     @staticmethod
     def log_normal_distr(K: Tensor, alpha_2: Tensor, gamma: Tensor) -> Tensor:
         
-        if K.shape[0] != gamma.shape[1]:
-            raise KeyError('Dimensions does not coincide')
-            
-            
         r: int = matrix_rank(K).item()
-        cov: Tensor = (gamma.T @ K @ gamma) / (2*alpha_2)
+        cov: Tensor = (gamma @ K @ gamma.T) / (2*alpha_2) #TODO CHECK DIMENSIONS
         return -0.5 * r * torch.log(alpha_2) - cov
+    
+    @staticmethod
+    def defining_prior(
+        model: "GTM",
+        hyperparameter,
+        gammas= None,
+        is_init: bool= False,
+        is_transformation = False
+        ) -> tuple[Tensor, list[Tensor]]:
+        
+        
+        sub_model = model.transformation if is_transformation else model.decorrelation_layers
+        
+        
+        if not is_transformation:
+            samples_deco_sigma = [
+                layer.priors.hyperprior_sigma_dist  # distribution objects
+                for layer in sub_model #model.decorrelation_layers
+                ]
+            
+            samples_deco_alpha = [
+                layer.priors.hyperprior_alpha_dist  # distribution objects
+                for layer in sub_model#model.decorrelation_layers
+                ]
+            
+            sigma2_deco_samples: list[Tensor]= [d.sample(()) for d in samples_deco_sigma] 
+            alpha2_deco_samples: list[Tensor] = [d.sample(()) for d in samples_deco_alpha]     
+            
+            # stack per-sample results into a single tensor
+            sigmas_prior = torch.stack([
+            bayesian_splines.log_gamma_prior(
+                hyperparameter['sigma_a'],
+                hyperparameter['sigma_b'],
+                s
+            )
+            for s in sigma2_deco_samples
+            ])
+            
+            log_prior_sigma: Tensor = -1 * sigmas_prior.sum()
+            
+            alphas_prior = torch.stack([
+            bayesian_splines.log_gamma_prior(
+                hyperparameter['tau_a'],
+                hyperparameter['tau_b'],
+                s
+            )
+            for s in alpha2_deco_samples
+            ])
+            
+            log_prior_alpha: Tensor = -1 * alphas_prior.sum()
+            
+            Ks: list[Tensor] = [layer.priors.K_prior for layer in model.decorrelation_layers] 
+            
+            if is_init:
+                gammas: list[Tensor] = [layer.params for layer in model.decorrelation_layers]
+                
+            total_log_gamma = torch.zeros((), device=model.device, dtype=torch.float32)
+            
+            for K, alpha_prior, gamma in zip(Ks, alphas_prior, gammas):
+                pieces: list = []
+                M = gamma.shape[1]
+                for m in range(M):
+                    gamma_m = gamma[:, m].unsqueeze(0)  # shape (1, K) if your function expects batch
+                    # log N(0, (alpha_prior^{-1} Q^{-1}))  == log MVN with precision (alpha_prior * Q)
+                    logp = bayesian_splines.log_normal_distr(
+                        K=K,
+                        alpha_2=alpha_prior,   # see note below about meaning
+                        gamma=gamma_m          # the K-vector for this edge
+                        # optionally pass Q or its Cholesky if your function takes it
+                        )
+                    pieces.append(logp)
+                
+                total_log_gamma: Tensor = total_log_gamma + torch.stack(pieces).sum()
+            
+            
+            decorrelation_prior: Tensor = total_log_gamma + log_prior_sigma + log_prior_alpha
+            
+            
+            return -1*decorrelation_prior, gammas
+
+        else: 
+            
+            sigma_samples: Tensor = sub_model.priors.hyperprior_sigma_dist.sample(())
+            sigmas_prior: Tensor = bayesian_splines.log_gamma_prior(a=hyperparameter['sigma_a'], b=hyperparameter['sigma_b'], x=sigma_samples)
+            
+            
+            
+            alpha_samples: Tensor = sub_model.priors.hyperprior_alpha_dist.sample(())
+            alpha_prior: Tensor = bayesian_splines.log_gamma_prior(a=hyperparameter['tau_a'], b=hyperparameter['tau_b'],x=alpha_samples)
+            
+            
+            K: Tensor = sub_model.priors.K_prior
+            
+            if is_init:
+                gammas = sub_model.padded_params
+            
+            gammas = bayesian_splines._restrict_parameters_(
+                    params_a= gammas,
+                    covariate=False,
+                    degree=sub_model.max_degree,
+                    monotonically_increasing=sub_model.monotonically_increasing,
+                    device=sub_model.device
+                )
+            
+            pieces = []
+            M = gammas.shape[1]
+            
+            for m in range(M):
+                
+                gamma_m = gammas[:, m].unsqueeze(0)
+                logp: Tensor = bayesian_splines.log_normal_distr(
+                        K=K,
+                        alpha_2=alpha_prior,   # see note below about meaning
+                        gamma=gamma_m          # the K-vector for this edge
+                        # optionally pass Q or its Cholesky if your function takes it
+                        )
+                pieces.append(logp)
+                
+            transformation_prior= torch.stack(pieces).sum()
+            
+            return -1*transformation_prior
+    
+    @staticmethod
+    def _restrict_parameters_(
+        params_a: Tensor,
+        covariate: bool,
+        degree: int,
+        monotonically_increasing: bool,
+        device: torch.device=None
+    ):
+        
+        if not monotonically_increasing:
+            return params_a.clone()
+
+        params_restricted: Tensor = params_a.clone().T  # [B, K]
+        B, K = params_restricted.shape
+
+        params_restricted[:, 1:] = softplus(params_restricted[:, 1:])
+        
+        # Create upper triangular summing matrix: [K, K]
+        sum_matrix: Tensor = torch.triu(input=torch.ones(K, K, device=device))  # [K, K]
+        
+        # Apply cumulative sum: [B, K] x [K, K]ᵗ = [B, K]
+        params_restricted: Tensor = torch.matmul(input=params_restricted, other=sum_matrix)
+
+        return params_restricted.T
+    
+    
+    
 
 @dataclass(frozen=True)
 class BayesianPriors:
@@ -53,7 +203,6 @@ class BayesianPriors:
     K_prior: Tensor
     hyperprior_sigma_dist: InverseGamma
     hyperprior_alpha_dist: InverseGamma
-    prior_gamma_given_tau : callable
 
 
 class BayesianInitializer:
@@ -95,8 +244,6 @@ class BayesianInitializer:
         hyperprior_alpha_dist: InverseGamma = bayesian_splines.gamma_hyperprior_distribution(a=alpha_a, b=alpha_b)
         
         
-        log_norm_distr_for_gamma_given_tau = bayesian_splines.log_normal_distr
-        
         
         return BayesianPriors(
             sigma_a=sigma_a,
@@ -106,7 +253,6 @@ class BayesianInitializer:
             order_prior_diff=order_prior_diff,
             K_prior=K_prior,
             hyperprior_sigma_dist=hyperprior_sigma_dist,
-            hyperprior_alpha_dist=hyperprior_alpha_dist,
-            prior_gamma_given_tau= log_norm_distr_for_gamma_given_tau
+            hyperprior_alpha_dist=hyperprior_alpha_dist
         )
     

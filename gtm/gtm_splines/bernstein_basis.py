@@ -211,12 +211,10 @@ def restrict_parameters(
             raise ValueError("K must be divisible by (degree + 1) when covariate == 1")
 
         # Apply softplus to all but the intercepts (i.e., first entry in each degree+1 block)
-        params_restricted = params_restricted.view(
-            B, degree + 1, num_vars
-        )  # [B, D+1, V]
-        params_restricted[:, 1:, :] = torch.nn.functional.softplus(
-            params_restricted[:, 1:, :]
-        )
+        params_restricted = params_restricted.view(B, degree + 1, num_vars)  # [B, D+1, V]
+        
+        params_restricted[:, 1:, :] = torch.nn.functional.softplus(params_restricted[:, 1:, :])
+        
         params_restricted = params_restricted.view(B, K)  # back to [B, K]
 
         # Build Kronecker sum matrix: [K, K]
