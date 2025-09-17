@@ -7,69 +7,167 @@ from torch import nn, Tensor
 from typing import TYPE_CHECKING
 
 from gtm.gtm_layers.layer_utils import bayesian_splines
+from gtm.gtm_model import gtm
 
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
 
 
-class variational_inference(nn.Module):
+def _flatten_state_dict(sd):
+    """Flatten a (detached) state_dict with only tensor leaves into a single vector
+    and keep a schema to reconstruct the dict later."""
+    keys = []
+    shapes = []
+    flats = []
+    for k, v in sd.items():
+        if not torch.is_tensor(v):
+            continue
+        keys.append(k)
+        shapes.append(v.shape)
+        flats.append(v.reshape(-1))
+    flat = torch.cat(flats) if flats else torch.empty(0)
+    schema = list(zip(keys, shapes))
+    return flat, schema
+
+
+def _unflatten_to_state_dict(flat: Tensor, schema):
+    """Inverse of _flatten_state_dict."""
+    out = {}
+    idx = 0
+    for k, shape in schema:
+        n = int(torch.tensor(shape).prod().item())
+        out[k] = flat[idx:idx+n].reshape(shape)
+        idx += n
+    return out
+
+
+class VI_Model(nn.Module):
     def __init__(
         self,
-        mean_field: bool= True,
-        start_mu: Tensor = None,
-        start_sigma: Tensor = None,
-        hyperparameter_transformation: dict[str, float] = None,
-        hyperparameter_decorrelation: dict[str, float] = None
-        
+        model: "GTM",
+        init_scale: float = 0.05,
+        learn_scale: bool = True,
+        device: torch.device | str = "cpu",
         ):
+        
         super().__init__()
         
+        self.model = model
+        self.device = model.device
         
-        self.hyperparameter_transformation: dict[str, float] = hyperparameter_transformation
-        self.hyperparameter_decorrelation: dict[str, float]= hyperparameter_decorrelation
-        self.mu: Tensor = start_mu
-        self.sigma: Tensor = start_sigma
-        self.mean_field: bool = mean_field
-        self.distribution_for_aprox = Normal(self.mu, self.sigma)
-    
-    def kl_standard_normal(self, mu, std):
-    # 0.5 * (mu^2 + std^2 - 1 - log std^2)
-        return 0.5 * (mu.pow(2) + std.pow(2) - 1.0 - 2.0*torch.log(std + 1e-8))
-    
-    def elbo(self, x, y, mc_samples=1):
-        # Reparameterized samples from q
-        std_w = softplus(rho_w)
-        std_b = softplus(rho_b)
-
-        # Monte Carlo estimate of E_q[log p(y|x, w, b)]
-        loglik = 0.0
-        for _ in range(mc_samples):
-            eps_w = torch.randn_like(mu_w)
-            eps_b = torch.randn_like(mu_b)
-            w = mu_w + std_w * eps_w
-            b = mu_b + std_b * eps_b
-
-            mean = x * w + b
-            ll = self.distribution_for_aprox.log_prob(y).sum()  # sum over data
-            loglik = loglik + ll
-
-        loglik = loglik / mc_samples
-
-        # KL terms (sum over dimensions; here each is scalar)
-        kl = self.kl_standard_normal(mu_w, std_w) + self.kl_standard_normal(mu_b, std_b)
-        kl = kl.sum()
-
-        # ELBO
-        return loglik - kl
-    
         
-    def forward(
+        # Snapshot an initial state dict to define θ's dimension and schema.
+        with torch.no_grad():
+            base_sd = {k: v.detach().to(self.device) for k, v in model.state_dict().items() if torch.is_tensor(v)}
+            theta0, self._schema = _flatten_state_dict(base_sd)
+
+        D = theta0.numel()
+
+        # Variational parameters: μ and ρ with σ = softplus(ρ)
+        self.mu = nn.Parameter(theta0.clone())
+        self.rho = nn.Parameter(torch.full((D,), math.log(math.exp(init_scale) - 1.0)))
+        self.learn_scale = learn_scale
+        if not learn_scale:
+            self.rho.requires_grad_(False)
+
+        self._normal0 = torch.distributions.Normal(
+            torch.zeros(D, device=self.device),
+            torch.ones(D, device=self.device),
+        )
+    
+    @property
+    def sigma(self) -> Tensor:
+        return nn.functional.softplus(self.rho)
+        
+        
+    def sample_theta(self, num_samples: int = 1) -> Tensor:
+        """Reparameterized samples θ = μ + σ ⊙ ε, ε ~ N(0, I). Shape: [S, D]."""
+        eps = self._normal0.sample((num_samples,))
+        return self.mu + self.sigma * eps
+
+    def log_q(self, theta: Tensor) -> Tensor:
+        """log q_phi(θ) under mean-field Normal. theta shape [S, D] or [D]. Returns [S]."""
+        mu = self.mu
+        sigma = self.sigma
+        # compute per-sample log prob
+        if theta.dim() == 1:
+            theta = theta.unsqueeze(0)
+        S, D = theta.shape
+        # Normal log-density per dimension then sum
+        log_det = torch.sum(torch.log(sigma))
+        quad = 0.5 * torch.sum(((theta - mu) / sigma) ** 2, dim=1)
+        const = 0.5 * D * math.log(2 * math.pi)
+        return -(const + log_det + quad)
+
+    def _theta_to_state_dict(self, theta_1d: Tensor):
+        return _unflatten_to_state_dict(theta_1d, self._schema)
+
+    @torch.no_grad()
+    def set_model_params(self, theta_1d: Tensor):
+        """Load θ back into the GTM model."""
+        sd_new = self._theta_to_state_dict(theta_1d)
+        # Use existing state_dict to preserve buffers that are not in θ
+        full_sd = self.model.state_dict()
+        for k, v in sd_new.items():
+            full_sd[k] = v
+        self.model.load_state_dict(full_sd, strict=False)
+
+    def step(
         self,
-        mu,
-        sigma,
-        ):
-        
-        
-        elbo = self.elbo(x,y)
-        
-        return self.distribution_for_aprox(mu, sigma).sample(1)
+        samples: Tensor,
+        hyperparameter_transformation,
+        hyperparameter_decorrelation,
+        objective_fn,
+        objective_type = "negloglik",
+        mc_samples: int = 1,
+        seed: int | None = None,
+    ) :
+        """
+        One stochastic-ELBO step (no optimizer step).
+        Returns dict with 'loss' and components for logging.
+        """
+        if seed is not None:
+            torch.manual_seed(seed)
+
+        # Sample θ ~ q
+        thetas = self.sample_theta(mc_samples)  # [S, D]
+        log_q_vals = self.log_q(thetas)         # [S]
+
+        log_p_tilde_vals = []  # log unnormalized posterior per sample
+
+        for s in range(mc_samples):
+            theta_s = thetas[s]
+            # Push θ into model
+            self.set_model_params(theta_s)
+
+            # Use your provided objective to compute: posterior = NLL + priors
+            out = objective_fn(
+                model=self.model,
+                samples=samples,
+                hyperparameter_transformation=hyperparameter_transformation,
+                hyperparameter_decorrelation=hyperparameter_decorrelation,
+                objective_type=objective_type,
+                vi_model=self,            # optional: in case you want it
+                sample_size=1,
+                seed=seed if seed is not None else 11041998,
+            )
+            # Your function returns a POSITIVE objective (NLL + priors).
+            # log \tilde p(θ, y) = - (NLL + priors)
+            neglogpost = out["posterior"]
+            log_p_tilde = -neglogpost
+            log_p_tilde_vals.append(log_p_tilde.reshape(()))
+
+        log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
+
+        # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
+        # (Note: additive constant log p(y) cancels in optimization)
+        loss = torch.mean(log_q_vals - log_p_tilde_vals)
+
+        return {
+            "loss": loss,
+            "mean_log_q": torch.mean(log_q_vals).detach(),
+            "mean_log_p_tilde": torch.mean(log_p_tilde_vals).detach(),
+            "sigma_mean": self.sigma.mean().detach(),
+            "sigma_max": self.sigma.max().detach(),
+            "sigma_min": self.sigma.min().detach(),
+        }

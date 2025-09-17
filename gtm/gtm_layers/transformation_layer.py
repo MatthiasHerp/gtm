@@ -109,7 +109,7 @@ class Transformation(nn.Module):
         self.varying_degrees: bool = len(set(self.degree)) > 1
         self.padded_knots = self.padded_knots.to(self.device) if self.varying_degrees else self.padded_knots[:, 0].to(self.device)
         # Create a mask to track valid values
-        max_params: int = max(self.degree) + self.spline_order - 1
+        max_params= max(self.degree) + self.spline_order - 1
         # num_params = inner_knots + degree_spline -1 e.g. degree + 3 -1 = degree +2
         
         self.padded_params_mask: Tensor = torch.vstack([

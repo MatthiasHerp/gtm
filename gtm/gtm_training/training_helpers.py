@@ -20,7 +20,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.optim import Optimizer, Adam
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from gtm.gtm_training.training_bayes import variational_inference
+from gtm.gtm_training.training_bayes import VI_Model
 
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
@@ -838,17 +838,10 @@ def train_bayes(
         num_cycles=0.5,
         last_epoch=-1,
     )
-
     
-    start_mu = 0
-    start_sigma = 1
     
-    VI = variational_inference(
-        start_mu= start_mu, 
-        start_sigma=start_sigma,
-        hyperparameter_decorrelation=hyperparameters_decorrelation,
-        hyperparameter_transformation= hyperparameters_transformation
-        )  # keep a reference; call with your real signature
+    
+    VI = VI_Model(model=model)  # keep a reference; call with your real signature
     
     start = time.time()
     for i in tqdm(iterable=range(iterations)):
@@ -866,10 +859,11 @@ def train_bayes(
                         samples=y_train,
                         hyperparameters_decorrelation= hyperparameters_decorrelation,
                         hyperparameters_transformations= hyperparameters_transformation,
-                        VI_model_estimator=VI
+                        VI_model_estimator= VI
+                        
                     )
 
-                    loss: Tensor = return_dict_model_training["loss_with_penalties"].mean()
+                    loss: Tensor = return_dict_model_training["posterior"].mean()
                     loss.backward()
                     opt.step()
                     scheduler.step()
