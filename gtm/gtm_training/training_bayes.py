@@ -114,12 +114,13 @@ class VI_Model(nn.Module):
 
     def step(
         self,
-        samples: Tensor,
-        hyperparameter_transformation,
-        hyperparameter_decorrelation,
-        objective_fn,
-        objective_type = "negloglik",
-        mc_samples: int = 1,
+        #samples: Tensor,
+        #hyperparameter_transformation,
+        #hyperparameter_decorrelation,
+        #objective_fn,
+        log_p_tilde_vals,
+        #objective_type = "negloglik",
+        mcmc_samples: int = 1,
         seed: int | None = None,
     ) :
         """
@@ -130,18 +131,18 @@ class VI_Model(nn.Module):
             torch.manual_seed(seed)
 
         # Sample θ ~ q
-        thetas = self.sample_theta(mc_samples)  # [S, D]
+        thetas = self.sample_theta(mcmc_samples)  # [S, D]
         log_q_vals = self.log_q(thetas)         # [S]
 
-        log_p_tilde_vals = []  # log unnormalized posterior per sample
+        #log_p_tilde_vals = []  # log unnormalized posterior per sample
 
-        for s in range(mc_samples):
+        for s in range(mcmc_samples):
             theta_s = thetas[s]
             # Push θ into model
             self.set_model_params(theta_s)
 
             # Use your provided objective to compute: posterior = NLL + priors
-            out = objective_fn(
+            """out = objective_fn(
                 model=self.model,
                 samples=samples,
                 hyperparameter_transformation=hyperparameter_transformation,
@@ -158,7 +159,7 @@ class VI_Model(nn.Module):
             log_p_tilde_vals.append(log_p_tilde.reshape(()))
 
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
-
+"""
         # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
         # (Note: additive constant log p(y) cancels in optimization)
         loss = torch.mean(log_q_vals - log_p_tilde_vals)
