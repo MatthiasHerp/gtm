@@ -75,7 +75,7 @@ if __name__ == "__main__":
             _: dict[str, torch.Tensor] = model.train(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
-                iterations=1000,
+                iterations=1,
                 optimizer="Adam",
                 adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
                 penalty_lasso_conditional_independence=penalty_lasso_conditional_independence,

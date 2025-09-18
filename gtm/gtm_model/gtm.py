@@ -557,7 +557,8 @@ class GTM(nn.Module):
                     )
 
             return return_dict_nf_mctm
-    def latent_space_representation(self, y) -> Tensor:
+
+    def latent_space_representation(self, y):
         """
         Returns the fully transformed latent space Z for a given input Y. Z is distributed as a Gaussian N(0,I).
 
@@ -578,13 +579,16 @@ class GTM(nn.Module):
         return_dict = self.forward(y)  # , covariate) #, train=False, evaluate=True)
         return return_dict["output"]
 
-    def __log_likelihood_loss__(self, y: Tensor, mean_loss: bool=True) -> dict[str, Tensor|float|None]:
+    def __log_likelihood_loss__(self, y, mean_loss=True):
         # covariate=False, train=True, evaluate=True,
 
-        return_dict_nf_mctm: dict[str, Tensor|float|None] = log_likelihood(model=self, samples=y, mean_loss=mean_loss)  
-        # train_covariates=covariate, train=train, evaluate=evaluate,
+        return_dict_nf_mctm = log_likelihood(
+            model=self, samples=y, mean_loss=mean_loss
+        )  # train_covariates=covariate, train=train, evaluate=evaluate,
 
-        return_dict_nf_mctm["negative_log_likelihood_data"] = -1*return_dict_nf_mctm["log_likelihood_data"]
+        return_dict_nf_mctm["negative_log_likelihood_data"] = (
+            -1 * return_dict_nf_mctm["log_likelihood_data"]
+        )
 
         return return_dict_nf_mctm
 

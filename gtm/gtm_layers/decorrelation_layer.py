@@ -188,7 +188,9 @@ class Decorrelation(nn.Module):
         )
         return {
             "output": input.clone(),  # .requires_grad_(True),
-            "log_d": torch.zeros(input.size(), device=self.device),  # .requires_grad_(True),
+            "log_d": torch.zeros(
+                input.size(), device=self.device
+            ),  # .requires_grad_(True),
             "transformation_second_order_ridge_pen_sum": 0,
             "second_order_ridge_pen_sum": 0,
             "first_order_ridge_pen_sum": 0,
@@ -198,7 +200,7 @@ class Decorrelation(nn.Module):
             # "der2_lambda_matrix": lambda_matrix_general.clone()
         }
 
-    def compute_starting_values_bspline(self, start_value=0.001) -> Tensor:
+    def compute_starting_values_bspline(self, start_value=0.001):
         p = torch.FloatTensor(
             np.repeat(
                 np.repeat(start_value, self.degree + self.spline_order - 1),
@@ -207,16 +209,15 @@ class Decorrelation(nn.Module):
         )
 
         if self.num_lambdas == 1:
-            return nn.Parameter(p.unsqueeze(1))
-        
+            params = nn.Parameter(p.unsqueeze(1))
         else:
-            
-            return nn.Parameter(
+            params = nn.Parameter(
                 torch.reshape(
                     p, (self.degree + self.spline_order - 1, int(self.num_lambdas))
                 )
             )
 
+        return params
 
     def bspline_prediction_method(
         self,
@@ -488,12 +489,16 @@ class Decorrelation(nn.Module):
                             multi=True,
                         )
 
-                        return_dict["second_order_ridge_pen_sum"] = return_dict["second_order_ridge_pen_sum"] + second_order_ridge_pen_current
-                        return_dict["first_order_ridge_pen_sum"] = return_dict["first_order_ridge_pen_sum"] + first_order_ridge_pen_current
-                        return_dict["param_ridge_pen_sum"] = return_dict["param_ridge_pen_sum"] + param_ridge_pen_current
+                        return_dict[
+                            "second_order_ridge_pen_sum"
+                        ] += second_order_ridge_pen_current
+                        return_dict[
+                            "first_order_ridge_pen_sum"
+                        ] += first_order_ridge_pen_current
+                        return_dict["param_ridge_pen_sum"] += param_ridge_pen_current
 
-                    if return_scores_hessian:
-                        if self.params_multiplier:
+                    if return_scores_hessian == True:
+                        if self.params_multiplier is not False:
                             warnings.warn(
                                 "Warning: return_scores_hessian not implemented for multiplicative effect. The der_lambda_matrix and der2_lambda_matrix will be wrong."
                             )
@@ -523,9 +528,10 @@ class Decorrelation(nn.Module):
                         der_lambda_value = 0
                         der2_lambda_value = 0
 
-                    if self.params_multiplier:
-                        lambda_value_multiplier_total = lambda_value_multiplier_total * lambda_value_multiplier
-                    
+                    if self.params_multiplier is not False:
+                        lambda_value_multiplier_total = (
+                            lambda_value_multiplier_total * lambda_value_multiplier
+                        )
                     lambda_value_total += lambda_value * input[:, covar_num]
 
                     params_index += 1
@@ -538,11 +544,18 @@ class Decorrelation(nn.Module):
                     # return_dict["der2_lambda_matrix"][:, var_num, covar_num] = der_lambda_value + der2_lambda_value * input[:, covar_num] + der_lambda_value
 
                 # filling in the multiplicative effect into the lambda matrix
-                return_dict["lambda_matrix"][:, var_num, var_num] = lambda_value_multiplier_total
+                return_dict["lambda_matrix"][
+                    :, var_num, var_num
+                ] = lambda_value_multiplier_total
 
-                return_dict["output"][:, var_num] = lambda_value_multiplier_total * input[:, var_num] + lambda_value_total
-                
-                return_dict["log_d"][:, var_num] += torch.log(torch.abs(lambda_value_multiplier_total))
+                return_dict["output"][:, var_num] = (
+                    lambda_value_multiplier_total * input[:, var_num]
+                    + lambda_value_total
+                )
+
+                return_dict["log_d"][:, var_num] += torch.log(
+                    torch.abs(lambda_value_multiplier_total)
+                )
 
         return return_dict
 
@@ -556,11 +569,9 @@ class Decorrelation(nn.Module):
         return_penalties=False,
         return_scores_hessian=False,
     ):
-        
-        use_loop : bool = inverse or self.number_variables == 2 or not self.vmap
 
-        if use_loop:
-            return self.for_loop_forward(
+        if inverse == True or self.number_variables == 2 or self.vmap == False:
+            return_dict = self.for_loop_forward(
                 input,
                 log_d,
                 covariate,
@@ -569,11 +580,12 @@ class Decorrelation(nn.Module):
                 return_scores_hessian=return_scores_hessian,
             )
         # elif self.vmap == True and self.number_variables > 2:
-        
         else:
-            return self.vmap_forward(
+            return_dict = self.vmap_forward(
                 input, log_d, covariate, return_penalties=return_penalties
             )
+
+        return return_dict
 
     def __repr__(self):
         return f"Decorrelation(degree={self.degree}, number_variables={self.number_variables}, spline_range={self.spline_range}, spline={self.spline}, span_factor={self.span_factor}, span_restriction={self.span_restriction}, number_covariates={self.number_covariates}, vectorised_mapping={self.vmap})"

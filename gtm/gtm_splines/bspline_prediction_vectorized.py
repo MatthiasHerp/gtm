@@ -1,9 +1,10 @@
+
 import numpy as np
 import torch
-from torch import Tensor
 
 from gtm.gtm_splines.bernstein_basis import kron
-from gtm.gtm_splines.splines_utils import (ReLULeR, adjust_ploynomial_range, custom_sigmoid)
+from gtm.gtm_splines.splines_utils import (ReLULeR, adjust_ploynomial_range,
+                                           custom_sigmoid)
 
 ##################################################################################################################################################################################################################
 ########################## Naive ##########################
@@ -193,7 +194,7 @@ def Naive_Basis(x, spline_range, degree, span_factor, knots, derivativ=0, order=
 
 def compute_multivariate_bspline_basis(
     input, degree, spline_range, span_factor, knots, covariate=False, derivativ=0
-) -> Tensor:
+):
     # We essentially do a tensor prodcut of two splines! : https://en.wikipedia.org/wiki/Bernstein_polynomial#Generalizations_to_higher_dimension
 
     bspline_basis_list = []
@@ -333,16 +334,16 @@ def deboor_algorithm_varying_degrees_first_derivativ(x, k, t, c, p):
     return q[:, p - 1]
 
 
-def run_deBoor_varying_degrees(x, t, c, p, d) -> Tensor:
+def run_deBoor_varying_degrees(x, t, c, p, d):
     # Compute knot indices
-    k: Tensor = compute_k_varying_degrees(x, t)  # , n)
+    k = compute_k_varying_degrees(x, t)  # , n)
 
     if d == 0:
         # Compute B-spline outputs
-        prediction: Tensor = deboor_algorithm_varying_degrees(x, k, t, c, p).squeeze()
+        prediction = deboor_algorithm_varying_degrees(x, k, t, c, p).squeeze()
     elif d == 1:
         # Compute B-spline outputs
-        prediction: Tensor = deboor_algorithm_varying_degrees_first_derivativ(
+        prediction = deboor_algorithm_varying_degrees_first_derivativ(
             x, k, t, c, p
         ).squeeze()
 
@@ -553,63 +554,58 @@ def run_deBoor_fixed_degrees(x, t, c, p, d):
 
 # Bspline Prediction using the deBoor algorithm
 def bspline_prediction_vectorized(
-    params_a: Tensor,
-    input_a: Tensor,
-    knots: Tensor,
-    degree: list[int]|int,
-    spline_range: Tensor,
-    monotonically_increasing: bool=False,
-    derivativ: int=0,
-    return_penalties:bool=False,
-    calc_method: str="deBoor",  # 'Naive_Basis', #before: deBoor
-    span_factor: float=0.1,
-    span_restriction: str="reluler",
-    covariate: bool=False,
-    params_covariate: bool=False,
-    covariate_effect: str="multiplicativ",
-    penalize_towards: float=0,
-    order:int =3,
-    varying_degrees: bool=True,
-    params_a_mask: bool=None,
+    params_a,
+    input_a,
+    knots,
+    degree,
+    spline_range,
+    monotonically_increasing=False,
+    derivativ=0,
+    return_penalties=False,
+    calc_method="deBoor",  # 'Naive_Basis', #before: deBoor
+    span_factor=0.1,
+    span_restriction="reluler",
+    covariate=False,
+    params_covariate=False,
+    covariate_effect="multiplicativ",
+    penalize_towards=0,
+    order=3,
+    varying_degrees=True,
+    params_a_mask=None,
 ):  # device=None
 
-    input_a_clone: Tensor = input_a
+    input_a_clone = input_a
 
     if span_restriction == "sigmoid":
-    
-        input_a_clone: Tensor = custom_sigmoid(input=input_a_clone, polynomial_range=spline_range)
-    
+        input_a_clone = custom_sigmoid(input_a_clone, spline_range)
     elif span_restriction == "reluler":
-    
-        reluler: ReLULeR = ReLULeR(polynomial_range=spline_range)
+        reluler = ReLULeR(spline_range)
         input_a_clone = reluler.forward(input_a_clone)
-
+    else:
+        pass
 
     if calc_method == "deBoor":
 
-        if varying_degrees:
-            prediction: Tensor = run_deBoor_varying_degrees(
+        if varying_degrees == True:
+            prediction = run_deBoor_varying_degrees(
                 x=input_a_clone.T, t=knots.T, c=params_a.T, p=order, d=derivativ
             )
         else:
-            prediction: Tensor = run_deBoor_fixed_degrees(
+            prediction = run_deBoor_fixed_degrees(
                 x=input_a_clone.T, t=knots.T, c=params_a.T, p=order, d=derivativ
             )
     elif calc_method == "Naive":
-        
-        if varying_degrees:
-            prediction: Tensor = Naive_varying_degree(
+        if varying_degrees == True:
+            prediction = Naive_varying_degree(
                 x=input_a_clone.T, t=knots.T, c=params_a, p=order, d=derivativ
             )
-            
         else:
-            prediction: Tensor = Naive_fixed_degree(
+            prediction = Naive_fixed_degree(
                 x=input_a_clone.T, t=knots.T, c=params_a, p=order, d=derivativ
             )
 
     # Adding Covariate in a GAM manner
-    if covariate:
-        
+    if covariate is not False:
         params_covariate_restricted = params_covariate.clone().contiguous()
 
         if order == 2:
@@ -617,10 +613,10 @@ def bspline_prediction_vectorized(
         elif order == 3:
             n = degree + 2
 
-        knots_covariate: Tensor = torch.linspace(
-            start= 0 - order * 1,
-            end=1 + order * 1,
-            steps=n + 4,
+        knots_covariate = torch.linspace(
+            0 - order * 1,
+            1 + order * 1,
+            n + 4,
             dtype=torch.float32,
             device=input_a.device,
         )
@@ -630,28 +626,26 @@ def bspline_prediction_vectorized(
         )
 
         prediction = prediction * prediction_covariate
-    
+
     if return_penalties:
-        
-        if not varying_degrees:
-            second_order_ridge_pen: Tensor = torch.sum(torch.diff(params_a, n=2, dim=0) ** 2)
-            first_order_ridge_pen: Tensor = torch.sum(torch.diff(params_a, n=1, dim=0) ** 2)
-            param_ridge_pen: Tensor = torch.sum(
+        if varying_degrees == False:
+            second_order_ridge_pen = torch.sum(torch.diff(params_a, n=2, dim=0) ** 2)
+            first_order_ridge_pen = torch.sum(torch.diff(params_a, n=1, dim=0) ** 2)
+            param_ridge_pen = torch.sum(
                 (params_a - penalize_towards) ** 2
             )  # penalize_towards
         else:
-            second_order_ridge_pen: Tensor = torch.sum(
+            second_order_ridge_pen = torch.sum(
                 torch.diff(params_a, n=2, dim=0)[params_a_mask[2:, :].bool()] ** 2
             )
-            first_order_ridge_pen: Tensor = torch.sum(
+            first_order_ridge_pen = torch.sum(
                 torch.diff(params_a, n=1, dim=0)[params_a_mask[1:, :].bool()] ** 2
             )
-            param_ridge_pen: Tensor = torch.sum(
+            param_ridge_pen = torch.sum(
                 (params_a - penalize_towards)[params_a_mask.bool()] ** 2
             )
-            
         # Adding Covariate parameter penalisation values
-        if covariate:
+        if covariate is not False:
             second_order_ridge_pen += torch.sum(
                 torch.diff(params_covariate_restricted, n=2, dim=0) ** 2
             )
@@ -662,6 +656,11 @@ def bspline_prediction_vectorized(
                 (params_covariate_restricted - penalize_towards) ** 2
             )  # penalize_towards
 
-        return prediction.T, second_order_ridge_pen, first_order_ridge_pen, param_ridge_pen,
-        
-    return prediction.T
+        return (
+            prediction.T,
+            second_order_ridge_pen,
+            first_order_ridge_pen,
+            param_ridge_pen,
+        )
+    else:
+        return prediction.T

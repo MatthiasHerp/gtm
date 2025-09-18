@@ -147,10 +147,7 @@ class Transformation(nn.Module):
             self.prior_distr_sigma = priors.prior_distr_sigma
             self.prior_distr_alpha = priors.prior_distr_alpha"""
     
-    
-    def _generating_prior(self):
-        return 
-    
+
     def _defining_knots_list(self) -> List[Tensor]:
         
         number_of_bound_knots_per_side: int = self.spline_order 
@@ -190,57 +187,6 @@ class Transformation(nn.Module):
             )
         return knots_list
     
-    def _compute_starting_values_for_params(self) -> List[nn.ParameterList]:
-        """
-        Computes Starting Values for the Transformation layer with variable knots for different data dimensions.
-
-        :return: starting values tensor
-        """
-        par_restricted_opts: list = []
-
-        for var_num in range(self.number_variables):
-            min_val: Tensor = self.spline_range[0][var_num]
-            max_val: Tensor = self.spline_range[1][var_num]
-            
-            steps_base_knots:int = self.degree[var_num] + self.spline_order - 1
-            
-            par_unristricted: Tensor = torch.linspace(min_val, max_val, steps_base_knots)
-            
-            par_restricted_opt: Tensor = par_unristricted.clone()
-            gaps: Tensor = par_restricted_opt[1:] - par_restricted_opt[:-1]
-            
-            par_unristricted[1:] = torch.log(torch.exp(gaps) - 1)
-
-            if self.number_covariates == 1:
-                par_unristricted = par_unristricted.repeat(
-                    self.degree[var_num] + self.spline_order - 1, 1
-                ).T.flatten()
-                
-            elif self.number_covariates > 1:
-                raise NotImplementedError("Only implemented for 1 or No covariates!")
-
-            par_restricted_opts.append(nn.Parameter(par_unristricted))
-        return par_restricted_opts
-
-    def create_return_dict_transformation(self, input) -> dict[str, Tensor]:
-        output:Tensor=input.clone() if input.dim() > 1 else input.clone().unsqueeze(1)
-        log_d:Tensor=torch.zeros(input.size() if input.dim() > 1 else input.clone().unsqueeze(1),device=input.device)
-        init_dev:Tensor=torch.zeros(input.size() if input.dim() > 1 else input.unsqueeze(1).size(),device=input.device)
-        
-        return {
-            "output": output,
-            "log_d": log_d,
-            "transformation_second_order_ridge_pen_sum": 0,
-            "second_order_ridge_pen_sum": 0,
-            "first_order_ridge_pen_sum": 0,
-            "param_ridge_pen_sum": 0,
-            "scores": 0,
-            "hessian": 0,
-            "output_first_derivativ": init_dev,
-            "output_second_derivativ": init_dev,
-            "output_third_derivativ": init_dev,
-        }
-
     def _configure_spline(self, spline: Literal['bspline', 'bernstein']) -> None:
         """
         Centralizes selection-specific setup so it's not duplicated.
@@ -281,18 +227,77 @@ class Transformation(nn.Module):
         self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
         self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
     
+    def _compute_starting_values_for_params(self) -> List[nn.ParameterList]:
+        """
+        Computes Starting Values for the Transformation layer with variable knots for different data dimensions.
+
+        :return: starting values tensor
+        """
+        par_restricted_opts: list = []
+
+        for var_num in range(self.number_variables):
+            min_val: Tensor = self.spline_range[0][var_num]
+            max_val: Tensor = self.spline_range[1][var_num]
+            
+            steps_base_knots:int = self.degree[var_num] + self.spline_order - 1
+            
+            par_unristricted: Tensor = torch.linspace(min_val, max_val, steps_base_knots)
+            
+            par_restricted_opt: Tensor = par_unristricted.clone()
+            gaps: Tensor = par_restricted_opt[1:] - par_restricted_opt[:-1]
+            
+            par_unristricted[1:] = torch.log(torch.exp(gaps) - 1)
+
+            if self.number_covariates == 1:
+                par_unristricted = par_unristricted.repeat(
+                    self.degree[var_num] + self.spline_order - 1, 1
+                ).T.flatten()
+                
+            elif self.number_covariates > 1:
+                raise NotImplementedError("Only implemented for 1 or No covariates!")
+
+            par_restricted_opts.append(nn.Parameter(par_unristricted))
+        return par_restricted_opts
+
+    def create_return_dict_transformation(self, input):
+        return {
+            "output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
+            "log_d": torch.zeros(
+                input.size() if input.dim() > 1 else input.clone().unsqueeze(1),
+                device=input.device,
+            ),
+            "transformation_second_order_ridge_pen_sum": 0,
+            "second_order_ridge_pen_sum": 0,
+            "first_order_ridge_pen_sum": 0,
+            "param_ridge_pen_sum": 0,
+            "scores": 0,
+            "hessian": 0,
+            "output_first_derivativ": torch.zeros(
+                input.size() if input.dim() > 1 else input.unsqueeze(1).size(),
+                device=input.device,
+            ),
+            "output_second_derivativ": torch.zeros(
+                input.size() if input.dim() > 1 else input.unsqueeze(1).size(),
+                device=input.device,
+            ),
+            "output_third_derivativ": torch.zeros(
+                input.size() if input.dim() > 1 else input.unsqueeze(1).size(),
+                device=input.device,
+            ),
+        }
+
     def bspline_prediction_method(
         self,
-        input: Tensor,
-        var_num: int,
-        covariate: bool,
-        derivativ: Literal[1,2],
-        return_penalties: bool,
-        monotonically_increasing: bool=False,
-        inverse: bool=False,
+        input,
+        var_num,
+        covariate,
+        derivativ,
+        return_penalties,
+        monotonically_increasing=False,
+        inverse=False,
     ):
 
-        """# return bspline_prediction(
+        # return bspline_prediction(
         #        self.params[var_num].unsqueeze(1)  if inverse==False else self.params_inverse[var_num].unsqueeze(1),
         #        input[:,var_num],
         #        self.degree[var_num] if not inverse else self.degree_inverse[var_num],
@@ -307,39 +312,48 @@ class Transformation(nn.Module):
         #        covariate_effect=self.covariate_effect,
         #        calc_method=self.calc_method_bspline,
         #        order=self.spline_order
-        #    )"""
+        #    )
 
-        params: Tensor = self.params_inverse[var_num].unsqueeze(1) if inverse else self.params[var_num].unsqueeze(1)
+        params = (
+            self.params[var_num].unsqueeze(1)
+            if inverse == False
+            else self.params_inverse[var_num].unsqueeze(1)
+        )
 
-        params: Tensor = restrict_parameters(
-            params_a=params,  # .contiguous().unsqueeze(1),
+        params = restrict_parameters(
+            params,  # .contiguous().unsqueeze(1),
             covariate=covariate,
             degree=self.max_degree,
             monotonically_increasing=monotonically_increasing,
             device=input.device,
         )
 
-        input_a: Tensor = input[:, var_num].unsqueeze(1)
-        knots: Tensor = self.padded_knots_inverse if inverse else self.knots_list[var_num]
-        degree = self.degree_inverse[var_num] if inverse else self.degree[var_num] 
-        spline_range: Tensor = self.spline_range_inverse[:, var_num] if inverse else self.spline_range[:, var_num]
-        calc_method: str = self.calc_method_bspline_inverse if inverse else self.calc_method_bspline
-        span_factor: Tensor=  self.span_factor_inverse if inverse else self.span_factor
-        span_restriction = self.span_restriction_inverse if inverse else self.span_restriction
-        
-        
         return bspline_prediction_vectorized(
-            params_a=params,
-            input_a=input_a,
-            knots=knots,
-            degree=degree,
-            spline_range=spline_range,
+            params,
+            input[:, var_num].unsqueeze(1),
+            self.knots_list[var_num] if inverse == False else self.padded_knots_inverse,
+            self.degree[var_num] if not inverse else self.degree_inverse[var_num],
+            spline_range=(
+                self.spline_range[:, var_num]
+                if inverse == False
+                else self.spline_range_inverse[:, var_num]
+            ),
             # monotonically_increasing=monotonically_increasing,
             derivativ=derivativ,
             return_penalties=return_penalties,
-            calc_method= calc_method,
-            span_factor= span_factor,
-            span_restriction= span_restriction,
+            calc_method=(
+                self.calc_method_bspline
+                if inverse == False
+                else self.calc_method_bspline_inverse
+            ),
+            span_factor=(
+                self.span_factor if inverse == False else self.span_factor_inverse
+            ),
+            span_restriction=(
+                self.span_restriction
+                if inverse == False
+                else self.span_restriction_inverse
+            ),
             covariate=covariate,
             params_covariate=self.params_covariate,
             covariate_effect=self.covariate_effect,
@@ -348,7 +362,7 @@ class Transformation(nn.Module):
             varying_degrees=False,
             params_a_mask=None,
         )
-        
+
     def bernstein_prediction_method(
         self,
         input,
@@ -405,26 +419,26 @@ class Transformation(nn.Module):
             binom_n2=self.binom_n2,
         )  # self.params_covariate[:, covar_num])
 
-    def generate_basis(self, input: Tensor, covariate: bool, inverse=False):
+    def generate_basis(self, input, covariate, inverse=False):
 
         if not inverse:
-            span_factor: Tensor = self.span_factor
+            span_factor = self.span_factor
             # spline_range = torch.FloatTensor(self.spline_range).to(input.device)
             # degree = self.degree
-            degree: int = self.degree[0]
+            degree = self.degree[0]
             spline = self.spline
         else:
-            span_factor: Tensor = self.span_factor_inverse
+            span_factor = self.span_factor_inverse
             # spline_range = torch.FloatTensor(self.spline_range_inverse).to(input.device)
             # degree = self.degree_inverse
-            degree: int = self.degree_inverse[0]
+            degree = self.degree_inverse[0]
             spline = self.spline_inverse
 
         if spline == "bernstein":
             self.multivariate_basis = compute_multivariate_bernstein_basis(
                 input=input,
                 degree=degree,
-                spline_range=self.spline_range,
+                spline_range=spline_range,
                 span_factor=span_factor,
                 derivativ=0,
                 covariate=covariate,
@@ -435,7 +449,7 @@ class Transformation(nn.Module):
             self.multivariate_basis_derivativ_1 = compute_multivariate_bernstein_basis(
                 input=input,
                 degree=degree,
-                spline_range=self.spline_range,
+                spline_range=spline_range,
                 span_factor=span_factor,
                 derivativ=1,
                 covariate=covariate,
@@ -488,30 +502,24 @@ class Transformation(nn.Module):
                 derivativ=3,
             )
 
-    def transformation(
-        self,
-        input: Tensor,
-        derivativ: float=0,
-        inverse: bool=False
-        ):
+    def transformation(self, input, derivativ=0, inverse=False):
         # FunFact:
         # due to the basis being compute in generate_basis, the input is only used to have the correct dimensions for the output
 
         # input dims: 0: observation number, 1: variable
-        
-        
+
         if derivativ == 0:
-            basis: Tensor = self.multivariate_basis  # .to(input.device)
+            basis = self.multivariate_basis  # .to(input.device)
         elif derivativ == 1:
-            basis: Tensor = self.multivariate_basis_derivativ_1  # .to(input.device)
+            basis = self.multivariate_basis_derivativ_1  # .to(input.device)
         elif derivativ == 2:  # for score matching
-            basis: Tensor = self.multivariate_basis_derivativ_2  # .to(input.device)
+            basis = self.multivariate_basis_derivativ_2  # .to(input.device)
         elif derivativ == 3:  # for score matching
-            basis: Tensor = self.multivariate_basis_derivativ_3  # .to(input.device)
+            basis = self.multivariate_basis_derivativ_3  # .to(input.device)
 
         # if self.spline == "bernstein":
         if not inverse:
-            params_restricted: Tensor = restrict_parameters(
+            params_restricted = restrict_parameters(
                 params_a=self.padded_params,
                 covariate=self.number_covariates,
                 degree=self.max_degree,
@@ -534,29 +542,26 @@ class Transformation(nn.Module):
         #          we sum over dim 1 which is the basis
         #          note we use the restricted parameters
 
-        output: Tensor = torch.sum(basis * params_restricted.unsqueeze(0), (1))
+        output = torch.sum(basis * params_restricted.unsqueeze(0), (1))
 
         # penalities
-        second_order_ridge_pen: Tensor = torch.diff(params_restricted, n=2, dim=0).square().sum()
-        
+        second_order_ridge_pen = (
+            torch.diff(params_restricted, n=2, dim=0).square().sum()
+        )
         first_order_ridge_pen = 0
         param_ridge_pen = 0
 
         return output, second_order_ridge_pen, first_order_ridge_pen, param_ridge_pen
 
     def store_basis_forward(
-        self,
-        input: Tensor,
-        log_d: float=0,
-        inverse: bool=False,
-        return_scores_hessian: bool=False
-        ) -> dict[str, Tensor]:
+        self, input, log_d=0, inverse=False, return_scores_hessian=False
+    ):
 
-        return_dict: dict[str, Tensor] = self.create_return_dict_transformation(input=input)
+        return_dict = self.create_return_dict_transformation(input)
 
         # Regenerate the padded parameter tensor every forward pass
         # has to be done in the forward
-        self.padded_params: Tensor = torch.stack(
+        self.padded_params = torch.stack(
             [
                 torch.nn.functional.pad(p, (0, self.max_degree + 1 - p.size(0)))
                 for p in self.params
@@ -570,7 +575,7 @@ class Transformation(nn.Module):
             output_first_derivativ, _, _, _ = self.transformation(input, derivativ=1)
             log_d = log_d + torch.log(output_first_derivativ)
 
-            if return_scores_hessian:
+            if return_scores_hessian == True:
                 output_second_derivativ, _, _, _ = self.transformation(
                     input, derivativ=2
                 )
@@ -617,14 +622,16 @@ class Transformation(nn.Module):
 
         return return_dict
 
-    def for_loop_forward(self, input: Tensor, covariate: bool, log_d: float=0.0, inverse: bool=False) -> dict[str, Tensor]:
+    def for_loop_forward(self, input, covariate, log_d=0, inverse=False):
 
-        return_dict: dict[str, Tensor] = self.create_return_dict_transformation(input=input)
+        return_dict = self.create_return_dict_transformation(input)
 
         for var_num in range(self.number_variables):
 
             if self.number_covariates > 1:
-                warnings.warn("Warning: With for-loop computation only implemented with one or no covariate.")
+                warnings.warn(
+                    "Warning: With for-loop computation only implemented with one or no covariate."
+                )
 
             if inverse:
                 self.spline_prediction_current = self.bspline_prediction_method
@@ -665,10 +672,12 @@ class Transformation(nn.Module):
 
         return return_dict
 
-    def vmap_forward(self, input: Tensor, covariate:bool, log_d: float=0.0, inverse: bool=False):
+    def vmap_forward(self, input, covariate, log_d=0, inverse=False):
 
         if self.number_covariates > 1:
-            warnings.warn("Warning: With for-loop computation only implemented with one or no covariate.")
+            warnings.warn(
+                "Warning: With for-loop computation only implemented with one or no covariate."
+            )
 
         return_dict = self.create_return_dict_transformation(input)
 
@@ -695,7 +704,7 @@ class Transformation(nn.Module):
         ):
             self.padded_knots = self.padded_knots.to(input.device)
 
-        if self.spline == "bspline" or inverse:  # Inverse always uses bspline
+        if self.spline == "bspline" or inverse == True:  # Inverse always uses bspline
             return_dict["output"], return_dict["second_order_ridge_pen_sum"], _, _ = (
                 bspline_prediction_vectorized(
                     padded_params,  # if inverse==False else torch.vstack(self.params_inverse).T,
@@ -801,12 +810,12 @@ class Transformation(nn.Module):
 
     def forward(
         self,
-        input: torch.Tensor,
-        covariate: bool=False,
-        log_d: float=0.0,
-        inverse: bool=False,
-        return_log_d: bool=False,
-        new_input: bool=True,
+        input,
+        covariate=False,
+        log_d=0,
+        inverse=False,
+        return_log_d=False,
+        new_input=True,
         store_basis=False,
         return_derivatives=False,
         return_scores_hessian=False,
@@ -816,34 +825,43 @@ class Transformation(nn.Module):
         #            Thus only specifiy new_input=False during training
         #             store_basis to redefine the basis (needed for validation step and out of sample prediction as well as sampling)
 
-        if store_basis and self.store_basis_training:
-            
+        if store_basis == True and self.store_basis_training == True:
             if inverse:
                 new_input = True
-                warnings.warn("Warning: inverse changes stored basis, set new_input True in next pass through model.")
+                warnings.warn(
+                    "Warning: inverse changes stored basis, set new_input True in next pass through model."
+                )
             # We only want to define the basis once for the entire training
-            
-            if new_input or self.multivariate_basis is False and self.multivariate_basis_derivativ_1 is False:
-                
+            if (
+                new_input is True
+                or self.multivariate_basis is False
+                and self.multivariate_basis_derivativ_1 is False
+            ):
                 self.generate_basis(input=input, covariate=covariate, inverse=inverse)
 
             return_dict = self.store_basis_forward(
-                input=input,
+                input,
                 log_d=0,
                 inverse=inverse,
                 return_scores_hessian=return_scores_hessian,
             )
 
         else:
-            if return_scores_hessian:
-                warnings.warn("Warning: return_scores_hessian is only available if store_basis is True.")
+            if return_scores_hessian == True:
+                warnings.warn(
+                    "Warning: return_scores_hessian is only available if store_basis is True."
+                )
 
             if inverse or self.number_variables <= 2:
-                return_dict: dict[str, Tensor] = self.for_loop_forward(
-                    input=input, covariate=covariate, log_d=0, inverse=inverse
+
+                return_dict = self.for_loop_forward(
+                    input, covariate, log_d=0, inverse=inverse
                 )
             else:
-                return_dict = self.vmap_forward(input=input, covariate=covariate, log_d=0, inverse=inverse)
+
+                return_dict = self.vmap_forward(
+                    input, covariate, log_d=0, inverse=inverse
+                )
 
         return return_dict
 
@@ -871,8 +889,8 @@ class Transformation(nn.Module):
             degree_inverse = 2 * self.degree
 
         self.monotonically_increasing_inverse = False
-        self.span_factor_inverse: Tensor = span_factor_inverse
-        self.span_restriction_inverse: bool = False
+        self.span_factor_inverse = span_factor_inverse
+        self.span_restriction_inverse = False
 
         input_space = torch.zeros(
             (num_samples, self.number_variables), dtype=torch.float32, device=device
@@ -922,7 +940,7 @@ class Transformation(nn.Module):
             input=output_space.detach(), covariate=covariate_space, inverse=False
         )
 
-        params_tensor: nn.ParameterList = inv_trans.params
+        params_tensor = inv_trans.params
 
         for num_var in range(len(inv_trans.params)):
             res = np.linalg.lstsq(
@@ -937,8 +955,8 @@ class Transformation(nn.Module):
         params_tensor = params_tensor.to(device)
 
         self.spline_range_inverse = spline_range_inverse
-        self.params_inverse: nn.ParameterList = nn.ParameterList(params_tensor)
-        self.spline_inverse: str = spline_inverse
+        self.params_inverse = nn.ParameterList(params_tensor)
+        self.spline_inverse = spline_inverse
         self.degree_inverse = self.number_variables * [degree_inverse]
         self.padded_knots_inverse = inv_trans.padded_knots
         self.calc_method_bspline_inverse = "deBoor"
