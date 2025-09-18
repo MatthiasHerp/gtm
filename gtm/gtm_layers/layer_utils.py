@@ -42,6 +42,7 @@ class bayesian_splines:
         
         r: int = matrix_rank(K).item()
         cov: Tensor = (gamma @ K @ gamma.T) / (2*alpha_2) #TODO CHECK DIMENSIONS
+        
         return -0.5 * r * torch.log(alpha_2) - cov
     
     @staticmethod

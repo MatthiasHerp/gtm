@@ -825,20 +825,6 @@ def train_bayes(
         hyperparameters_transformation: dict[str, float] = hyperparameters.get("transformation", {})
         hyperparameters_decorrelation: dict[str, float] = hyperparameters.get("decorrelation", {})
 
-    # ----- optimizer -----
-    #if optimizer == "Adam":
-    #    opt = Adam(model.parameters(), lr=lr)
-    #else:
-    #    raise ValueError(f"Unsupported optimizer: {optimizer}")
-
-    #total_steps = max(1, iterations) * max(1, len(train_dataloader))
-    #scheduler: LambdaLR = get_cosine_schedule_with_warmup(
-    #    optimizer=opt,
-    #    num_warmup_steps=5,
-    #    num_training_steps=total_steps,
-    #    num_cycles=0.5,
-    #    last_epoch=-1,
-    #)
     
     VI = VI_Model(model=model)  # keep a reference; call with your real signature
     
@@ -869,15 +855,17 @@ def train_bayes(
                 y_train: Tensor = y_train.to(device=model.device)
 
                 if optimizer == "Adam":
+                    
+                    
                     opt.zero_grad()
+                    torch.autograd.set_detect_anomaly(True)
                     unnormalized_posterior= model.__bayesian_training_objective__(
-                        samples=y_train,
+                        samples=y_train[:32],
                         hyperparameters_decorrelation= hyperparameters_decorrelation,
                         hyperparameters_transformations= hyperparameters_transformation,
                         mcmc_sample= 1
                     )
                     
-
                     
                     return_vi_step  = VI.step(
                         log_p_tilde_vals=unnormalized_posterior,

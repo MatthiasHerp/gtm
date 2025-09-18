@@ -10,26 +10,25 @@ if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM 
 
 
-def log_likelihood(model:"GTM", samples:torch.FloatTensor, mean_loss:bool=False)  -> dict[str, Tensor | float | None]:
+def log_likelihood(model, samples, mean_loss=False):
     # train_covariates=False, train=True, evaluate=True,
 
-    return_dict_nf_mctm: dict[str, Tensor|float|None] = model.forward(y=samples)  
-    # , covariate=train_covariates, train=train, evaluate=evaluate)
-    
-    output_model: Tensor = return_dict_nf_mctm["output"]
-    out_model_log_d: Tensor = return_dict_nf_mctm["log_d"]
-    
-    log_likelihood_latent = Normal(0, 1).log_prob(output_model)
-    
+    return_dict_nf_mctm = model.forward(
+        samples
+    )  # , covariate=train_covariates, train=train, evaluate=evaluate)
+
+    log_likelihood_latent = Normal(0, 1).log_prob(return_dict_nf_mctm["output"])
+
     if mean_loss:
-        log_likelihood_data: Tensor = log_likelihood_latent + out_model_log_d
-        log_likelihood_data: Tensor = torch.mean(log_likelihood_data)
-    
-    elif model.number_variables > 1:  # for 1D TM Model
-        log_likelihood_data: Tensor = torch.sum(log_likelihood_latent + out_model_log_d, dim=1) #dim=for rows https://stackoverflow.com/questions/44790670/torch-sum-a-tensor-along-an-axis
-    
+        log_likelihood_data = log_likelihood_latent + return_dict_nf_mctm["log_d"]
+        log_likelihood_data = torch.mean(log_likelihood_data)
     else:
-        log_likelihood_data: Tensor = log_likelihood_latent + out_model_log_d
+        if model.number_variables > 1:  # for 1D TM Model
+            log_likelihood_data = torch.sum(
+                log_likelihood_latent + return_dict_nf_mctm["log_d"], 1
+            )
+        else:
+            log_likelihood_data = log_likelihood_latent + return_dict_nf_mctm["log_d"]
 
     return_dict_nf_mctm["log_likelihood_data"] = log_likelihood_data
 

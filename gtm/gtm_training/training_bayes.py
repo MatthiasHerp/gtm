@@ -160,6 +160,7 @@ class VI_Model(nn.Module):
 
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
 """
+        
         # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
         # (Note: additive constant log p(y) cancels in optimization)
         loss = torch.mean(log_q_vals - log_p_tilde_vals)
