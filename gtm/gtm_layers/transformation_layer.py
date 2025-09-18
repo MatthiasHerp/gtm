@@ -568,7 +568,7 @@ class Transformation(nn.Module):
                 input, derivativ=0
             )
             output_first_derivativ, _, _, _ = self.transformation(input, derivativ=1)
-            log_d =+ torch.log(output_first_derivativ)
+            log_d = log_d + torch.log(output_first_derivativ)
 
             if return_scores_hessian:
                 output_second_derivativ, _, _, _ = self.transformation(

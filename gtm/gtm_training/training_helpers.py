@@ -814,7 +814,8 @@ def train_bayes(
     hyperparameters: dict | None = None,
     verbose: bool = False,
     max_batches_per_iter= False,
-    patience = None
+    patience = None,
+    mcmc_sample = 1,
 ):
     # ----- hyperparameters -----
     if hyperparameters is None:
@@ -825,25 +826,39 @@ def train_bayes(
         hyperparameters_decorrelation: dict[str, float] = hyperparameters.get("decorrelation", {})
 
     # ----- optimizer -----
-    if optimizer == "Adam":
-        opt = Adam(model.parameters(), lr=lr)
-    else:
-        raise ValueError(f"Unsupported optimizer: {optimizer}")
+    #if optimizer == "Adam":
+    #    opt = Adam(model.parameters(), lr=lr)
+    #else:
+    #    raise ValueError(f"Unsupported optimizer: {optimizer}")
 
-    total_steps = max(1, iterations) * max(1, len(train_dataloader))
-    scheduler: LambdaLR = get_cosine_schedule_with_warmup(
-        optimizer=opt,
-        num_warmup_steps=5,
-        num_training_steps=total_steps,
-        num_cycles=0.5,
-        last_epoch=-1,
-    )
-    
-    
+    #total_steps = max(1, iterations) * max(1, len(train_dataloader))
+    #scheduler: LambdaLR = get_cosine_schedule_with_warmup(
+    #    optimizer=opt,
+    #    num_warmup_steps=5,
+    #    num_training_steps=total_steps,
+    #    num_cycles=0.5,
+    #    last_epoch=-1,
+    #)
     
     VI = VI_Model(model=model)  # keep a reference; call with your real signature
     
-    start = time.time()
+    VI.to(device=model.device)
+    opt = torch.optim.Adam(
+        params=[p for p in VI.parameters() if p.requires_grad],
+        lr=lr
+    )
+    
+    
+    # Keep a copy in case early issues
+    best: dict[str, float] = {"loss": float("inf")}
+    best_state: dict[str, Tensor] = {
+        "mu": VI.mu.detach().clone(),
+        "rho": VI.rho.detach().clone()
+        }
+    
+    start: float = time.time()
+    #MCMC
+    
     for i in tqdm(iterable=range(iterations)):
         number_iterations: int = i
         num_processed_batches:int = 0
@@ -855,18 +870,25 @@ def train_bayes(
 
                 if optimizer == "Adam":
                     opt.zero_grad()
-                    return_dict_model_training: dict[str, Tensor] = model.__bayesian_training_objective__(
+                    unnormalized_posterior= model.__bayesian_training_objective__(
                         samples=y_train,
                         hyperparameters_decorrelation= hyperparameters_decorrelation,
                         hyperparameters_transformations= hyperparameters_transformation,
-                        VI_model_estimator= VI
-                        
+                        mcmc_sample= 1
                     )
+                    
 
-                    loss: Tensor = return_dict_model_training["posterior"].mean()
+                    
+                    return_vi_step  = VI.step(
+                        log_p_tilde_vals=unnormalized_posterior,
+                        mcmc_samples=1
+                    )
+                    
+                    loss = return_vi_step.get('loss')
+                    
                     loss.backward()
                     opt.step()
-                    scheduler.step()
+                    #scheduler.step()
                     #current_loss: Tensor = loss
                     if verbose:
                         print("current_loss:", loss)

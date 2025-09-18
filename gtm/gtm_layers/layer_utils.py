@@ -51,7 +51,7 @@ class bayesian_splines:
         gammas= None,
         is_init: bool= False,
         is_transformation = False
-        ) -> tuple[Tensor, list[Tensor]]:
+        ):
         
         
         sub_model = model.transformation if is_transformation else model.decorrelation_layers
@@ -121,7 +121,7 @@ class bayesian_splines:
             decorrelation_prior: Tensor = total_log_gamma + log_prior_sigma + log_prior_alpha
             
             
-            return -1*decorrelation_prior, gammas
+            return -1*decorrelation_prior
 
         else: 
             

@@ -25,7 +25,7 @@ from gtm.gtm_plots_analysis.plot_marginals import plot_marginals
 from gtm.gtm_plots_analysis.plot_metric_hist import plot_metric_hist
 from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
 from gtm.gtm_plots_analysis.plot_splines import plot_splines
-from gtm.gtm_training.objective_functions import log_likelihood, training_objective, VI_bayesian_training_objective
+from gtm.gtm_training.objective_functions import log_likelihood, training_objective, bayesian_training_objective
 from gtm.gtm_training.training_helpers import (if_float_create_lambda_penalisation_matrix, train_freq, train_bayes)
 
 # from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
@@ -636,22 +636,19 @@ class GTM(nn.Module):
     def __bayesian_training_objective__(
         self, 
         samples: Tensor,
-        VI_model_estimator,
         hyperparameters_transformations: dict[str, float],
         hyperparameters_decorrelation: dict [str, float],
-        objective_type: Literal['negloglik'] = "negloglik"
+        objective_type: Literal['negloglik'] = "negloglik",
+        mcmc_sample:int = 1000
+    ):
         
-    ) -> dict[str, Tensor]:
-        
-        
-        
-        return VI_bayesian_training_objective(
+        return bayesian_training_objective(
             model = self,
             hyperparameter_decorrelation=hyperparameters_decorrelation,
             hyperparameter_transformation =hyperparameters_transformations,
             samples= samples,
             objective_type= objective_type,
-            vi_model=VI_model_estimator
+            mcmc_sample= mcmc_sample
         )
 
     def train(

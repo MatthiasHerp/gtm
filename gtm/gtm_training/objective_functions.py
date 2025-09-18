@@ -139,7 +139,7 @@ def training_objective(
 
 
 
-def bayesian_traininig_objective(
+def unnormalized_posterior_computation(
     model: "GTM",
     samples,
     hyperparameter_transformation,
@@ -154,12 +154,12 @@ def bayesian_traininig_objective(
         
     ##Priors Init
     #Transformation
-    neg_transformation_prior, gammas_T = bayesian_splines.defining_prior(
+    neg_transformation_prior = bayesian_splines.defining_prior(
             model=model, hyperparameter= hyperparameter_transformation, is_init=True, is_transformation=True
         )
         
     #Decorrelation
-    neg_decorrelation_prior, gammas_D = bayesian_splines.defining_prior(
+    neg_decorrelation_prior = bayesian_splines.defining_prior(
             model=model, hyperparameter=hyperparameter_decorrelation, is_init=True
             )
         
@@ -169,29 +169,37 @@ def bayesian_traininig_objective(
         'transformation_prior': neg_transformation_prior,
         }
 
-def VI_bayesian_training_objective(
+def bayesian_training_objective(
     model: "GTM",
     samples: Tensor,
+    #VI_model: VI_Model = None,
     hyperparameter_transformation,
     hyperparameter_decorrelation,
     objective_type:Literal['negloglik']="negloglik",
-    vi_model: VI_Model= None,
-    sample_size: int = 1000,
-    seed = 11041998
-)-> dict[str, Tensor]:
+    mcmc_sample: int = 1000, 
+    seed = None#11041998
     
-    #torch.manual_seed(seed) 
+):
+    
+    if seed is not None:
+        torch.manual_seed(seed) 
+        
     if objective_type == "negloglik":
+        log_p_tilde_vals = [] # log unnormalized posterior per sample
+        for _ in range(mcmc_sample):
+            
+            dict_return_unnorm_post: dict[str, Tensor]= unnormalized_posterior_computation(
+                model=model,
+                samples=samples,
+                hyperparameter_transformation=hyperparameter_transformation,
+                hyperparameter_decorrelation= hyperparameter_decorrelation
+                )
+            # log \tilde p(θ, y) = - (NLL + priors)
+            neglogpost: Tensor = dict_return_unnorm_post['neg_posterior']
+            log_p_tilde = neglogpost
+            log_p_tilde_vals.append(log_p_tilde.reshape(()))
         
-        return_unnorm_post= bayesian_traininig_objective(
-            model=model,
-            samples=samples,
-            hyperparameter_transformation=hyperparameter_transformation,
-            hyperparameter_decorrelation= hyperparameter_decorrelation
-            )
+        log_p_tilde_vals: Tensor = torch.stack(log_p_tilde_vals) #[S]
         
-        
-        vi_model
-        
-        
-    return return_unnorm_post
+    
+    return log_p_tilde_vals
