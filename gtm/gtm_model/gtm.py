@@ -640,7 +640,7 @@ class GTM(nn.Module):
     def __bayesian_training_objective__(
         self, 
         samples: Tensor,
-        hyperparameters_transformations: dict[str, float],
+        hyperparameters_transformation: dict[str, float],
         hyperparameters_decorrelation: dict [str, float],
         objective_type: Literal['negloglik'] = "negloglik",
         mcmc_sample:int = 1000
@@ -649,7 +649,7 @@ class GTM(nn.Module):
         return bayesian_training_objective(
             model = self,
             hyperparameter_decorrelation=hyperparameters_decorrelation,
-            hyperparameter_transformation =hyperparameters_transformations,
+            hyperparameter_transformation =hyperparameters_transformation,
             samples= samples,
             objective_type= objective_type,
             mcmc_sample= mcmc_sample
@@ -670,7 +670,8 @@ class GTM(nn.Module):
         patience: int = 5,
         min_delta: float = 1e-7,
         seperate_copula_training: bool = False,
-        max_batches_per_iter: int | bool = False
+        max_batches_per_iter: int | bool = False,
+        mcmc_sample: int = 3
     ) -> dict[str, Tensor]:
         
         """
@@ -743,7 +744,7 @@ class GTM(nn.Module):
         validate_covariates: bool = False
         ### HARDCODED, Not Implemented yet ###
         
-        verbose: bool = False
+        verbose: bool = True
         lambda_penalty_mode: Literal['square']= "square"  # Literal["square", "absolute"]
         # ema_decay: float | bool = False, used to have ema_decay in training
 
@@ -799,7 +800,8 @@ class GTM(nn.Module):
                 verbose=verbose,
                 optimizer=optimizer,
                 lr=learning_rate,
-                patience = patience
+                patience = patience, 
+                mcmc_sample=mcmc_sample
                 )
         else:
             raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')

@@ -163,7 +163,7 @@ def unnormalized_posterior_computation(
             )
         
     return {
-        'neg_posterior':neg_log_likelihood + neg_decorrelation_prior + neg_transformation_prior,
+        'neg_posterior':neg_log_likelihood + neg_decorrelation_prior + neg_transformation_prior, # log \tilde p(θ, y) = - (NLL + priors)x
         'decorrelation_prior': neg_decorrelation_prior,
         'transformation_prior': neg_transformation_prior,
         }
@@ -184,21 +184,14 @@ def bayesian_training_objective(
         torch.manual_seed(seed) 
         
     if objective_type == "negloglik":
-        log_p_tilde_vals = [] # log unnormalized posterior per sample
-        for _ in range(mcmc_sample):
-            
-            dict_return_unnorm_post: dict[str, Tensor]= unnormalized_posterior_computation(
+        
+        dict_return_unnorm_post: dict[str, Tensor]= unnormalized_posterior_computation(
                 model=model,
                 samples=samples,
                 hyperparameter_transformation=hyperparameter_transformation,
                 hyperparameter_decorrelation= hyperparameter_decorrelation
                 )
-            # log \tilde p(θ, y) = - (NLL + priors)
-            neglogpost: Tensor = dict_return_unnorm_post['neg_posterior']
-            log_p_tilde = neglogpost
-            log_p_tilde_vals.append(log_p_tilde.reshape(()))
         
-        log_p_tilde_vals: Tensor = torch.stack(log_p_tilde_vals) #[S]
         
-    
-    return log_p_tilde_vals
+
+    return dict_return_unnorm_post['neg_posterior']

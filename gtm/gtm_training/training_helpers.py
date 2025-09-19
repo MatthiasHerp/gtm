@@ -825,10 +825,11 @@ def train_bayes(
         hyperparameters_transformation: dict[str, float] = hyperparameters.get("transformation", {})
         hyperparameters_decorrelation: dict[str, float] = hyperparameters.get("decorrelation", {})
 
-    
+    #model.train()
     VI = VI_Model(model=model)  # keep a reference; call with your real signature
     
     VI.to(device=model.device)
+    
     opt = torch.optim.Adam(
         params=[p for p in VI.parameters() if p.requires_grad],
         lr=lr
@@ -843,8 +844,10 @@ def train_bayes(
         }
     
     start: float = time.time()
-    #MCMC
+    #train_dataloader = next(iter(train_dataloader)).to(model.device)
     
+    #MCMC
+    loss_tracking = {}
     for i in tqdm(iterable=range(iterations)):
         number_iterations: int = i
         num_processed_batches:int = 0
@@ -859,38 +862,64 @@ def train_bayes(
                     
                     opt.zero_grad()
                     torch.autograd.set_detect_anomaly(True)
-                    unnormalized_posterior= model.__bayesian_training_objective__(
-                        samples=y_train[:32],
-                        hyperparameters_decorrelation= hyperparameters_decorrelation,
-                        hyperparameters_transformations= hyperparameters_transformation,
-                        mcmc_sample= 1
-                    )
-                    
                     
                     return_vi_step  = VI.step(
-                        log_p_tilde_vals=unnormalized_posterior,
-                        mcmc_samples=1
+                        samples=y_train,
+                        hyperparameter_decorrelation=hyperparameters_decorrelation,
+                        hyperparameter_transformation=hyperparameters_transformation,
+                        model=model,
+                        #log_p_tilde_vals=unnormalized_posterior,
+                        mcmc_samples=mcmc_sample
                     )
                     
                     loss = return_vi_step.get('loss')
                     
+                    if not torch.isfinite(loss):
+                        print("Non-finite loss:", loss.item()); break
+                    
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(VI.parameters(), 5.0)
                     opt.step()
+                    
+                    
                     #scheduler.step()
                     #current_loss: Tensor = loss
+                    #if verbose:
+                        #print("current_loss:", loss)
+
+
+                #if verbose:
+                #    print(f'iteration {i}')
+                    
+
+                if loss.item() < best["loss"]:
                     if verbose:
-                        print("current_loss:", loss)
+                        print(f'iteration {i}')
+                        print(f"loss={float(loss):.4f}",
+                            f"log_q={float(return_vi_step['mean_log_q']):.4f}",
+                            f"log_p~={float(return_vi_step['mean_log_p_tilde']):.4f}",
+                            f"sigmā={float(return_vi_step['sigma_mean']):.4f}")
+                    loss_tracking[i] = loss.item()
+                    best["loss"] = loss.item()
+                    best_state["mu"] = VI.mu.detach().clone()
+                    best_state["rho"] = VI.rho.detach().clone()
+                else: 
+                    print(f"no convergence at iteration {i}")
+                    loss_tracking[i] = loss_tracking[i-1]
 
-
-                # if ema_decay is not False:
-                #    ema.update()
-
+                num_processed_batches += 1
                 if max_batches_per_iter and num_processed_batches >= max_batches_per_iter:
                     break
 
-    return_dict_model_training["training_time"] = time.time() - start
-    return_dict_model_training["number_iterations"] = number_iterations
-    return return_dict_model_training
+    training_time = time.time() - start
+    return {
+        "training_time": training_time,
+        "number_iterations": number_iterations,
+        "best_loss": best["loss"],
+        "mu": best_state["mu"],
+        "rho": best_state["rho"],
+        "vi_model": VI,
+    }
     
 def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars) -> Tensor:
 

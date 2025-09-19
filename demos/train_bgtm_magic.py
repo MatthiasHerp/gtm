@@ -75,11 +75,13 @@ if __name__ == "__main__":
             _: dict[str, torch.Tensor] = model.train(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
-                iterations=1,
+                iterations=50,
                 optimizer="Adam",
                 adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
                 penalty_lasso_conditional_independence=penalty_lasso_conditional_independence,
                 max_batches_per_iter=False,
+                mcmc_sample=5,
+                learning_rate=0.000001
                 
             )
 

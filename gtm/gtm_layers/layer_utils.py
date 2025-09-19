@@ -46,6 +46,24 @@ class bayesian_splines:
         return -0.5 * r * torch.log(alpha_2) - cov
     
     @staticmethod
+    def log_mvn_zero_mean_prec(K: Tensor, alpha2: Tensor, gamma: Tensor, eps: float = 1e-6) -> Tensor:
+        """
+        log N(gamma | 0, (alpha2*K)^(-1)) with precision alpha2 * (K + eps I).
+        """
+        if gamma.dim() == 1:
+            gamma = gamma.unsqueeze(0)  # [1, Kdim]
+        Kdim = K.shape[0]
+        Kreg = K + eps * torch.eye(Kdim, device=K.device, dtype=K.dtype)
+        # quadratic term γ^T K γ
+        quad = torch.einsum('bi,ij,bj->b', gamma, Kreg, gamma)
+        # log|K| term (constant wrt gamma, but helps calibration)
+        logdet_K = torch.logdet(Kreg)
+        r = Kdim
+        return 0.5 * r * torch.log(alpha2) + 0.5 * logdet_K - 0.5 * alpha2 * quad #shape [B]
+
+    
+    
+    @staticmethod
     def defining_prior(
         model: "GTM",
         hyperparameter,
