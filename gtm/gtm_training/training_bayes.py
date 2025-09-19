@@ -7,6 +7,7 @@ from torch import nn, Tensor
 from typing import TYPE_CHECKING
 
 from gtm.gtm_layers.layer_utils import bayesian_splines
+from torch.nn.utils.stateless import _reparametrize_module
 from gtm.gtm_model import gtm
 
 if TYPE_CHECKING:
@@ -111,16 +112,14 @@ class VI_Model(nn.Module):
         for k, v in sd_new.items():
             full_sd[k] = v
         self.model.load_state_dict(full_sd, strict=False)
-
+        
     def step(
         self,
-        #samples: Tensor,
-        #hyperparameter_transformation,
-        #hyperparameter_decorrelation,
-        #objective_fn,
-        log_p_tilde_vals,
-        #objective_type = "negloglik",
-        mcmc_samples: int = 1,
+        samples: Tensor,
+        hyperparameter_transformation,
+        hyperparameter_decorrelation,
+        model: "GTM",
+        mcmc_samples: int = 100,
         seed: int | None = None,
     ) :
         """
@@ -134,36 +133,33 @@ class VI_Model(nn.Module):
         thetas = self.sample_theta(mcmc_samples)  # [S, D]
         log_q_vals = self.log_q(thetas)         # [S]
 
-        #log_p_tilde_vals = []  # log unnormalized posterior per sample
+        log_p_tilde_vals = []  # log unnormalized posterior per sample
 
         for s in range(mcmc_samples):
             theta_s = thetas[s]
             # Push θ into model
-            self.set_model_params(theta_s)
+            #self.set_model_params(theta_s)
+            params_s = self._theta_to_state_dict(theta_s)  # tensors keep graph to (mu, rho)
 
+            with _reparametrize_module(self.model, params_s):
             # Use your provided objective to compute: posterior = NLL + priors
-            """out = objective_fn(
-                model=self.model,
-                samples=samples,
-                hyperparameter_transformation=hyperparameter_transformation,
-                hyperparameter_decorrelation=hyperparameter_decorrelation,
-                objective_type=objective_type,
-                vi_model=self,            # optional: in case you want it
-                sample_size=1,
-                seed=seed if seed is not None else 11041998,
-            )
+                out = model.__bayesian_training_objective__(
+                    samples=samples,
+                    hyperparameters_transformation=hyperparameter_transformation,
+                    hyperparameters_decorrelation=hyperparameter_decorrelation,
+                )
+            
             # Your function returns a POSITIVE objective (NLL + priors).
             # log \tilde p(θ, y) = - (NLL + priors)
-            neglogpost = out["posterior"]
+            neglogpost = out
             log_p_tilde = -neglogpost
             log_p_tilde_vals.append(log_p_tilde.reshape(()))
 
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
-"""
         
         # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
         # (Note: additive constant log p(y) cancels in optimization)
-        loss = torch.mean(log_q_vals - log_p_tilde_vals)
+        loss = torch.mean(log_q_vals - log_p_tilde_vals) #ELBO
 
         return {
             "loss": loss,
