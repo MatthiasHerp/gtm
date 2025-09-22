@@ -807,120 +807,130 @@ def train_freq(
 def train_bayes(
     model: "GTM",
     train_dataloader: DataLoader,
-    validate_dataloader,
-    iterations: int,
+    validate_dataloader=None,
+    iterations: int = 100,
     optimizer: str = "Adam",
     lr: float = 1e-3,
     hyperparameters: dict | None = None,
     verbose: bool = False,
-    max_batches_per_iter= False,
-    patience = None,
-    mcmc_sample = 1,
+    max_batches_per_iter: int | bool = False,
+    patience: int | None = None,
+    mcmc_sample: int = 1,
 ):
     # ----- hyperparameters -----
     if hyperparameters is None:
-        hyperparameters_transformation: dict[str, float] = model.hyperparameter.get("transformation")
-        hyperparameters_decorrelation: dict[str, float] = model.hyperparameter.get("decorrelation")
+        hyper_T: dict[str, float] = model.hyperparameter.get("transformation")
+        hyper_D: dict[str, float] = model.hyperparameter.get("decorrelation")
     else:
-        hyperparameters_transformation: dict[str, float] = hyperparameters.get("transformation", {})
-        hyperparameters_decorrelation: dict[str, float] = hyperparameters.get("decorrelation", {})
+        hyper_T: dict[str, float] = hyperparameters.get("transformation", {})
+        hyper_D: dict[str, float] = hyperparameters.get("decorrelation", {})
 
-    #model.train()
-    VI = VI_Model(model=model)  # keep a reference; call with your real signature
-    
-    VI.to(device=model.device)
-    
-    opt = torch.optim.Adam(
-        params=[p for p in VI.parameters() if p.requires_grad],
-        lr=lr
-    )
-    
-    
-    # Keep a copy in case early issues
-    best: dict[str, float] = {"loss": float("inf")}
-    best_state: dict[str, Tensor] = {
+    # Freeze BN/Dropout behaviour during VI
+    was_training = model.training
+    model.eval()
+
+    VI = VI_Model(model=model).to(model.device)
+
+    if optimizer != "Adam":
+        raise ValueError(f"Unsupported optimizer: {optimizer}")
+    opt = torch.optim.Adam([p for p in VI.parameters() if p.requires_grad], lr=lr)
+
+    best_loss = float("inf")
+    best_state = {
         "mu": VI.mu.detach().clone(),
-        "rho": VI.rho.detach().clone()
-        }
-    
-    start: float = time.time()
-    #train_dataloader = next(iter(train_dataloader)).to(model.device)
-    
-    #MCMC
-    loss_tracking = {}
-    for i in tqdm(iterable=range(iterations)):
-        number_iterations: int = i
-        num_processed_batches:int = 0
-        
-        for y_train in train_dataloader:
-                
-                num_processed_batches += 1
-                y_train: Tensor = y_train.to(device=model.device)
+        "rho": VI.rho.detach().clone(),
+    }
 
-                if optimizer == "Adam":
-                    
-                    
-                    opt.zero_grad()
-                    torch.autograd.set_detect_anomaly(True)
-                    
-                    return_vi_step  = VI.step(
-                        samples=y_train,
-                        hyperparameter_decorrelation=hyperparameters_decorrelation,
-                        hyperparameter_transformation=hyperparameters_transformation,
-                        model=model,
-                        #log_p_tilde_vals=unnormalized_posterior,
-                        mcmc_samples=mcmc_sample
-                    )
-                    
-                    loss = return_vi_step.get('loss')
-                    
-                    if not torch.isfinite(loss):
-                        print("Non-finite loss:", loss.item()); break
-                    
-                    loss.backward()
-                    torch.nn.utils.clip_grad_norm_(VI.parameters(), 5.0)
-                    opt.step()
-                    
-                    
-                    #scheduler.step()
-                    #current_loss: Tensor = loss
-                    #if verbose:
-                        #print("current_loss:", loss)
+    loss_history: list[float] = []
+    start = time.time()
 
+    for epoch in range(iterations):
+        running = 0.0
+        n_batches = 0
 
-                #if verbose:
-                #    print(f'iteration {i}')
-                    
+        for b, y_train in enumerate(train_dataloader):
+            if max_batches_per_iter and (b >= max_batches_per_iter):
+                break
 
-                if loss.item() < best["loss"]:
-                    if verbose:
-                        print(f'iteration {i}')
-                        print(f"loss={float(loss):.4f}",
-                            f"log_q={float(return_vi_step['mean_log_q']):.4f}",
-                            f"log_p~={float(return_vi_step['mean_log_p_tilde']):.4f}",
-                            f"sigmā={float(return_vi_step['sigma_mean']):.4f}")
-                    loss_tracking[i] = loss.item()
-                    best["loss"] = loss.item()
-                    best_state["mu"] = VI.mu.detach().clone()
-                    best_state["rho"] = VI.rho.detach().clone()
-                else: 
-                    print(f"no convergence at iteration {i}")
-                    loss_tracking[i] = loss_tracking[i-1]
+            y_train = y_train.to(model.device)
 
-                num_processed_batches += 1
-                if max_batches_per_iter and num_processed_batches >= max_batches_per_iter:
-                    break
+            opt.zero_grad(set_to_none=True)
+
+            out = VI.step(
+                samples=y_train,
+                hyperparameter_decorrelation=hyper_D,
+                hyperparameter_transformation=hyper_T,
+                model=model,
+                mcmc_samples=mcmc_sample,
+            )
+
+            loss = out["loss"]
+            if not torch.isfinite(loss):
+                raise RuntimeError(f"Non-finite loss at epoch {epoch}, batch {b}: {loss.item()}")
+
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(VI.parameters(), 5.0)
+            
+            if VI.rho.grad is not None:
+                gmu = VI.mu.grad.norm().item()
+                grho = VI.rho.grad.norm().item()
+                if verbose and (epoch % 10 == 0):
+                    print(f"||∇μ||={gmu:.3e}  ||∇ρ||={grho:.3e}")
+            
+            opt.step()
+
+            running += float(loss.item())
+            n_batches += 1
+
+        if n_batches == 0:
+            raise RuntimeError("No batches processed. Check your dataloader / max_batches_per_iter.")
+
+        epoch_loss = running / n_batches
+        loss_history.append(epoch_loss)
+
+        # --- best tracking BEFORE overwriting ---
+        if epoch_loss < best_loss - 1e-8:
+            best_loss = epoch_loss
+            best_state["mu"] = VI.mu.detach().clone()
+            best_state["rho"] = VI.rho.detach().clone()
+
+        if verbose:
+            print(f"[{epoch+1}/{iterations}] loss={epoch_loss:.4f}  "
+                  f"log_q={out['mean_log_q'].item():.4f}  "
+                  f"log_p~={out['mean_log_p_tilde'].item():.4f}  "
+                  f"σ̄={out['sigma_mean'].item():.4f}")
+
+        # --- early stopping (optional) ---
+        if patience and len(loss_history) > patience:
+            window_old = sum(loss_history[-2*patience:-patience]) / patience
+            window_new = sum(loss_history[-patience:]) / patience
+            if window_new >= window_old:  # no improvement
+                if verbose:
+                    print(f"Early stop @ epoch {epoch+1}: {window_old:.4f} → {window_new:.4f}")
+                break
+
+    # restore best VI params
+    with torch.no_grad():
+        VI.mu.copy_(best_state["mu"])
+        VI.rho.copy_(best_state["rho"])
+
+    # (optional) load θ=μ into the GTM for downstream inference
+    VI.set_model_params(VI.mu.detach())
+
+    if was_training:
+        model.train()
 
     training_time = time.time() - start
     return {
         "training_time": training_time,
-        "number_iterations": number_iterations,
-        "best_loss": best["loss"],
-        "mu": best_state["mu"],
-        "rho": best_state["rho"],
+        "epochs_run": epoch + 1,
+        "best_loss": best_loss,
+        "loss_history": loss_history,
+        "mu": VI.mu.detach(),
+        "rho": VI.rho.detach(),
         "vi_model": VI,
     }
-    
+
 def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars) -> Tensor:
 
     lambda_penalty_params = torch.tensor(lambda_penalty_params, dtype=torch.float32)

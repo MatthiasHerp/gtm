@@ -148,41 +148,32 @@ def unnormalized_posterior_computation(
     
     #Likelihood
     return_dict_model_loss: Tensor = model.__log_likelihood_loss__(y=samples)
-    neg_log_likelihood: Tensor = return_dict_model_loss.get('negative_log_likelihood_data')
-        
-        
-    ##Priors Init
-    #Transformation
-    neg_transformation_prior = bayesian_splines.defining_prior(
-            model=model, hyperparameter= hyperparameter_transformation, is_init=True, is_transformation=True
+    nll: Tensor = return_dict_model_loss.get('negative_log_likelihood_data').mean()
+    #Prior Transformation
+    ntp = bayesian_splines.defining_prior(
+        model=model, hyperparameter= hyperparameter_transformation, is_transformation=True
         )
-        
-    #Decorrelation
-    neg_decorrelation_prior = bayesian_splines.defining_prior(
-            model=model, hyperparameter=hyperparameter_decorrelation, is_init=True
-            )
-        
+    #Prior Decorrelation
+    ndp = bayesian_splines.defining_prior(
+        model=model, hyperparameter=hyperparameter_decorrelation
+        )
+    
     return {
-        'neg_posterior':neg_log_likelihood + neg_decorrelation_prior + neg_transformation_prior, # log \tilde p(θ, y) = - (NLL + priors)x
-        'decorrelation_prior': neg_decorrelation_prior,
-        'transformation_prior': neg_transformation_prior,
+        'neg_posterior':nll + ntp + ndp, # log \tilde p(θ, y) = - (NLL + priors)x
+        'decorrelation_prior': ndp,
+        'transformation_prior': ntp,
+        'negative_log_lik': nll
         }
 
 def bayesian_training_objective(
     model: "GTM",
     samples: Tensor,
-    #VI_model: VI_Model = None,
     hyperparameter_transformation,
     hyperparameter_decorrelation,
     objective_type:Literal['negloglik']="negloglik",
-    mcmc_sample: int = 1000, 
-    seed = None#11041998
     
 ):
     
-    if seed is not None:
-        torch.manual_seed(seed) 
-        
     if objective_type == "negloglik":
         
         dict_return_unnorm_post: dict[str, Tensor]= unnormalized_posterior_computation(

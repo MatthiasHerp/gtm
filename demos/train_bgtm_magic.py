@@ -72,17 +72,31 @@ if __name__ == "__main__":
             penalty_lasso_conditional_independence = False
 
             # train the joint model
-            _: dict[str, torch.Tensor] = model.train(
+            """_: dict[str, torch.Tensor] = model.train(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
-                iterations=50,
+                iterations=200,
                 optimizer="Adam",
                 adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
                 penalty_lasso_conditional_independence=penalty_lasso_conditional_independence,
                 max_batches_per_iter=False,
-                mcmc_sample=5,
+                mcmc_sample=2,
                 learning_rate=0.000001
                 
+            )"""
+            
+            
+            
+            model.fit_bayes(
+                train_dataloader=dataloader_train,
+                validate_dataloader=dataloader_validate,
+                hyperparameters=None,
+                iterations=200,
+                verbose=True,
+                optimizer='Adam',
+                lr=0.00001,
+                patience = False, 
+                mcmc_sample=5
             )
 
             torch.save(
