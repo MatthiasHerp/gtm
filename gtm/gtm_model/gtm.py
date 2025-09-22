@@ -652,7 +652,6 @@ class GTM(nn.Module):
             hyperparameter_transformation =hyperparameters_transformation,
             samples= samples,
             objective_type= objective_type,
-            mcmc_sample= mcmc_sample
         )
 
     def train(
@@ -810,7 +809,16 @@ class GTM(nn.Module):
             self.transformation.params.requires_grad = True
 
         return return_dict_model_training
+    def train(self, mode: bool = True):
+        super().train(mode)
+        return self
 
+    # Put your old training logic in a new method
+    def fit_bayes(self, *args, **kwargs):
+        from gtm.gtm_training.training_helpers import train_bayes
+        return train_bayes(self, *args, **kwargs)
+    
+    
     def pretrain_transformation_layer(
         self,
         train_dataloader: DataLoader,
