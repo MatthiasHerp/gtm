@@ -18,6 +18,7 @@ import torch
 from torch import optim, Tensor
 from torch.optim.lr_scheduler import LambdaLR
 from torch.optim import Optimizer, Adam
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from gtm.gtm_training.training_bayes import VI_Model
@@ -803,6 +804,25 @@ def train_freq(
     return return_dict_model_training
 
 
+@torch.no_grad()
+def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, S_val=32, seed=123):
+    model.eval()
+    val_running, val_batches = 0.0, 0
+    for y_val in val_loader:
+        y_val = y_val.to(model.device)
+        out_val = VI.step(
+            samples=y_val,
+            hyperparameter_transformation=hyper_T,
+            hyperparameter_decorrelation=hyper_D,
+            model=model,
+            mcmc_samples=S_val,
+            seed=seed,   # keeps the estimate stable across epochs
+        )
+        val_running += float(out_val["loss"].item())
+        val_batches += 1
+    return val_running / max(1, val_batches)
+
+
 
 def train_bayes(
     model: "GTM",
@@ -815,12 +835,19 @@ def train_bayes(
     verbose: bool = False,
     max_batches_per_iter: int | bool = False,
     patience: int | None = None,
+    rho_lr_multiplier: float = 1.0,
+    sched_factor: float = 0.5,                # LR decay factor
+    sched_patience: int = 10,                 # epochs w/o val improvement
+    sched_threshold: float = 1e-4,
+    sched_cooldown: int = 2,
+    sched_min_lr: float = 1e-6,
     mcmc_sample: int = 1,
+    val_mcmc_sample: int | None = None,  # if None, reuse mcmc_sample
 ):
     # ----- hyperparameters -----
     if hyperparameters is None:
-        hyper_T: dict[str, float] = model.hyperparameter.get("transformation")
-        hyper_D: dict[str, float] = model.hyperparameter.get("decorrelation")
+        hyper_T: dict[str, float] = model.hyperparameter.get("transformation", {})
+        hyper_D: dict[str, float] = model.hyperparameter.get("decorrelation", {})
     else:
         hyper_T: dict[str, float] = hyperparameters.get("transformation", {})
         hyper_D: dict[str, float] = hyperparameters.get("decorrelation", {})
@@ -833,8 +860,25 @@ def train_bayes(
 
     if optimizer != "Adam":
         raise ValueError(f"Unsupported optimizer: {optimizer}")
-    opt = torch.optim.Adam([p for p in VI.parameters() if p.requires_grad], lr=lr)
-
+    
+    if rho_lr_multiplier != 1.0:
+        opt = torch.optim.Adam([
+            {"params": [VI.mu],  "lr": lr},
+            {"params": [VI.rho], "lr": lr * rho_lr_multiplier},
+        ])
+    else:
+        opt = torch.optim.Adam([p for p in VI.parameters() if p.requires_grad], lr=lr)
+    
+    
+    # ---- NEW: LR scheduler driven by (val) loss ----
+    sched = ReduceLROnPlateau(
+        opt, mode="min",
+        factor=sched_factor, patience=sched_patience,
+        threshold=sched_threshold, cooldown=sched_cooldown,
+        min_lr=sched_min_lr, verbose=verbose
+    )
+    
+    
     best_loss = float("inf")
     best_state = {
         "mu": VI.mu.detach().clone(),
@@ -842,12 +886,19 @@ def train_bayes(
     }
 
     loss_history: list[float] = []
+    val_history: list[float] = []
     start = time.time()
-
+    
+    # Which history to use for early stopping / best tracking
+    use_val = validate_dataloader is not None
+    picked_hist = val_history if use_val else loss_history
+    if use_val:
+        best_state["picked_metric"] = "val"
+    
     for epoch in range(iterations):
         running = 0.0
         n_batches = 0
-
+        # ----------------------- TRAIN -----------------------
         for b, y_train in enumerate(train_dataloader):
             if max_batches_per_iter and (b >= max_batches_per_iter):
                 break
@@ -869,16 +920,17 @@ def train_bayes(
                 raise RuntimeError(f"Non-finite loss at epoch {epoch}, batch {b}: {loss.item()}")
 
             loss.backward()
+            
+            if VI.rho.grad is None:
+                print("rho.grad is None -> gradient is blocked")
+                
+            else:
+                print("||grad(mu)||=", VI.mu.grad.norm().item(),
+                    "||grad(rho)||=", VI.rho.grad.norm().item())
+            
             torch.nn.utils.clip_grad_norm_(VI.parameters(), 5.0)
-            
-            if VI.rho.grad is not None:
-                gmu = VI.mu.grad.norm().item()
-                grho = VI.rho.grad.norm().item()
-                if verbose and (epoch % 10 == 0):
-                    print(f"||∇μ||={gmu:.3e}  ||∇ρ||={grho:.3e}")
-            
             opt.step()
-
+            
             running += float(loss.item())
             n_batches += 1
 
@@ -887,27 +939,56 @@ def train_bayes(
 
         epoch_loss = running / n_batches
         loss_history.append(epoch_loss)
+        
+        # --------------------- VALIDATION --------------------
+        # ----- compute validation (per-epoch value, not best-so-far) -----
+        epoch_val = None
+        if validate_dataloader is not None:
+            epoch_val = _evaluate_epoch(
+                VI,
+                model,
+                validate_dataloader,
+                hyper_T,
+                hyper_D,
+                S_val=val_mcmc_sample
+                )
+            val_history.append(epoch_val)
 
-        # --- best tracking BEFORE overwriting ---
+        # ----- pick the metric the scheduler/early-stop will watch -----
+        metric = epoch_val if epoch_val is not None else epoch_loss
+
+        # ---- NEW: step the scheduler AFTER computing the metric ----
+        sched.step(metric)
         if epoch_loss < best_loss - 1e-8:
             best_loss = epoch_loss
             best_state["mu"] = VI.mu.detach().clone()
             best_state["rho"] = VI.rho.detach().clone()
+            best_state["epoch"] = epoch + 1
+            
+            
 
         if verbose:
-            print(f"[{epoch+1}/{iterations}] loss={epoch_loss:.4f}  "
-                  f"log_q={out['mean_log_q'].item():.4f}  "
-                  f"log_p~={out['mean_log_p_tilde'].item():.4f}  "
-                  f"σ̄={out['sigma_mean'].item():.4f}")
+            if use_val:
+                print(f"[{epoch+1}/{iterations}] train_loss={epoch_loss:.4f}  "
+                      f"val_loss={epoch_val:.4f}  "
+                      f"σ̄={float(VI.sigma.mean()):.4f}  "
+                      f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}")
+            else:
+                print(f"[{epoch+1}/{iterations}] loss={epoch_loss:.4f}  "
+                      f"σ̄={float(VI.sigma.mean()):.4f}  "
+                      f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}")
+
 
         # --- early stopping (optional) ---
-        if patience and len(loss_history) > patience:
-            window_old = sum(loss_history[-2*patience:-patience]) / patience
-            window_new = sum(loss_history[-patience:]) / patience
+        if patience and len(picked_hist) > patience:
+            window_old = sum(picked_hist[-2*patience:-patience]) / patience
+            window_new = sum(picked_hist[-patience:]) / patience
             if window_new >= window_old:  # no improvement
                 if verbose:
-                    print(f"Early stop @ epoch {epoch+1}: {window_old:.4f} → {window_new:.4f}")
+                    tag = "val" if use_val else "train"
+                    print(f"Early stop on {tag} @ epoch {epoch+1}: {window_old:.4f} → {window_new:.4f}")
                 break
+            
 
     # restore best VI params
     with torch.no_grad():
@@ -915,8 +996,8 @@ def train_bayes(
         VI.rho.copy_(best_state["rho"])
 
     # (optional) load θ=μ into the GTM for downstream inference
-    VI.set_model_params(VI.mu.detach())
-
+    VI.set_model_params(VI.mu.detach()) # load μ into the GTM
+    
     if was_training:
         model.train()
 
@@ -925,7 +1006,10 @@ def train_bayes(
         "training_time": training_time,
         "epochs_run": epoch + 1,
         "best_loss": best_loss,
+        "best_epoch": best_state["epoch"],
+        "best_metric": best_state["picked_metric"],  # "val" or "train"
         "loss_history": loss_history,
+        "val_history": val_history,  # [] if no validation loader
         "mu": VI.mu.detach(),
         "rho": VI.rho.detach(),
         "vi_model": VI,

@@ -87,23 +87,47 @@ if __name__ == "__main__":
             
             
             
-            model.fit_bayes(
+            output = model.fit_bayes(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
                 hyperparameters=None,
-                iterations=200,
+                iterations=70,
                 verbose=True,
                 optimizer='Adam',
-                lr=0.00001,
+                lr=0.01,
+                rho_lr_multiplier=5,
                 patience = False, 
-                mcmc_sample=5
+                mcmc_sample=2,
+                val_mcmc_sample=40
             )
 
-            torch.save(
-                model,
-                os.path.join(
-                    "demos",
-                    "models",
-                    f"magic_group_{group}_decorr_{num_decorr_layers}_gtm_state_dict.pth",
-                ),
-            )
+            
+            import matplotlib.pyplot as plt
+
+            # Example: replace this with your actual output['loss_history'] values
+            loss_history = output['loss_history']
+            val_loss = output['val_history']
+            
+            # Plot
+            plt.figure(figsize=(8, 5))
+            plt.plot(loss_history, label="Loss", linewidth=2)
+            plt.plot(val_loss, label="Validation Loss", linewidth=2)
+            plt.xlabel("Iteration / Epoch")
+            plt.ylabel("Loss")
+            plt.title("Loss Evolution")
+            plt.legend()
+            plt.grid(True)
+            plt.show()
+            
+            
+            
+            output['mu']
+            
+            #torch.save(
+            #    model,
+            #    os.path.join(
+            #        "demos",
+            #        "models",
+            #        f"magic_group_{group}_decorr_{num_decorr_layers}_gtm_state_dict.pth",
+            #    ),
+            #)
