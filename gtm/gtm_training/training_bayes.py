@@ -78,7 +78,7 @@ class VI_Model(nn.Module):
     
     @property
     def sigma(self) -> Tensor:
-        return nn.functional.softplus(self.rho)
+        return 1e-6 + nn.functional.softplus(self.rho) #to avoid softplus near-zero stickiness 1e-6
         
     def sample_theta(self, num_samples: int = 1) -> Tensor:
         """Reparameterized samples θ = μ + σ ⊙ ε, ε ~ N(0, I). Shape: [S, D]."""
