@@ -54,7 +54,10 @@ if __name__ == "__main__":
             dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
 
             
-            
+            hyperparameters= {
+                "transformation": { "sigma_a": 1, "sigma_b": 5, "tau_a": 3, "tau_b": 7 },
+                "decorrelation": { "sigma_a": 5, "sigma_b": 2, "tau_a": 1, "tau_b": 6 }
+                }
             
             model = GTM(
                 number_variables=10,
@@ -66,7 +69,8 @@ if __name__ == "__main__":
                 spline_decorrelation="bspline",
                 transformation_spline_range=(-15, 15),
                 inference = 'bayesian',
-                device="cpu"
+                device="cpu",
+                hyperparameter=hyperparameters
             )
 
             model.to(device)
@@ -94,7 +98,7 @@ if __name__ == "__main__":
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
                 hyperparameters=None,
-                iterations=70,
+                iterations=150,
                 verbose=True,
                 lr=0.01,
                 mcmc_sample_train=4,            # will ramp

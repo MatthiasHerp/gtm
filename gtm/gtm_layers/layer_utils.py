@@ -124,7 +124,7 @@ class bayesian_splines:
             b_tau = torch.as_tensor(hyperparameter['tau_b'], device=model.device, dtype=torch.float32)
             
             a_sigma = torch.as_tensor(hyperparameter['sigma_a'], device=model.device, dtype=torch.float32)
-            b_sigma = torch.as_tensor(hyperparameter['sigma_a'], device=model.device, dtype=torch.float32)
+            b_sigma = torch.as_tensor(hyperparameter['sigma_b'], device=model.device, dtype=torch.float32)
             
             
             alpha2_hat   = torch.as_tensor(_invgamma_mean(a_tau, b_tau),   device=model.device)
@@ -134,6 +134,7 @@ class bayesian_splines:
             for layer in model.decorrelation_layers:
                 # K built once per layer; ensure it's on device
                 K = layer.priors.K_prior.to(device=model.device, dtype=torch.float32)
+                K = K + 1e-6 * torch.eye(K.shape[0], device=K.device, dtype=K.dtype) ## FOR NUMERICAL STABILITY
                 gamma = layer.params  # [Kdim, M]
                 
                 total_logp = total_logp + bayesian_splines.log_prior_gamma_ridge(gamma, K, alpha2_hat, sigma_2_hat)
@@ -150,6 +151,7 @@ class bayesian_splines:
             sigma2_hat = torch.as_tensor(_invgamma_mean(a_sig, b_sig),   device=sub_model.device)
 
             K = sub_model.priors.K_prior.to(device=sub_model.device, dtype=torch.float32)
+            K = K + 1e-6 * torch.eye(K.shape[0], device=K.device, dtype=K.dtype) ## FOR NUMERICAL STABILITY
             gammas = sub_model.padded_params
             gammas = bayesian_splines._restrict_parameters_(
                 params_a=gammas,
