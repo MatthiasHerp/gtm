@@ -884,7 +884,7 @@ def train_bayes(
     loss_history, val_history = [], []
     start = time.time()
 
-    for epoch in range(iterations):
+    for epoch in tqdm(range(iterations)):
         # --- MC ramp for TRAIN only (validation stays fixed) ---
         if mc_ramp_every is not None and epoch > 0 and (epoch % mc_ramp_every == 0):
             mcmc_sample_train = min(mc_ramp_max, max(mcmc_sample_train * 2, 1))
