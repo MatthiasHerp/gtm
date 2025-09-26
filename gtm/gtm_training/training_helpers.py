@@ -948,10 +948,14 @@ def train_bayes(
             lrs = [pg["lr"] for pg in opt.param_groups]
             if val_loss is not None:
                 print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  val={val_loss:.4f}  "
-                      f"S_train={mcmc_sample_train} S_val={mcmc_sample_val} lr={lrs}")
+                    f"S_train={mcmc_sample_train} S_val={mcmc_sample_val} lr={lrs}"
+                    f"σ̄={float(VI.sigma.mean()):.4f}  "
+                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}")
             else:
                 print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  "
-                      f"S_train={mcmc_sample_train} lr={lrs}")
+                    f"S_train={mcmc_sample_train} lr={lrs}"
+                    f"σ̄={float(VI.sigma.mean()):.4f}  "
+                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}")
 
         if validate_dataloader is not None and no_improve >= patience_val:
             if verbose:

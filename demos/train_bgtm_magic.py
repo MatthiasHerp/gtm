@@ -102,7 +102,7 @@ if __name__ == "__main__":
                 verbose=True,
                 lr=0.01,
                 mcmc_sample_train=4,            # will ramp
-                mcmc_sample_val=64,             # fixed & larger for stable eval
+                mcmc_sample_val=16,             # fixed & larger for stable eval
                 mc_ramp_every=25,               # 4→8→16→32 at epochs 25/50/75
                 mc_ramp_max=32,
                 patience_val=15,                # early-stop patience
