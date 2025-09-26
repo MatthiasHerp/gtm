@@ -805,62 +805,64 @@ def train_freq(
 
 
 @torch.no_grad()
-def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, S_val=32, seed=123):
+def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, S_val=8, seed=123):
     model.eval()
-    val_running, val_batches = 0.0, 0
-    for y_val in val_loader:
-        y_val = y_val.to(model.device)
-        out_val = VI.step(
-            samples=y_val,
+    total, n = 0.0, 0
+    for y in val_loader:
+        y = y.to(model.device)
+        out = VI.step(
+            samples=y,
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
             model=model,
             mcmc_samples=S_val,
-            seed=seed,   # keeps the estimate stable across epochs
+            seed=seed,     # keep constant across epochs for comparability
         )
-        val_running += float(out_val["loss"].item())
-        val_batches += 1
-    return val_running / max(1, val_batches)
-
+        total += float(out["loss"].item())
+        n += 1
+    return total / max(1, n)
 
 
 def train_bayes(
     model: "GTM",
-    train_dataloader: DataLoader,
+    train_dataloader,
     validate_dataloader=None,
     iterations: int = 100,
-    optimizer: str = "Adam",
     lr: float = 1e-3,
     hyperparameters: dict | None = None,
     verbose: bool = False,
     max_batches_per_iter: int | bool = False,
-    patience: int | None = None,
-    rho_lr_multiplier: float = 1.0,
-    sched_factor: float = 0.5,                # LR decay factor
-    sched_patience: int = 10,                 # epochs w/o val improvement
-    sched_threshold: float = 1e-4,
-    sched_cooldown: int = 2,
-    sched_min_lr: float = 1e-6,
-    mcmc_sample: int = 1,
-    val_mcmc_sample: int | None = None,  # if None, reuse mcmc_sample
-):
-    # ----- hyperparameters -----
-    if hyperparameters is None:
-        hyper_T: dict[str, float] = model.hyperparameter.get("transformation", {})
-        hyper_D: dict[str, float] = model.hyperparameter.get("decorrelation", {})
-    else:
-        hyper_T: dict[str, float] = hyperparameters.get("transformation", {})
-        hyper_D: dict[str, float] = hyperparameters.get("decorrelation", {})
 
-    # Freeze BN/Dropout behaviour during VI
+    # --- NEW knobs ---
+    mcmc_sample_train: int = 4,       # == S_train
+    mcmc_sample_val: int = 8,         # == S_val (keep fixed!)
+    mc_ramp_every: int | None = 20,   # every N epochs, double S_train; None to disable
+    mc_ramp_max: int = 32,
+    global_seed: int = 0,
+    patience_val: int = 10,           # stop after this many epochs w/o val improvement
+    min_delta: float = 0.0,           # improvement threshold
+    rho_lr_multiplier: float = 1.0,   # e.g. 2.0 if you want rho a bit faster
+    sched_factor: float = 0.5,
+    sched_patience: int = 5,
+    sched_threshold: float = 1e-4,
+    sched_cooldown: int = 1,
+    sched_min_lr: float = 1e-6,
+):
+    import time, torch
     was_training = model.training
     model.eval()
 
+    # hyperparams
+    if hyperparameters is None:
+        hyper_T = model.hyperparameter.get("transformation", )
+        hyper_D = model.hyperparameter.get("decorrelation")
+    else:
+        hyper_T = hyperparameters.get("transformation", {})
+        hyper_D = hyperparameters.get("decorrelation", {})
+
     VI = VI_Model(model=model).to(model.device)
 
-    if optimizer != "Adam":
-        raise ValueError(f"Unsupported optimizer: {optimizer}")
-    
+    # optimizer (optionally faster LR for rho)
     if rho_lr_multiplier != 1.0:
         opt = torch.optim.Adam([
             {"params": [VI.mu],  "lr": lr},
@@ -868,152 +870,114 @@ def train_bayes(
         ])
     else:
         opt = torch.optim.Adam([p for p in VI.parameters() if p.requires_grad], lr=lr)
-    
-    
-    # ---- NEW: LR scheduler driven by (val) loss ----
+
     sched = ReduceLROnPlateau(
-        opt, mode="min",
-        factor=sched_factor, patience=sched_patience,
-        threshold=sched_threshold, cooldown=sched_cooldown,
-        min_lr=sched_min_lr, verbose=verbose
+        opt, mode="min", factor=sched_factor, patience=sched_patience,
+        threshold=sched_threshold, cooldown=sched_cooldown, min_lr=sched_min_lr,
+        verbose=verbose
     )
-    
-    
-    best_loss = float("inf")
-    best_state = {
-        "mu": VI.mu.detach().clone(),
-        "rho": VI.rho.detach().clone(),
-    }
 
-    loss_history: list[float] = []
-    val_history: list[float] = []
+    best_val = float("inf")
+    best_state = {"mu": VI.mu.detach().clone(), "rho": VI.rho.detach().clone()}
+    no_improve = 0
+
+    loss_history, val_history = [], []
     start = time.time()
-    
-    # Which history to use for early stopping / best tracking
-    use_val = validate_dataloader is not None
-    picked_hist = val_history if use_val else loss_history
-    if use_val:
-        best_state["picked_metric"] = "val"
-    
+
     for epoch in range(iterations):
-        running = 0.0
-        n_batches = 0
-        # ----------------------- TRAIN -----------------------
-        for b, y_train in enumerate(train_dataloader):
-            if max_batches_per_iter and (b >= max_batches_per_iter):
+        # --- MC ramp for TRAIN only (validation stays fixed) ---
+        if mc_ramp_every is not None and epoch > 0 and (epoch % mc_ramp_every == 0):
+            mcmc_sample_train = min(mc_ramp_max, max(mcmc_sample_train * 2, 1))
+
+        running, n_batches = 0.0, 0
+        for b, y in enumerate(train_dataloader):
+            if max_batches_per_iter and b >= max_batches_per_iter:
                 break
-
-            y_train = y_train.to(model.device)
-
+            y = y.to(model.device)
             opt.zero_grad(set_to_none=True)
-
             out = VI.step(
-                samples=y_train,
-                hyperparameter_decorrelation=hyper_D,
+                samples=y,
                 hyperparameter_transformation=hyper_T,
+                hyperparameter_decorrelation=hyper_D,
                 model=model,
-                mcmc_samples=mcmc_sample,
+                mcmc_samples=mcmc_sample_train,
+                seed=global_seed + epoch * 10_000 + b,  # different per step
             )
-
             loss = out["loss"]
             if not torch.isfinite(loss):
-                raise RuntimeError(f"Non-finite loss at epoch {epoch}, batch {b}: {loss.item()}")
+                raise RuntimeError(f"Non-finite loss @ epoch {epoch}, batch {b}: {loss.item()}")
 
             loss.backward()
-            
-            if VI.rho.grad is None:
-                print("rho.grad is None -> gradient is blocked")
-                
-            else:
-                print("||grad(mu)||=", VI.mu.grad.norm().item(),
-                    "||grad(rho)||=", VI.rho.grad.norm().item())
-            
             torch.nn.utils.clip_grad_norm_(VI.parameters(), 5.0)
             opt.step()
-            
+
             running += float(loss.item())
             n_batches += 1
 
         if n_batches == 0:
             raise RuntimeError("No batches processed. Check your dataloader / max_batches_per_iter.")
 
-        epoch_loss = running / n_batches
-        loss_history.append(epoch_loss)
-        
-        # --------------------- VALIDATION --------------------
-        # ----- compute validation (per-epoch value, not best-so-far) -----
-        epoch_val = None
+        train_loss = running / n_batches
+        loss_history.append(train_loss)
+
+        # --- VALIDATION with fixed seed & fixed S ---
         if validate_dataloader is not None:
-            epoch_val = _evaluate_epoch(
-                VI,
-                model,
-                validate_dataloader,
-                hyper_T,
-                hyper_D,
-                S_val=val_mcmc_sample
-                )
-            val_history.append(epoch_val)
+            val_loss = _evaluate_epoch(
+                VI, model, validate_dataloader,
+                hyper_T, hyper_D, S_val=mcmc_sample_val, seed=global_seed + 12345
+            )
+            val_history.append(val_loss)
+            metric = val_loss
+        else:
+            val_loss, metric = None, train_loss
 
-        # ----- pick the metric the scheduler/early-stop will watch -----
-        metric = epoch_val if epoch_val is not None else epoch_loss
-
-        # ---- NEW: step the scheduler AFTER computing the metric ----
+        # scheduler uses the same metric we early-stop on
         sched.step(metric)
-        if epoch_loss < best_loss - 1e-8:
-            best_loss = epoch_loss
+
+        # early stopping on straight "no improvement"
+        improved = (metric < best_val - min_delta)
+        if improved:
+            best_val = metric
+            no_improve = 0
             best_state["mu"] = VI.mu.detach().clone()
             best_state["rho"] = VI.rho.detach().clone()
-            best_state["epoch"] = epoch + 1
-            
-            
+        else:
+            no_improve += 1
 
         if verbose:
-            if use_val:
-                print(f"[{epoch+1}/{iterations}] train_loss={epoch_loss:.4f}  "
-                      f"val_loss={epoch_val:.4f}  "
-                      f"σ̄={float(VI.sigma.mean()):.4f}  "
-                      f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}")
+            lrs = [pg["lr"] for pg in opt.param_groups]
+            if val_loss is not None:
+                print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  val={val_loss:.4f}  "
+                      f"S_train={mcmc_sample_train} S_val={mcmc_sample_val} lr={lrs}")
             else:
-                print(f"[{epoch+1}/{iterations}] loss={epoch_loss:.4f}  "
-                      f"σ̄={float(VI.sigma.mean()):.4f}  "
-                      f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}")
+                print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  "
+                      f"S_train={mcmc_sample_train} lr={lrs}")
 
+        if validate_dataloader is not None and no_improve >= patience_val:
+            if verbose:
+                print(f"Early stop @ epoch {epoch+1}: no val improvement for {patience_val} epochs.")
+            break
 
-        # --- early stopping (optional) ---
-        if patience and len(picked_hist) > patience:
-            window_old = sum(picked_hist[-2*patience:-patience]) / patience
-            window_new = sum(picked_hist[-patience:]) / patience
-            if window_new >= window_old:  # no improvement
-                if verbose:
-                    tag = "val" if use_val else "train"
-                    print(f"Early stop on {tag} @ epoch {epoch+1}: {window_old:.4f} → {window_new:.4f}")
-                break
-            
-
-    # restore best VI params
+    # restore best VI params (critical when val diverges)
     with torch.no_grad():
         VI.mu.copy_(best_state["mu"])
         VI.rho.copy_(best_state["rho"])
+    VI.set_model_params(VI.mu.detach())
 
-    # (optional) load θ=μ into the GTM for downstream inference
-    VI.set_model_params(VI.mu.detach()) # load μ into the GTM
-    
     if was_training:
         model.train()
 
-    training_time = time.time() - start
     return {
-        "training_time": training_time,
+        "training_time": time.time() - start,
         "epochs_run": epoch + 1,
-        "best_loss": best_loss,
-        "best_epoch": best_state["epoch"],
-        "best_metric": best_state["picked_metric"],  # "val" or "train"
+        "best_val": best_val,
         "loss_history": loss_history,
-        "val_history": val_history,  # [] if no validation loader
+        "val_history": val_history if validate_dataloader is not None else None,
         "mu": VI.mu.detach(),
         "rho": VI.rho.detach(),
         "vi_model": VI,
     }
+
 
 def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars) -> Tensor:
 

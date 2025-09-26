@@ -53,6 +53,9 @@ if __name__ == "__main__":
             dataset_validate = Generic_Dataset(y_validate)
             dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
 
+            
+            
+            
             model = GTM(
                 number_variables=10,
                 number_transformation_layers=1,
@@ -93,12 +96,15 @@ if __name__ == "__main__":
                 hyperparameters=None,
                 iterations=70,
                 verbose=True,
-                optimizer='Adam',
                 lr=0.01,
-                rho_lr_multiplier=5,
-                patience = False, 
-                mcmc_sample=2,
-                val_mcmc_sample=40
+                mcmc_sample_train=4,            # will ramp
+                mcmc_sample_val=64,             # fixed & larger for stable eval
+                mc_ramp_every=25,               # 4→8→16→32 at epochs 25/50/75
+                mc_ramp_max=32,
+                patience_val=15,                # early-stop patience
+                min_delta=0.001,                # ~0.1% absolute of your loss scale
+                rho_lr_multiplier=1.5,          # slightly faster variance adaption (optional)
+                sched_factor=0.5, sched_patience=6, sched_threshold=1e-4,
             )
 
             
