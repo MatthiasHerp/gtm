@@ -98,7 +98,7 @@ if __name__ == "__main__":
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
                 hyperparameters=None,
-                iterations=150,
+                iterations=1000,
                 verbose=True,
                 lr=0.01,
                 mcmc_sample_train=4,            # will ramp
@@ -119,6 +119,7 @@ if __name__ == "__main__":
             val_loss = output['val_history']
             
             # Plot
+            
             plt.figure(figsize=(8, 5))
             plt.plot(loss_history, label="Loss", linewidth=2)
             plt.plot(val_loss, label="Validation Loss", linewidth=2)
@@ -127,10 +128,11 @@ if __name__ == "__main__":
             plt.title("Loss Evolution")
             plt.legend()
             plt.grid(True)
+
+            # Save the figure before showing it
+            plt.savefig("bgtm_model_evaluation.png", dpi=300, bbox_inches="tight")
+
             plt.show()
-            
-            
-            
             output['mu']
             
             #torch.save(
