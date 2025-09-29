@@ -5,8 +5,9 @@ optuna==3.5.0
 pandas==2.3.0
 pyvinecopulib==0.7.3
 scikit_learn==1.2.0
-scipy==1.15.3
+scipy==1.11.4
 seaborn==0.13.2
-setuptools==68.2.2
-torch==2.5.1
+#setuptools==68.2.2
+setuptools>=80
+torch==2.2.2
 tqdm==4.65.0

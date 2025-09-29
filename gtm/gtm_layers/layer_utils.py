@@ -74,7 +74,7 @@ class bayesian_splines:
         return logp
 
     @staticmethod
-    def log_prior_gamma_ridge(gamma: Tensor, K: Tensor, tau2: Tensor, sigma2: Tensor, eps: float = 1e-6) -> Tensor:
+    def log_prior_gamma_ridge(gamma: Tensor, K: Tensor, tau2: Tensor ,sigma2: Tensor, eps: float = 1e-6) -> Tensor:
         """
         gamma: [Kdim, M]  (columns independent)
         K:     [Kdim, Kdim] (difference penalty base)
@@ -83,7 +83,8 @@ class bayesian_splines:
         """
         Kdim = K.shape[0]
         I = torch.eye(Kdim, device=K.device, dtype=K.dtype)
-        #Q = tau2 * (K + eps * I) + (1.0 / sigma2) * I           # [Kdim,Kdim] PD
+        
+        K= 0.5 * (K + K.T)
         K = K / (K.abs().max() + 1e-8)
         Q = (1.0 / tau2) * K + (1.0 / sigma2) * I
         
@@ -102,7 +103,8 @@ class bayesian_splines:
     def defining_prior(
         model: "GTM",
         hyperparameter,
-        is_transformation = False
+        is_transformation = False,
+        prior_jitter = 1e-6
         ):
         
         def _invgamma_mean(a, b):
@@ -115,43 +117,65 @@ class bayesian_splines:
         
         if not is_transformation:
             
-            """
-            Returns NEGATIVE log prior (scalar) to be added to NLL.
-            Sums over all decorrelation layers and columns.
-            """
+            # --- Decorrelation layer prior (RW1 + RW2) ---------------------------
+            # Paper §3.3: ridge on first & second differences to pull toward linear
+            # (Gaussian-copula baseline) and to smooth curvature. :contentReference[oaicite:0]{index=0}
+
             # Plug-in (stable) alpha^2; or make alpha2 a learnable parameter and add its log-prior below.
-            a_tau = torch.as_tensor(hyperparameter['tau_a'], device=model.device, dtype=torch.float32)
-            b_tau = torch.as_tensor(hyperparameter['tau_b'], device=model.device, dtype=torch.float32)
             
+            # Penalization Term
+            pen_term1 = hyperparameter.get('RW1', {})
+            a_tau_1 = torch.as_tensor(pen_term1['tau_a'], device=model.device, dtype=torch.float32)
+            b_tau_1 = torch.as_tensor(pen_term1['tau_b'], device=model.device, dtype=torch.float32)
+            
+            pen_term2 = hyperparameter.get('RW2', {})
+            a_tau_2 = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
+            b_tau_2 = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
+            
+            # Ridge General Variation
             a_sigma = torch.as_tensor(hyperparameter['sigma_a'], device=model.device, dtype=torch.float32)
             b_sigma = torch.as_tensor(hyperparameter['sigma_b'], device=model.device, dtype=torch.float32)
             
             
-            alpha2_hat   = torch.as_tensor(_invgamma_mean(a_tau, b_tau),   device=model.device)
+            alpha2_hat_1   = torch.as_tensor(_invgamma_mean(a_tau_1, b_tau_1),   device=model.device)
+            alpha2_hat_2   = torch.as_tensor(_invgamma_mean(a_tau_2, b_tau_2),   device=model.device)
+            
             sigma_2_hat = torch.as_tensor(_invgamma_mean(a_sigma, b_sigma),   device=model.device)
-
             
             for layer in model.decorrelation_layers:
                 # K built once per layer; ensure it's on device
-                K = layer.priors.K_prior.to(device=model.device, dtype=torch.float32)
-                K = K + 1e-6 * torch.eye(K.shape[0], device=K.device, dtype=K.dtype) ## FOR NUMERICAL STABILITY
-                gamma = layer.params  # [Kdim, M]
+                K_RW1 = layer.priors.K_prior_RW1.to(device=model.device, dtype=torch.float32)
+                K_RW2 = layer.priors.K_prior_RW2.to(device=model.device, dtype=torch.float32)
                 
-                total_logp = total_logp + bayesian_splines.log_prior_gamma_ridge(gamma, K, alpha2_hat, sigma_2_hat)
-
-            # NEGATIVE log prior to add onto NLL in your objective
+                K_mix = (alpha2_hat_2 / (alpha2_hat_1 + 1e-12)) * K_RW1 + K_RW2
+                K_mix = 0.5*(K_mix + K_mix.T)
+                gamma = layer.params  # [Kdim, M]
+                # log_prior_gamma_ridge is assumed to implement: -0.5/sigma2 * sum_c gamma_c^T K gamma_c (+ const)
+                total_logp = total_logp + bayesian_splines.log_prior_gamma_ridge(gamma, K_mix,alpha2_hat_2 ,sigma_2_hat)
             
-        else: 
-            a_tau = torch.as_tensor(hyperparameter['tau_a'],  device=sub_model.device, dtype=torch.float32)
-            b_tau = torch.as_tensor(hyperparameter['tau_b'],  device=sub_model.device, dtype=torch.float32)
+            
+        else:
+            # --- Transformation (marginal) layer prior (RW2 only) ----------------
+            # Paper §3.3: monotone splines; first-diff penalty not needed; use RW2-only
+            # smoothing (λ4 in the paper). :contentReference[oaicite:1]{index=1}
+            
+            # Penalization Term
+            pen_term2 = hyperparameter.get('RW2', {})
+            a_tau_2 = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
+            b_tau_2 = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
+            
             a_sig = torch.as_tensor(hyperparameter['sigma_a'],device=sub_model.device, dtype=torch.float32)
             b_sig = torch.as_tensor(hyperparameter['sigma_b'],device=sub_model.device, dtype=torch.float32)
 
-            tau2_hat   = torch.as_tensor(_invgamma_mean(a_tau, b_tau),   device=sub_model.device)
+            alpha2_hat_2   = torch.as_tensor(_invgamma_mean(a_tau_2, b_tau_2),   device=model.device)
             sigma2_hat = torch.as_tensor(_invgamma_mean(a_sig, b_sig),   device=sub_model.device)
 
-            K = sub_model.priors.K_prior.to(device=sub_model.device, dtype=torch.float32)
-            K = K + 1e-6 * torch.eye(K.shape[0], device=K.device, dtype=K.dtype) ## FOR NUMERICAL STABILITY
+            K_Prior_RW2 = sub_model.priors.K_prior_RW2.to(device=sub_model.device, dtype=torch.float32)
+            
+            K_Prior_RW2 = K_Prior_RW2 * alpha2_hat_2
+            K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
+            
+            # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
             gammas = sub_model.padded_params
             gammas = bayesian_splines._restrict_parameters_(
                 params_a=gammas,
@@ -160,8 +184,8 @@ class bayesian_splines:
                 monotonically_increasing=sub_model.monotonically_increasing,
                 device=sub_model.device
             )
-            total_logp = bayesian_splines.log_prior_gamma_ridge(gammas, K, tau2_hat, sigma2_hat)
-            
+            total_logp = bayesian_splines.log_prior_gamma_ridge(gammas, K_Prior_RW2, tau2=alpha2_hat_2,sigma2=sigma2_hat)
+        # NEGATIVE log prior to add onto NLL in your objective    
         return -total_logp
             
     @staticmethod
@@ -196,24 +220,27 @@ class bayesian_splines:
 class BayesianPriors:
     sigma_a: Tensor
     sigma_b: Tensor
-    alpha_a: Tensor
-    alpha_b: Tensor
-    order_prior_diff: int
-    K_prior: Tensor
-    hyperprior_sigma_dist: InverseGamma
-    hyperprior_alpha_dist: InverseGamma
+    RW1_alpha_a: Tensor
+    RW1_alpha_b: Tensor
+    RW2_alpha_a: Tensor
+    RW2_alpha_b: Tensor
+    K_prior_RW1: Tensor
+    K_prior_RW2: Tensor
+    #hyperprior_sigma_dist: InverseGamma
+    #hyperprior_alpha_dist: InverseGamma
 
 
 class BayesianInitializer:
     """Builds Bayesian prior tensors/distributions for a model instance."""
 
-    REQUIRED_KEYS = ("sigma_a", "sigma_b", "tau_a", "tau_b")
+    #REQUIRED_KEYS = ("sigma_a", "sigma_b", "tau_a", "tau_b")
     
     @staticmethod
     def build(
         model,
         hyperparameter: Mapping[str, float],
-        n_params: int
+        n_params: int,
+        is_transformation,
         ) -> BayesianPriors:
         # Guard rails
         if getattr(model, "spline", None) == "bernstein":
@@ -221,8 +248,8 @@ class BayesianInitializer:
                 "Bayesian Inference is not implemented for Bernstein polynomials"
             )
             
-        if missing := [k for k in BayesianInitializer.REQUIRED_KEYS if k not in hyperparameter]:
-            raise KeyError(f"Missing hyperparameter(s): {', '.join(missing)}")
+        #if missing := [k for k in BayesianInitializer.REQUIRED_KEYS if k not in hyperparameter]:
+        #    raise KeyError(f"Missing hyperparameter(s): {', '.join(missing)}")
         
         device: torch.device = model.device
         dtype: torch.dtype = torch.float32
@@ -230,28 +257,40 @@ class BayesianInitializer:
         # Scalars as 0-dim tensors on the right device/dtype
         sigma_a: Tensor = torch.as_tensor(hyperparameter["sigma_a"], dtype=dtype, device=device)
         sigma_b: Tensor = torch.as_tensor(hyperparameter["sigma_b"], dtype=dtype, device=device)
-        alpha_a: Tensor = torch.as_tensor(hyperparameter["tau_a"],   dtype=dtype, device=device)
-        alpha_b: Tensor = torch.as_tensor(hyperparameter["tau_b"],   dtype=dtype, device=device)
-
-        # Difference penalty matrix K = DᵀD
-        order_prior_diff = 2
-        #n_params = int(model.padded_params.shape[0])
-        K_prior: Tensor = bayesian_splines.difference_penalty_matrix(order=order_prior_diff, n_params=n_params).to(device=device)
-
-        # Priors (note: torch.distributions.InverseGamma expects concentration/rate)
-        hyperprior_sigma_dist: InverseGamma = bayesian_splines.gamma_hyperprior_distribution(a=sigma_a, b=sigma_b)
-        hyperprior_alpha_dist: InverseGamma = bayesian_splines.gamma_hyperprior_distribution(a=alpha_a, b=alpha_b)
         
+        
+        # Penalization Term
+        pen_term1 = hyperparameter['RW1']
+        a_tau_1 = torch.as_tensor(pen_term1['tau_a'], device=model.device, dtype=torch.float32)
+        b_tau_1 = torch.as_tensor(pen_term1['tau_b'], device=model.device, dtype=torch.float32)
+        
+        pen_term2 = hyperparameter['RW2']
+        a_tau_2 = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
+        b_tau_2 = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
+        
+        
+        #order_prior_diff = 1
+        K_prior_RW1: Tensor = bayesian_splines.difference_penalty_matrix(order=1, n_params=n_params).to(device=device)
+
+        #order_prior_diff = 2
+        #n_params = int(model.padded_params.shape[0])
+        K_prior_RW2: Tensor = bayesian_splines.difference_penalty_matrix(order=2, n_params=n_params).to(device=device)
+        
+        # Priors (note: torch.distributions.InverseGamma expects concentration/rate)
+        #hyperprior_sigma_dist: InverseGamma = bayesian_splines.gamma_hyperprior_distribution(a=sigma_a, b=sigma_b)
+        #hyperprior_alpha_dist: InverseGamma = bayesian_splines.gamma_hyperprior_distribution(a=alpha_a, b=alpha_b)
         
         
         return BayesianPriors(
             sigma_a=sigma_a,
             sigma_b=sigma_b,
-            alpha_a=alpha_a,
-            alpha_b=alpha_b,
-            order_prior_diff=order_prior_diff,
-            K_prior=K_prior,
-            hyperprior_sigma_dist=hyperprior_sigma_dist,
-            hyperprior_alpha_dist=hyperprior_alpha_dist
+            RW1_alpha_a=a_tau_1,
+            RW1_alpha_b=b_tau_1,
+            RW2_alpha_a=a_tau_2,
+            RW2_alpha_b=b_tau_2,
+            K_prior_RW1=K_prior_RW1,
+            K_prior_RW2=K_prior_RW2,
+            #hyperprior_sigma_dist=hyperprior_sigma_dist,
+            #hyperprior_alpha_dist=hyperprior_alpha_dist
         )
     
