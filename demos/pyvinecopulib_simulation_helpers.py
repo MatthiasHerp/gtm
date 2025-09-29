@@ -28,7 +28,7 @@ def sample_random_pair_copulas(D, Independence_tree=2):
     # List of families to sample from (can add/remove)
     families = [
         # pv.BicopFamily.indep,
-        pv.BicopFamily.gaussian,
+        #pv.BicopFamily.gaussian,
         pv.BicopFamily.student,
         pv.BicopFamily.clayton,
         pv.BicopFamily.gumbel,
@@ -49,7 +49,7 @@ def sample_random_pair_copulas(D, Independence_tree=2):
             for _ in range(num_edges):
                 fam = np.random.choice(families)
 
-                tau = 0.3 + 0.4 * np.random.random()
+                tau = 0.3 + 0.2 * np.random.random() #0.4 * np.random.random()
                 neg = np.random.choice([-1, 1])
 
                 # Sample rotation 0-3 for asymmetric families (e.g., Clayton, Gumbel, Frank)
