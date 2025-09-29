@@ -8,6 +8,7 @@ from optuna.samplers import TPESampler
 from optuna.study import Study
 from torch import nn, Tensor, FloatTensor
 from torch.utils.data import DataLoader
+from torch.nn.utils.convert_parameters import vector_to_parameters
 
 from gtm.gtm_layers.decorrelation_layer import Decorrelation
 from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
@@ -193,7 +194,19 @@ class GTM(nn.Module):
         
         if self.inference == "bayesian":
             
-            _COMMON_BAYES: dict[str, float] = {"sigma_a": 1, "sigma_b": 5e-5, "tau_a": 1, "tau_b": 5e-4}
+            _COMMON_BAYES: dict[str, float] = {
+                "sigma_a": 1,
+                "sigma_b": 5e-5,
+                "RW1": {
+                    "tau_a": 1,
+                    "tau_b": 5e-4
+                    },
+                "RW2": {
+                    "tau_a": 1,
+                    "tau_b": 5e-4
+                    }
+                }
+            
             _DEFAULT_BAYES_HYPERPARAMS: dict[str, dict[str, float]] = {
                 "transformation": _COMMON_BAYES.copy(),
                 "decorrelation": _COMMON_BAYES.copy(),
@@ -305,6 +318,64 @@ class GTM(nn.Module):
         }
         
         
+
+    def bayesian_param_set(
+        self,
+        output: dict,
+        which: str = "mean",          # 'mean' | 'sample' | 'vector'
+        sample_seed: int | None = None,
+        update_buffers: bool = True,  # False if you do NOT want BN running stats etc. updated
+    ):
+        """
+        Overwrite this GTM's parameters with a θ coming from VI.
+
+        - which='mean'   -> θ = μ   (usual point export)
+        - which='sample' -> θ ~ q(θ)
+        - which='vector' -> use the flat vector from output['mu'] (must match VI schema)
+        """
+        vi = output.get("vi_model", None)
+        if vi is None:
+            raise ValueError("Expected output to contain 'vi_model' returned by fit_bayes().")
+
+        # choose θ
+        with torch.no_grad():
+            if which == "mean":
+                theta = vi.mu.detach()
+            elif which == "sample":
+                if sample_seed is not None:
+                    torch.manual_seed(sample_seed)
+                theta = vi.sample_theta(1).squeeze(0).detach()
+            elif which == "vector":
+                if "mu" not in output:
+                    raise ValueError("which='vector' requires output['mu'].")
+                theta = output["mu"].detach()
+                if theta.numel() != vi.mu.numel():
+                    raise ValueError(f"Vector length {theta.numel()} != VI dim {vi.mu.numel()}.")
+            else:
+                raise ValueError("which must be 'mean', 'sample', or 'vector'.")
+
+            # map flat θ -> {key: tensor} using the VI schema (matches how μ was built)
+            sd_new = vi._theta_to_state_dict(theta)
+
+            # optionally restrict to *parameters only* (skip buffers like BN running stats)
+            if not update_buffers:
+                param_keys = {k for k, _ in self.named_parameters()}
+                sd_new = {k: v for k, v in sd_new.items() if k in param_keys}
+
+            # merge into current state_dict, respecting dtype/device
+            full = self.state_dict()
+            device = next(self.parameters()).device
+            for k, v in sd_new.items():
+                if k in full:
+                    sd_new[k] = v.to(device=device, dtype=full[k].dtype)
+                else:
+                    # key not present (e.g., schema drift) -> skip rather than crash
+                    sd_new.pop(k)
+
+            full.update(sd_new)
+            self.load_state_dict(full, strict=False)
+
+
     def forward(self, y, return_lambda_matrix=True):
         """
         GTM forward pass.

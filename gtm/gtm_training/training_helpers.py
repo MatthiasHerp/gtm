@@ -854,8 +854,8 @@ def train_bayes(
 
     # hyperparams
     if hyperparameters is None:
-        hyper_T = model.hyperparameter.get("transformation", )
-        hyper_D = model.hyperparameter.get("decorrelation")
+        hyper_T = model.hyperparameter.get("transformation", {})
+        hyper_D = model.hyperparameter.get("decorrelation", {})
     else:
         hyper_T = hyperparameters.get("transformation", {})
         hyper_D = hyperparameters.get("decorrelation", {})
@@ -966,8 +966,10 @@ def train_bayes(
     with torch.no_grad():
         VI.mu.copy_(best_state["mu"])
         VI.rho.copy_(best_state["rho"])
+    
     VI.set_model_params(VI.mu.detach())
-
+    
+    
     if was_training:
         model.train()
 

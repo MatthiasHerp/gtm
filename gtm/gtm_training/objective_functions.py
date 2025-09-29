@@ -149,10 +149,12 @@ def unnormalized_posterior_computation(
     #Likelihood
     return_dict_model_loss: Tensor = model.__log_likelihood_loss__(y=samples)
     nll: Tensor = return_dict_model_loss.get('negative_log_likelihood_data')
+    
     #Prior Transformation
     ntp = bayesian_splines.defining_prior(
         model=model, hyperparameter= hyperparameter_transformation, is_transformation=True
         )
+    
     #Prior Decorrelation
     ndp = bayesian_splines.defining_prior(
         model=model, hyperparameter=hyperparameter_decorrelation
