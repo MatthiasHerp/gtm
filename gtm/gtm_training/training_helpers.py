@@ -805,9 +805,9 @@ def train_freq(
 
 
 @torch.no_grad()
-def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, S_val=8, seed=123):
+def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, sample_size, S_val=8, seed=123):
     model.eval()
-    total, n = 0.0, 0
+    total, nobs = 0.0, 0
     for y in val_loader:
         y = y.to(model.device)
         out = VI.step(
@@ -817,10 +817,12 @@ def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, S_val=8, seed=123):
             model=model,
             mcmc_samples=S_val,
             seed=seed,     # keep constant across epochs for comparability
+            sample_size=sample_size
         )
-        total += float(out["loss"].item())
-        n += 1
-    return total / max(1, n)
+        m = y.shape[0]
+        total += float(out["loss"].item())*m
+        nobs += m
+    return total / max(1,nobs)
 
 
 def train_bayes(
@@ -852,6 +854,7 @@ def train_bayes(
     was_training = model.training
     model.eval()
 
+    N_total = len(train_dataloader.dataset)
     # hyperparams
     if hyperparameters is None:
         hyper_T = model.hyperparameter.get("transformation", {})
@@ -899,6 +902,7 @@ def train_bayes(
                 samples=y,
                 hyperparameter_transformation=hyper_T,
                 hyperparameter_decorrelation=hyper_D,
+                sample_size=N_total,
                 model=model,
                 mcmc_samples=mcmc_sample_train,
                 seed=global_seed + epoch * 10_000 + b,  # different per step
@@ -924,7 +928,7 @@ def train_bayes(
         if validate_dataloader is not None:
             val_loss = _evaluate_epoch(
                 VI, model, validate_dataloader,
-                hyper_T, hyper_D, S_val=mcmc_sample_val, seed=global_seed + 12345
+                hyper_T, hyper_D, S_val=mcmc_sample_val, seed=global_seed + 12345, sample_size=N_total
             )
             val_history.append(val_loss)
             metric = val_loss
