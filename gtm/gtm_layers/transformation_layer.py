@@ -136,17 +136,6 @@ class Transformation(nn.Module):
                                                                n_params=max_params, is_transformation=True)
             # Either store the whole dataclass…
             self.priors: BayesianPriors = priors
-            
-            """# …or copy the attributes you need on self:
-            self.sigma_a = priors.sigma_a
-            self.sigma_b = priors.sigma_b
-            self.alpha_a = priors.alpha_a
-            self.alpha_b = priors.alpha_b
-            self.order_prior_diff = priors.order_prior_diff
-            self.K_prior = priors.K_prior
-            self.prior_distr_sigma = priors.prior_distr_sigma
-            self.prior_distr_alpha = priors.prior_distr_alpha"""
-    
 
     def _defining_knots_list(self) -> List[Tensor]:
         
