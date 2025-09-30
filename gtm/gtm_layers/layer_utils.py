@@ -105,20 +105,18 @@ class bayesian_splines:
         prior_jitter = 1e-6
         ):
         
-        def _invgamma_mean(a, b):
-            # mean exists if a>1; fallback otherwise
-            a = float(a)
-            return b / (a - 1.0) if a > 1.0 else b / (a + 1.0)
-        
         sub_model = model.transformation if is_transformation else model.decorrelation_layers
         total_logp = torch.zeros((), device=model.device, dtype=torch.float32)
         
         if not is_transformation:
-            
+            def _invgamma_mean(a, b):
+            # mean exists if a>1; fallback otherwise
+                a = float(a)
+                return b / (a - 1.0) if a > 1.0 else b / (a + 1.0)
             # --- Decorrelation layer prior (RW1 + RW2) ---------------------------
             # Paper §3.3: ridge on first & second differences to pull toward linear
             # (Gaussian-copula baseline) and to smooth curvature. :contentReference[oaicite:0]{index=0}
-
+            
             # Plug-in (stable) alpha^2; or make alpha2 a learnable parameter and add its log-prior below.
             
             # Penalization Term
@@ -156,18 +154,16 @@ class bayesian_splines:
             # --- Transformation (marginal) layer prior (RW2 only) ----------------
             # Paper §3.3: monotone splines; first-diff penalty not needed; use RW2-only
             # smoothing (λ4 in the paper). :contentReference[oaicite:1]{index=1}
+            def _gamma_mean(a, b):  # shape a, rate b
+                return float(a) / float(b)
             
             # Penalization Term
             pen_term2 = hyperparameter.get('RW2', {})
             a_tau_2 = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
             b_tau_2 = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
             
-            #a_sig = torch.as_tensor(hyperparameter['sigma_a'],device=sub_model.device, dtype=torch.float32)
-            #b_sig = torch.as_tensor(hyperparameter['sigma_b'],device=sub_model.device, dtype=torch.float32)
-
-            alpha2_hat_2   = torch.as_tensor(_invgamma_mean(a_tau_2, b_tau_2),   device=model.device)
-            #sigma2_hat = torch.as_tensor(_invgamma_mean(a_sig, b_sig),   device=sub_model.device) #Not used
-
+            alpha2_hat_2   = torch.as_tensor(_gamma_mean(a_tau_2, b_tau_2),   device=model.device)
+            
             K_Prior_RW2 = sub_model.priors.K_prior_RW2.to(device=sub_model.device, dtype=torch.float32)
             
             K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
