@@ -46,32 +46,35 @@ class bayesian_splines:
         return -0.5 * r * torch.log(alpha_2) - cov
     
     @staticmethod
-    def log_mvn_zero_mean_prec(K: Tensor, alpha2: Tensor, gamma: Tensor, eps: float = 1e-6) -> Tensor:
+    def log_mvn_zero_mean_prec_ck(gamma: torch.Tensor,
+                              K: torch.Tensor,
+                              lam: torch.Tensor,
+                              eps: float = 1e-6) -> torch.Tensor:
         """
-        log N(gamma | 0, (alpha2*K)^(-1)) with precision alpha2 * (K + eps I).
+        CK prior: θ ~ N(0, (lam * K)^(-1)), with K = D2^T D2 (RW2).
+        gamma: [Kdim, M]   columns are independent coefficient blocks
+        K:     [Kdim, Kdim]
+        lam:   scalar precision (λ > 0)
+        returns scalar log p(Γ | λ, K) up to θ-independent constants (can keep constants too)
         """
-        if gamma.dim() == 1:
-            gamma = gamma.unsqueeze(0)  # [1, Kdim]
+        
+        # symmetrize & regularize intrinsic K (rank deficient)
+        K = 0.5 * (K + K.T)
         Kdim = K.shape[0]
-        Kreg = K + eps * torch.eye(Kdim, device=K.device, dtype=K.dtype)
-        # quadratic term γ^T K γ
-        quad = torch.einsum('bi,ij,bj->b', gamma, Kreg, gamma)
-        # log|K| term (constant wrt gamma, but helps calibration)
-        logdet_K = torch.logdet(Kreg)
-        r = Kdim
-        return 0.5 * r * torch.log(alpha2) + 0.5 * logdet_K - 0.5 * alpha2 * quad #shape [B]
+        I = torch.eye(Kdim, device=K.device, dtype=K.dtype)
+        Kreg = K + eps * I
 
-    # ---------- NEW Utilities ----------
-    @staticmethod
-    def invgamma_logpdf(x: Tensor, a: Tensor, b: Tensor, include_const: bool = False) -> Tensor:
-        """
-        log p(x | a,b) for InverseGamma(a,b) with rate parametrization.
-        include_const=False drops a*log b - lgamma(a), which does not affect gradients wrt x or θ.
-        """
-        logp = -(a + 1.0) * torch.log(x) - b / x
-        if include_const:
-            logp = logp + (a * torch.log(b) - torch.lgamma(a))
-        return logp
+        # log |lam * Kreg| = Kdim * log(lam) + log|Kreg|
+        L_K = torch.linalg.cholesky(Kreg)
+        logdet_Kreg = 2.0 * torch.log(torch.diag(L_K)).sum()
+        logdet_Q = Kdim * torch.log(lam) + logdet_Kreg
+
+        # quad term: λ * sum_m θ_m^T Kreg θ_m
+        quad = lam * torch.einsum('im,ij,jm->', gamma, Kreg, gamma)  # scalar
+
+        M = gamma.shape[1]
+        return 0.5 * (M * logdet_Q - quad)
+
 
     @staticmethod
     def log_prior_gamma_ridge(gamma: Tensor, K: Tensor, tau2: Tensor ,sigma2: Tensor, eps: float = 1e-6) -> Tensor:
@@ -155,11 +158,11 @@ class bayesian_splines:
             a_tau_2 = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
             b_tau_2 = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
             
-            a_sig = torch.as_tensor(hyperparameter['sigma_a'],device=sub_model.device, dtype=torch.float32)
-            b_sig = torch.as_tensor(hyperparameter['sigma_b'],device=sub_model.device, dtype=torch.float32)
+            #a_sig = torch.as_tensor(hyperparameter['sigma_a'],device=sub_model.device, dtype=torch.float32)
+            #b_sig = torch.as_tensor(hyperparameter['sigma_b'],device=sub_model.device, dtype=torch.float32)
 
             alpha2_hat_2   = torch.as_tensor(_invgamma_mean(a_tau_2, b_tau_2),   device=model.device)
-            sigma2_hat = torch.as_tensor(_invgamma_mean(a_sig, b_sig),   device=sub_model.device)
+            #sigma2_hat = torch.as_tensor(_invgamma_mean(a_sig, b_sig),   device=sub_model.device) #Not used
 
             K_Prior_RW2 = sub_model.priors.K_prior_RW2.to(device=sub_model.device, dtype=torch.float32)
             
@@ -174,7 +177,8 @@ class bayesian_splines:
                 monotonically_increasing=sub_model.monotonically_increasing,
                 device=sub_model.device
             )
-            total_logp = bayesian_splines.log_prior_gamma_ridge(gammas, K_Prior_RW2, tau2=alpha2_hat_2,sigma2=sigma2_hat)
+            total_logp = bayesian_splines.log_mvn_zero_mean_prec_ck(gammas, K_Prior_RW2, alpha2_hat_2)
+            
         # NEGATIVE log prior to add onto NLL in your objective    
         return -total_logp
             
