@@ -46,31 +46,35 @@ class bayesian_splines:
         return -0.5 * r * torch.log(alpha_2) - cov
     
     @staticmethod
-    def log_mvn_zero_mean_prec_ck(gamma: torch.Tensor,
-                              K: torch.Tensor,
-                              lam: torch.Tensor,
-                              eps: float = 1e-6) -> torch.Tensor:
+    def log_mvn_zero_mean_prec_ck(
+        gamma: torch.Tensor,   # [Kdim, M]  columns = independent coefficient blocks
+        K: torch.Tensor,       # [Kdim, Kdim] RW2 precision base: D2ᵀD2 (psd)
+        lam: torch.Tensor,     # scalar λ > 0 (precision)
+        eps: float = 1e-6,
+    ) -> torch.Tensor:
         """
-        CK prior: θ ~ N(0, (lam * K)^(-1)), with K = D2^T D2 (RW2).
-        gamma: [Kdim, M]   columns are independent coefficient blocks
-        K:     [Kdim, Kdim]
-        lam:   scalar precision (λ > 0)
-        returns scalar log p(Γ | λ, K) up to θ-independent constants (can keep constants too)
+        CK prior: θ ~ N(0, (λ K)^(-1)), with intrinsic RW2 K.
+        Returns log p(Γ | λ, K) up to θ-independent constants (we keep the useful ones).
         """
-        
-        # symmetrize & regularize intrinsic K (rank deficient)
+        # symmetrize
         K = 0.5 * (K + K.T)
         Kdim = K.shape[0]
-        I = torch.eye(Kdim, device=K.device, dtype=K.dtype)
-        Kreg = K + eps * I
 
-        # log |lam * Kreg| = Kdim * log(lam) + log|Kreg|
-        L_K = torch.linalg.cholesky(Kreg)
-        logdet_Kreg = 2.0 * torch.log(torch.diag(L_K)).sum()
-        logdet_Q = Kdim * torch.log(lam) + logdet_Kreg
+        # rank r for RW2 (null space: {1, x})
+        with torch.no_grad():
+            r = torch.linalg.matrix_rank(K)
 
-        # quad term: λ * sum_m θ_m^T Kreg θ_m
-        quad = lam * torch.einsum('im,ij,jm->', gamma, Kreg, gamma)  # scalar
+        # stable alternative: log|K+εI| - (Kdim-r) log ε  (≈ pseudo-logdet)
+        Kreg = K + eps * torch.eye(Kdim, device=K.device, dtype=K.dtype)
+        L = torch.linalg.cholesky(Kreg)
+        logdet_Kreg = 2.0 * torch.log(torch.diag(L)).sum()
+        log_pdet_K = logdet_Kreg - (Kdim - r) * torch.log(torch.as_tensor(eps, device=K.device, dtype=K.dtype))
+
+        # log |λK|_* = r log λ + log|K|_*   (pseudo-determinant)
+        logdet_Q = r * torch.log(lam) + log_pdet_K
+
+        # quadratic term = λ * Σ_m θ_mᵀ K θ_m  (nullspace not penalized)
+        quad = lam * torch.einsum('im,ij,jm->', gamma, K, gamma)   # scalar
 
         M = gamma.shape[1]
         return 0.5 * (M * logdet_Q - quad)
