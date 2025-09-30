@@ -75,19 +75,10 @@ class bayesian_splines:
 
     @staticmethod
     def log_prior_gamma_ridge(gamma: Tensor, K: Tensor, tau2: Tensor ,sigma2: Tensor, eps: float = 1e-6) -> Tensor:
-        """
-        gamma: [Kdim, M]  (columns independent)
-        K:     [Kdim, Kdim] (difference penalty base)
-        tau2, sigma2: scalar Tensors (>0)
-        returns scalar log p(Γ | tau2, sigma2, K) (without constants independent of Γ)
-        """
+        K= 0.5 * (K + K.T)
         Kdim = K.shape[0]
         I = torch.eye(Kdim, device=K.device, dtype=K.dtype)
-        
-        K= 0.5 * (K + K.T)
-        K = K / (K.abs().max() + 1e-8)
         Q = (1.0 / tau2) * K + (1.0 / sigma2) * I
-        
         #L = torch.linalg.cholesky(Q)                             # stable logdet + quad
         L = torch.linalg.cholesky(Q + eps * I) 
         logdetQ = 2.0 * torch.sum(torch.log(torch.diag(L)))     # scalar
@@ -172,7 +163,6 @@ class bayesian_splines:
 
             K_Prior_RW2 = sub_model.priors.K_prior_RW2.to(device=sub_model.device, dtype=torch.float32)
             
-            K_Prior_RW2 = K_Prior_RW2 * alpha2_hat_2
             K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
             
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
@@ -276,6 +266,9 @@ class BayesianInitializer:
         #n_params = int(model.padded_params.shape[0])
         K_prior_RW2: Tensor = bayesian_splines.difference_penalty_matrix(order=2, n_params=n_params).to(device=device)
         
+        # normalize once so τ² has a consistent meaning
+        K_prior_RW1 = K_prior_RW1 / (K_prior_RW1.abs().max() + 1e-12)
+        K_prior_RW2 = K_prior_RW2 / (K_prior_RW2.abs().max() + 1e-12)
         # Priors (note: torch.distributions.InverseGamma expects concentration/rate)
         #hyperprior_sigma_dist: InverseGamma = bayesian_splines.gamma_hyperprior_distribution(a=sigma_a, b=sigma_b)
         #hyperprior_alpha_dist: InverseGamma = bayesian_splines.gamma_hyperprior_distribution(a=alpha_a, b=alpha_b)

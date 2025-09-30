@@ -142,13 +142,14 @@ def unnormalized_posterior_computation(
     model: "GTM",
     samples,
     hyperparameter_transformation,
-    hyperparameter_decorrelation
+    hyperparameter_decorrelation, 
+    sample_size
 ):
-    
     
     #Likelihood
     return_dict_model_loss: Tensor = model.__log_likelihood_loss__(y=samples)
     nll: Tensor = return_dict_model_loss.get('negative_log_likelihood_data')
+    nll=nll.mean()
     
     #Prior Transformation
     ntp = bayesian_splines.defining_prior(
@@ -161,7 +162,7 @@ def unnormalized_posterior_computation(
         )
     
     return {
-        'neg_posterior':nll + ntp + ndp, # log \tilde p(θ, y) = - (NLL + priors)x
+        'neg_posterior':nll + (ntp + ndp)/sample_size, # log \tilde p(θ, y) = - (NLL + priors)
         'decorrelation_prior': ndp,
         'transformation_prior': ntp,
         'negative_log_lik': nll
@@ -172,6 +173,7 @@ def bayesian_training_objective(
     samples: Tensor,
     hyperparameter_transformation,
     hyperparameter_decorrelation,
+    sample_size,
     objective_type:Literal['negloglik']="negloglik",
     
 ):
@@ -182,7 +184,8 @@ def bayesian_training_objective(
                 model=model,
                 samples=samples,
                 hyperparameter_transformation=hyperparameter_transformation,
-                hyperparameter_decorrelation= hyperparameter_decorrelation
+                hyperparameter_decorrelation= hyperparameter_decorrelation,
+                sample_size=sample_size
                 )
         
         

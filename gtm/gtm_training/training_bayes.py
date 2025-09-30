@@ -118,6 +118,7 @@ class VI_Model(nn.Module):
         hyperparameter_transformation,
         hyperparameter_decorrelation,
         model: "GTM",
+        sample_size,
         mcmc_samples: int = 100,
         seed: int | None = None,
     ) :
@@ -146,6 +147,7 @@ class VI_Model(nn.Module):
                     samples=samples,
                     hyperparameters_transformation=hyperparameter_transformation,
                     hyperparameters_decorrelation=hyperparameter_decorrelation,
+                    sample_size=sample_size
                 )
             
             # Your function returns a POSITIVE objective (NLL + priors).

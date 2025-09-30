@@ -713,6 +713,7 @@ class GTM(nn.Module):
         samples: Tensor,
         hyperparameters_transformation: dict[str, float],
         hyperparameters_decorrelation: dict [str, float],
+        sample_size,
         objective_type: Literal['negloglik'] = "negloglik",
         mcmc_sample:int = 1000
     ):
@@ -723,6 +724,7 @@ class GTM(nn.Module):
             hyperparameter_transformation =hyperparameters_transformation,
             samples= samples,
             objective_type= objective_type,
+            sample_size=sample_size
         )
 
     def train(
