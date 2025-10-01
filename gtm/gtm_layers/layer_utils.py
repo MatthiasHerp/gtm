@@ -287,7 +287,5 @@ class BayesianInitializer:
             RW2_alpha_b=b_tau_2,
             K_prior_RW1=K_prior_RW1,
             K_prior_RW2=K_prior_RW2,
-            #hyperprior_sigma_dist=hyperprior_sigma_dist,
-            #hyperprior_alpha_dist=hyperprior_alpha_dist
         )
     

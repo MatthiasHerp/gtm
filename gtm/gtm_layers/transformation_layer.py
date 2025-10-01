@@ -132,8 +132,12 @@ class Transformation(nn.Module):
         if self.inference == "bayesian":
             self.hyperparameter_transformation: dict[str, float] = hyperparameters
             
-            priors: BayesianPriors = BayesianInitializer.build(model=self, hyperparameter=self.hyperparameter_transformation or {},
-                                                               n_params=max_params, is_transformation=True)
+            priors: BayesianPriors = BayesianInitializer.build(
+                model=self, 
+                hyperparameter=self.hyperparameter_transformation or {},
+                n_params=max_params, 
+                is_transformation=True
+                )
             # Either store the whole dataclass…
             self.priors: BayesianPriors = priors
 
