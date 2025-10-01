@@ -122,7 +122,7 @@ class Decorrelation(nn.Module):
         
         
         if self.inference == 'bayesian':
-            max_params = self.params.shape[0] #self.degree + self.spline_order - 1
+            max_params = self.degree + self.spline_order - 1
             self.hyperparameter_decorrelation: dict[str, float] = hyperparameter
             priors: BayesianPriors = BayesianInitializer.build(
                 model=self,
