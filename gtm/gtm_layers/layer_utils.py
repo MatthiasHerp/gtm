@@ -38,14 +38,6 @@ class bayesian_splines:
         return -(a + 1) * torch.log(x) - b / x
     
     @staticmethod
-    def log_normal_distr(K: Tensor, alpha_2: Tensor, gamma: Tensor) -> Tensor:
-        
-        r: int = matrix_rank(K).item()
-        cov: Tensor = (gamma @ K @ gamma.T) / (2*alpha_2) #TODO CHECK DIMENSIONS
-        
-        return -0.5 * r * torch.log(alpha_2) - cov
-    
-    @staticmethod
     def log_mvn_zero_mean_prec_ck(
         theta: torch.Tensor,   # [Kdim, M]  columns = independent coefficient blocks
         K: torch.Tensor,       # [Kdim, Kdim] RW2 precision base: D2ᵀD2 (psd)
@@ -81,20 +73,59 @@ class bayesian_splines:
 
 
     @staticmethod
-    def log_prior_gamma_ridge(theta: Tensor, K: Tensor, tau2: Tensor ,sigma2: Tensor, eps: float = 1e-6) -> Tensor:
-        K= 0.5 * (K + K.T)
-        Kdim = K.shape[0]
-        I = torch.eye(Kdim, device=K.device, dtype=K.dtype)
-        Q = (1.0 / tau2) * K + (1.0 / sigma2) * I
-        L = torch.linalg.cholesky(Q + eps * I) # stable logdet + quad
-        logdetQ = 2.0 * torch.sum(torch.log(torch.diag(L)))     # scalar
-
-        Z = L @ theta                                           # [Kdim, M]
+    def log_prior_gamma_ridge(
+        theta: Tensor,
+        K1: Tensor,
+        K2: Tensor,
+        kappa1: Tensor,
+        kappa2: Tensor,
+        sigma2: Tensor,
+        eps: float = 1e-6
+        ) -> Tensor:
+        
+        K1 = 0.5*(K1 + K1.T)
+        K2 = 0.5*(K2 + K2.T)
+        Kdim = K1.shape[0]
+        
+        I = torch.eye(Kdim, device=K1.device, dtype=K1.dtype)
+        
+        Q = kappa1*K1 + kappa2*K2 + (1.0/sigma2)*I
+        
+        L = torch.linalg.cholesky(Q + eps*I)
+        
+        logdetQ = 2.0 * torch.log(torch.diag(L)).sum()     # scalar
+        
+        Z = L @ theta                                          # [Kdim, M]
         quad = (Z * Z).sum()                                    # Σ_m γ_m^T Q γ_m
 
         M = theta.shape[1]
         return 0.5 * (M * logdetQ - quad) 
     
+    @staticmethod
+    def current_theta_from_params(sub_model) -> torch.Tensor:
+        """
+        Build θ ∈ R^{Kmax × M} from the *current* ParameterList (respects _reparametrize_module).
+        """
+        device = sub_model.device
+        dtype  = torch.float32
+
+        mask = sub_model.padded_params_maskt.to(device=device, dtype=torch.float32) 
+        Kmax, M = mask.shape
+
+        # Stack each column with right padding to Kmax
+        cols = []
+        for p in sub_model.params:                      # each p is [Kj]
+            pj = p.to(device=device, dtype=dtype)
+            Kj = pj.numel()
+            pad = Kmax - Kj
+            col = torch.nn.functional.pad(pj, (0, pad)) # new tensor, no in-place
+            cols.append(col)
+        
+        theta = torch.stack(cols, dim=1)  # [Kmax, M]
+
+        # Optional: zero out padded rows (safety), though F.pad already did that
+        theta = theta * mask
+        return theta
     
     @staticmethod
     def defining_prior(
@@ -102,15 +133,18 @@ class bayesian_splines:
         hyperparameter,
         is_transformation = False
         ):
+        def _invgamma_mean(a, b):
+            # mean exists if a>1; fallback otherwise
+                a = float(a)
+                return b / (a - 1.0) if a > 1.0 else b / (a + 1.0)
+        def _gamma_mean(a, b):  # shape a, rate b
+                return float(a) / float(b)
         
         sub_model = model.transformation if is_transformation else model.decorrelation_layers
         total_logp = torch.zeros((), device=model.device, dtype=torch.float32)
         
         if not is_transformation:
-            def _invgamma_mean(a, b):
-            # mean exists if a>1; fallback otherwise
-                a = float(a)
-                return b / (a - 1.0) if a > 1.0 else b / (a + 1.0)
+            
             # --- Decorrelation layer prior (RW1 + RW2) ---------------------------
             # Paper §3.3: ridge on first & second differences to pull toward linear
             # (Gaussian-copula baseline) and to smooth curvature. :contentReference[oaicite:0]{index=0}
@@ -119,6 +153,7 @@ class bayesian_splines:
             
             # Penalization Term
             # controls shrinkage toward linear behavior
+            
             pen_term1 = hyperparameter.get('RW1', {})
             a_kappa_1 = torch.as_tensor(pen_term1['tau_a'], device=model.device, dtype=torch.float32)
             b_kappa_1 = torch.as_tensor(pen_term1['tau_b'], device=model.device, dtype=torch.float32)
@@ -132,8 +167,8 @@ class bayesian_splines:
             a_sigma = torch.as_tensor(hyperparameter['sigma_a'], device=model.device, dtype=torch.float32)
             b_sigma = torch.as_tensor(hyperparameter['sigma_b'], device=model.device, dtype=torch.float32)
             
-            kappa_hat_1   = torch.as_tensor(_invgamma_mean(a_kappa_1, b_kappa_1),   device=model.device)
-            kappa_hat_2   = torch.as_tensor(_invgamma_mean(a_kappa_2, b_kappa_2),   device=model.device)
+            kappa_hat_1   = torch.as_tensor(_gamma_mean(a_kappa_1, b_kappa_1),   device=model.device)
+            kappa_hat_2   = torch.as_tensor(_gamma_mean(a_kappa_2, b_kappa_2),   device=model.device)
             
             sigma_hat = torch.as_tensor(_invgamma_mean(a_sigma, b_sigma),   device=model.device)
             
@@ -142,20 +177,23 @@ class bayesian_splines:
                 K_RW1 = layer.priors.K_prior_RW1.to(device=model.device, dtype=torch.float32)
                 K_RW2 = layer.priors.K_prior_RW2.to(device=model.device, dtype=torch.float32)
                 
-                K_mix = (kappa_hat_2 / (kappa_hat_1 + 1e-12)) * K_RW1 + K_RW2 # Mixing covariance matrix with diff hyperparameter
-                K_mix = 0.5*(K_mix + K_mix.T)
                 theta_D = layer.params  # [Kdim, M]
                 
                 # log_prior_gamma_ridge is assumed to implement: -0.5/sigma2 * sum_c theta_c^T K theta_c (+ const)
-                total_logp = total_logp + bayesian_splines.log_prior_gamma_ridge(theta_D, K_mix,kappa_hat_2 ,sigma_hat)
+                total_logp = total_logp + bayesian_splines.log_prior_gamma_ridge(
+                    theta_D,
+                    K_RW1,
+                    K_RW2,
+                    kappa_hat_1,
+                    kappa_hat_2,
+                    sigma_hat
+                    )
             
             
         else:
             # --- Transformation (marginal) layer prior (RW2 only) ----------------
             # Paper §3.3: monotone splines; first-diff penalty not needed; use RW2-only
             # smoothing (λ4 in the paper). :contentReference[oaicite:1]{index=1}
-            def _gamma_mean(a, b):  # shape a, rate b
-                return float(a) / float(b)
             
             # Penalization Term
             pen_term2 = hyperparameter.get('RW2', {})
@@ -170,6 +208,8 @@ class bayesian_splines:
             
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
             varphi = sub_model.padded_params
+            #varphi = bayesian_splines.current_theta_from_params(sub_model)
+            
             theta_T = bayesian_splines._restrict_parameters_(
                 params_a=varphi,
                 monotonically_increasing=sub_model.monotonically_increasing,
