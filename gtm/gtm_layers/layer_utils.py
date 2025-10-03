@@ -89,7 +89,7 @@ class bayesian_splines:
         
         I = torch.eye(Kdim, device=K1.device, dtype=K1.dtype)
         
-        Q = kappa1*K1 + kappa2*K2 + (1.0/sigma2)*I
+        Q = kappa1*K1 + kappa2*K2 #+ (1.0/sigma2)*I
         
         L = torch.linalg.cholesky(Q + eps*I)
         
@@ -100,32 +100,6 @@ class bayesian_splines:
 
         M = theta.shape[1]
         return 0.5 * (M * logdetQ - quad) 
-    
-    @staticmethod
-    def current_theta_from_params(sub_model) -> torch.Tensor:
-        """
-        Build θ ∈ R^{Kmax × M} from the *current* ParameterList (respects _reparametrize_module).
-        """
-        device = sub_model.device
-        dtype  = torch.float32
-
-        mask = sub_model.padded_params_maskt.to(device=device, dtype=torch.float32) 
-        Kmax, M = mask.shape
-
-        # Stack each column with right padding to Kmax
-        cols = []
-        for p in sub_model.params:                      # each p is [Kj]
-            pj = p.to(device=device, dtype=dtype)
-            Kj = pj.numel()
-            pad = Kmax - Kj
-            col = torch.nn.functional.pad(pj, (0, pad)) # new tensor, no in-place
-            cols.append(col)
-        
-        theta = torch.stack(cols, dim=1)  # [Kmax, M]
-
-        # Optional: zero out padded rows (safety), though F.pad already did that
-        theta = theta * mask
-        return theta
     
     @staticmethod
     def defining_prior(
@@ -207,14 +181,18 @@ class bayesian_splines:
             K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
             
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
-            varphi = sub_model.padded_params
-            #varphi = bayesian_splines.current_theta_from_params(sub_model)
+            #varphi = sub_model.padded_params
             
-            theta_T = bayesian_splines._restrict_parameters_(
-                params_a=varphi,
-                monotonically_increasing=sub_model.monotonically_increasing,
-                device=sub_model.device
-            )
+            #theta_T = bayesian_splines._restrict_parameters_(
+            #    params_a=varphi,
+            #    monotonically_increasing=sub_model.monotonically_increasing,
+            #    device=sub_model.device
+            #)
+            
+            theta_T = torch.vstack([
+                torch.nn.functional.pad(p, (0, K_Prior_RW2.shape[0] - p.numel()))
+                for p in sub_model.params]).T
+            
             total_logp = bayesian_splines.log_mvn_zero_mean_prec_ck(theta_T, K_Prior_RW2, lambda_hat)
             
         # NEGATIVE log prior to add onto NLL in your objective    
