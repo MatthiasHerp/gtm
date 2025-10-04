@@ -4,79 +4,144 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch
-from torch import nn, optim, Tensor
+from torch import nn, optim
 from tqdm import tqdm
-from typing import List, Literal
 
-from torch.distributions import InverseGamma, Normal
+from gtm.gtm_layers.layer_utils import BayesianInitializer, BayesianPriors
+from gtm.gtm_splines.bernstein_basis import (
+    compute_multivariate_bernstein_basis, restrict_parameters)
+from gtm.gtm_splines.bernstein_prediction_vectorized import (
+    bernstein_prediction_vectorized, binomial_coeffs)
+from gtm.gtm_splines.bspline_prediction_vectorized import (
+    bspline_prediction_vectorized, compute_multivariate_bspline_basis)
 
-
-from gtm.gtm_layers.layer_utils import *
-from gtm.gtm_splines.bernstein_basis import compute_multivariate_bernstein_basis, restrict_parameters
-from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction_vectorized, binomial_coeffs
-from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized, compute_multivariate_bspline_basis
 
 class Transformation(nn.Module):
     def __init__(
         self,
-        degree:List[int],
-        number_variables:int,
-        spline_range: List[List[float]],
-        hyperparameters: dict[str, float] | None = None ,
-        monotonically_increasing:bool=True,
-        spline: Literal['bspline'] | Literal['bernstein']="bspline",
-        span_factor: Tensor = torch.tensor(0.1, dtype=torch.float32),
-        number_covariates:bool=False,
-        initial_log_transform:bool=False,
-        calc_method_bspline:Literal['deBoor']="deBoor",
-        span_restriction:Literal['reluler']="reluler",
-        spline_order:int=3,
-        inference: Literal['frequentist'] | Literal['bayesian'] ='frequentist',
+        degree,
+        number_variables,
+        spline_range,
+        hyperparameters = None,
+        monotonically_increasing=True,
+        spline="bspline",
+        span_factor=torch.tensor(0.1),
+        number_covariates=False,
+        initial_log_transform=False,
+        calc_method_bspline="deBoor",
+        span_restriction="reluler",
+        spline_order=3,
         device="cpu",
-    )  -> None:  # device=None
+        inference = 'frequentist'
+    ):  # device=None
         super().__init__()
 
-        self.device: torch.device = device
-        self.inference: Literal['frequentist'] | Literal['bayesian'] = inference
-        self.type: Literal['transformation'] = "transformation"
-        self.degree: List[int] = degree
-        self.number_variables: int = number_variables
-        self.spline_range: Tensor = torch.FloatTensor(spline_range) if isinstance(spline_range, list) else spline_range.cpu()
-        self.monotonically_increasing: bool = monotonically_increasing
+        self.device = device
+        self.inference = inference
+        self.type = "transformation"
+        self.degree = degree
+        self.number_variables = number_variables
+        self.spline_range = (
+            torch.FloatTensor(spline_range)
+            if isinstance(spline_range, list)
+            else spline_range.cpu()
+        )
+        self.monotonically_increasing = monotonically_increasing
 
         # For padding!
-        self.max_degree: int = max(self.degree)
+        self.max_degree = max(self.degree)
 
-        self.span_factor: Tensor = span_factor
-        self.multivariate_basis: bool = False
-        self.multivariate_basis_derivativ_1: bool = False
-        self.number_covariates: bool = number_covariates
-        
+        self.span_factor = span_factor
+
+        self.multivariate_basis = False
+        self.multivariate_basis_derivativ_1 = False
+
+        self.number_covariates = number_covariates
         # TODO: solve how covariate effect is implemented
-        self.params_covariate: bool = False
-        self.covariate_effect: bool = False
+        self.params_covariate = False
+        self.covariate_effect = False
 
-        self.initial_log_transform: bool = initial_log_transform
-        self.calc_method_bspline: Literal['deBoor'] = calc_method_bspline
-        self.spline_order: int = spline_order
-        self.span_restriction:Literal['reluler'] = span_restriction
-        self.spline: Literal['bspline'] | Literal['bernstein'] = spline
-        
+        self.initial_log_transform = initial_log_transform
+
+        self.calc_method_bspline = calc_method_bspline
+
+        self.spline_order = spline_order
+
+        self.span_restriction = span_restriction
+
+        self.spline = spline
         # param dims: 0: basis, 1: variable
-        self.params = nn.ParameterList(values=self._compute_starting_values_for_params())
-        
-        # >>> Single source of truth for spline selection <<<
-        self._configure_spline(self.spline)
+        self.params = nn.ParameterList(self.compute_starting_values())
 
-        self.knots_list = self._defining_knots_list()
-        self.padded_knots: Tensor = torch.vstack(self.knots_list).T
+        if spline == "bspline":
+            self.spline_prediction = self.bspline_prediction_method
+        elif spline == "bernstein":
+            self.spline_prediction = self.bernstein_prediction_method
+            warnings.warn(
+                "Warning: Varying Spline Degree for each Dimension is not implemented for Bernstein, only for B-Spline."
+            )
+        else:
+            warnings.warn(
+                "Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default."
+            )
+
+        if spline == "bernstein":
+            warnings.warn(
+                "Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct"
+            )
+            n = self.max_degree + 1
+            self.binom_n = binomial_coeffs(n, device=self.device)
+            self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
+            self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
+
+        ### Old
+        # The following code ensures that:
+        # we have knots equally spanning the range of the number of degrees
+        # we have the first an last knot on the bound of the span
+        # we get equally space boundary knots outside the spane to ensure that at the boundary of the span we get bspline predicitons without errors
+        number_of_bound_knots_per_side = (
+            self.spline_order
+        )  # for cubcic splines (order 3) we need 3 knots on each side
+        max_knots = max(self.degree) + 2 * number_of_bound_knots_per_side
+        self.knots_list = list()
+        for var in range(self.number_variables):
+
+            # The distance between knots is the span divided by the number of knots minus 1
+            # because between D points where we have one point at the min and one at the max of a span we have D-1 intervals between knots
+            distance_between_knots_in_bounds = (
+                self.spline_range[1, var] - self.spline_range[0, var]
+            ) / (self.degree[var] - 1)
+
+            # We get the eqully spaced knots by equal spacing on the extended span
+            knots = torch.linspace(
+                self.spline_range[0, var]
+                - number_of_bound_knots_per_side * distance_between_knots_in_bounds,
+                self.spline_range[1, var]
+                + number_of_bound_knots_per_side * distance_between_knots_in_bounds,
+                self.degree[var]
+                + 2 * number_of_bound_knots_per_side,  # 2* because of two sides
+                dtype=torch.float32,
+            )
+
+            self.knots_list.append(
+                torch.cat(
+                    [
+                        knots,
+                        torch.zeros(max_knots - knots.size(0))
+                        + max(self.spline_range[1, :]) * 2,
+                    ]
+                )  # additional padding to ensure that all knots are of the same size
+            )
+        self.padded_knots = torch.vstack(self.knots_list).T
 
         # Move all to GPU
-        self.knots_list: List[Tensor] = [knot.to(device=self.device) for knot in self.knots_list]
-        
-        self.spline_range = self.spline_range.to(device=self.device)
-                
-        """##### Update
+        self.knots_list = [t.to(self.device) for t in self.knots_list]
+
+        self.padded_knots = self.padded_knots.to(self.device)
+
+        self.spline_range = self.spline_range.to(self.device)
+
+        ##### Update
         ## Defining knots for vectorized compute
         # max_cols = max(self.degree)+1
         # self.knots_list = list()
@@ -104,30 +169,42 @@ class Transformation(nn.Module):
         #
         # self.padded_knots = torch.vstack(
         #    self.knots_list
-        #    ).T"""
+        #    ).T
 
-        self.varying_degrees: bool = len(set(self.degree)) > 1
-        self.padded_knots = self.padded_knots.to(self.device) if self.varying_degrees else self.padded_knots[:, 0].to(self.device)
+        if len(set(self.degree)) > 1:
+            self.varying_degrees = True
+        else:
+            self.varying_degrees = False
+
+        if self.varying_degrees == False:
+            self.padded_knots = self.padded_knots[:, 0]
+
         # Create a mask to track valid values
-        max_params= max(self.degree) + self.spline_order - 1
-        # num_params = inner_knots + degree_spline -1 e.g. degree + 3 -1 = degree +2
-        
-        self.padded_params_mask: Tensor = torch.vstack([
-            torch.cat([
-                torch.ones(p.size(0), dtype=torch.int64),
-                torch.zeros(max_params - p.size(0), dtype=torch.int64)
-                ])
+        max_params = (
+            max(self.degree) + self.spline_order - 1
+        )  # num_params = inner_knots + degree_spline -1 e.g. degree + 3 -1 = degree +2
+        self.padded_params_mask = torch.vstack(
+            [
+                torch.cat(
+                    [
+                        torch.ones(p.size(0), dtype=torch.int64),
+                        torch.zeros(max_params - p.size(0), dtype=torch.int64),
+                    ]
+                )
                 for p in self.params
-            ]).T  # Shape (num_params, max_cols)
+            ]
+        ).T  # Shape (num_params, max_cols)
 
         # Fore more efficient memory allocation e.g. to not create a new tensor every time in the forward pass
         self.padded_params = torch.zeros((max_params, len(self.params)))  # Pre-allocate
-        
+
         # TODO: Sort this out, I fixed the values here as it is currently the fastest computation by far
         # self.store_basis = True
+        self.store_basis_training = False
+        # self.calc_method_bspline = "deBoor" #"deBoor" #"deBoor" #"Naive"
+
+        self.params_inverse = None
         
-        self.store_basis_training: bool = False
-        self.params_inverse: nn.ParameterList = None
         
         if self.inference == "bayesian":
             self.hyperparameter_transformation: dict[str, float] = hyperparameters
@@ -141,111 +218,30 @@ class Transformation(nn.Module):
             # Either store the whole dataclass…
             self.priors: BayesianPriors = priors
 
-    def _defining_knots_list(self) -> List[Tensor]:
-        
-        number_of_bound_knots_per_side: int = self.spline_order 
-        degree: List[int] = self.degree
-        # for cubcic splines (order 3) we need 3 knots on each side
-        max_knots: int = max(degree) + 2 * number_of_bound_knots_per_side
-        number_variables = self.number_variables
-        knots_list: list = []
-        
-        for var in range(number_variables):
-            
-            # The distance between knots is the span divided by the number of knots minus 1
-            # because between D points where we have one point at the min and one at the max of a span we have D-1 intervals between knots
-            
-            distance_between_knots_in_bounds: Tensor = (
-                self.spline_range[1, var] - self.spline_range[0, var]
-            ) / (self.degree[var] - 1)
-
-            # We get the eqully spaced knots by equal spacing on the extended span
-            knots: Tensor = torch.linspace(
-                start=self.spline_range[0, var]
-                - number_of_bound_knots_per_side * distance_between_knots_in_bounds,
-                end=self.spline_range[1, var]
-                + number_of_bound_knots_per_side * distance_between_knots_in_bounds,
-                steps=self.degree[var]
-                + 2 * number_of_bound_knots_per_side,  # 2* because of two sides
-                dtype=torch.float32,
-            )
-            
-            knots_list.append(
-                torch.cat(
-                    [
-                        knots,
-                        torch.zeros(max_knots - knots.size(0))+ max(self.spline_range[1, :]) * 2
-                        ]
-                )  # additional padding to ensure that all knots are of the same size
-            )
-        return knots_list
-    
-    def _configure_spline(self, spline: Literal['bspline', 'bernstein']) -> None:
-        """
-        Centralizes selection-specific setup so it's not duplicated.
-        Safe to call any time you switch spline types.
-        """
-        if spline == "bspline":
-            self.spline_prediction = self.bspline_prediction_method
-
-        elif spline == "bernstein":
-            self.spline_prediction = self.bernstein_prediction_method
-
-            warnings.warn(
-                "Warning: Varying Spline Degree for each Dimension is not implemented for Bernstein, only for B-Spline.",
-                stacklevel=2,
-            )
-
-            warnings.warn(
-                "Bernstein polynomial penalization is not implemented yet; "
-                "returns zeros hardcoded in bernstein_prediction.py.",
-                stacklevel=2,
-            )
-
-            # Bernstein Polynomial Init
-            n = self.max_degree + 1
-            self._init_bernstein_binomials(n)
-
-        else:
-            warnings.warn(
-                "Warning: Unknown Spline string passed; use 'bspline' or 'bernstein'. Defaulting to 'bspline'.",
-                stacklevel=2,
-            )
-            self.spline = "bspline"
-            self.spline_prediction = self.bspline_prediction_method
-    
-    def _init_bernstein_binomials(self, n: int) -> None:
-        """Precompute binomial coefficients needed by Bernstein implementation."""
-        self.binom_n = binomial_coeffs(n, device=self.device)
-        self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
-        self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
-    
-    def _compute_starting_values_for_params(self) -> List[nn.ParameterList]:
+    def compute_starting_values(self):
         """
         Computes Starting Values for the Transformation layer with variable knots for different data dimensions.
 
         :return: starting values tensor
         """
-        par_restricted_opts: list = []
+        par_restricted_opts = []
 
         for var_num in range(self.number_variables):
-            min_val: Tensor = self.spline_range[0][var_num]
-            max_val: Tensor = self.spline_range[1][var_num]
-            
-            steps_base_knots:int = self.degree[var_num] + self.spline_order - 1
-            
-            par_unristricted: Tensor = torch.linspace(min_val, max_val, steps_base_knots)
-            
-            par_restricted_opt: Tensor = par_unristricted.clone()
-            gaps: Tensor = par_restricted_opt[1:] - par_restricted_opt[:-1]
-            
-            par_unristricted[1:] = torch.log(torch.exp(gaps) - 1)
+            min_val = self.spline_range[0][var_num]
+            max_val = self.spline_range[1][var_num]
+
+            par_unristricted = torch.linspace(
+                min_val, max_val, self.degree[var_num] + self.spline_order - 1
+            )
+            par_restricted_opt = par_unristricted
+            par_unristricted[1:] = torch.log(
+                torch.exp(par_restricted_opt[1:] - par_restricted_opt[:-1]) - 1
+            )
 
             if self.number_covariates == 1:
                 par_unristricted = par_unristricted.repeat(
                     self.degree[var_num] + self.spline_order - 1, 1
                 ).T.flatten()
-                
             elif self.number_covariates > 1:
                 raise NotImplementedError("Only implemented for 1 or No covariates!")
 

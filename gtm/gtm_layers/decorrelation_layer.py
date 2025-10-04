@@ -3,97 +3,118 @@ import warnings
 import numpy as np
 # from functorch import vmap  # Requires PyTorch 1.10+
 import torch
-from torch import nn, Tensor
-from torch.distributions import InverseGamma
-from typing import List,Literal
+from torch import nn
 
-from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_prediction_vectorized, binomial_coeffs
-from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
-from gtm.gtm_layers.layer_utils import *
+from gtm.gtm_layers.layer_utils import BayesianInitializer, BayesianPriors
+from gtm.gtm_splines.bernstein_prediction_vectorized import (
+    bernstein_prediction_vectorized, binomial_coeffs)
+from gtm.gtm_splines.bspline_prediction_vectorized import \
+    bspline_prediction_vectorized
 
 
 class Decorrelation(nn.Module):
     def __init__(
         self,
-        degree: int,
-        number_variables: int,
-        spline_range: List[List[float]],
-        hyperparameter: dict[str, float] | dict,
-        spline: Literal['bspline'] | Literal['bernstein'] ="bspline",
-        span_factor: Tensor =torch.tensor(0.1),
-        span_restriction: Literal['reluler'] ="reluler",
-        number_covariates: bool =False,
-        covariate_effect: str ="multiplicativ",
+        degree,
+        number_variables,
+        spline_range,
+        hyperparameter = None,
+        spline="bspline",
+        span_factor=torch.tensor(0.1),
+        span_restriction="reluler",
+        number_covariates=False,
+        covariate_effect="multiplicativ",
         calc_method_bspline="deBoor",
         affine_layer=False,
         degree_multi=False,
         spline_order=3,
-        inference: Literal['frequentist'] | Literal['bayesian'] ='frequentist',
+        inference = 'likelihood',
         device="cpu",
-    ) -> None:
+    ):
         super().__init__()
         self.type = "decorrelation"
-        self.degree: int = degree
-        self.number_variables: int = number_variables
+        self.degree = degree
+        self.number_variables = number_variables
         self.spline_range = torch.FloatTensor(spline_range)
-        self.inference: Literal['frequentist'] | Literal['bayesian'] = inference
-        self.device: torch.device = device
 
-        self.num_lambdas: float = number_variables * (number_variables - 1) / 2
-        self.spline: Literal['bspline'] | Literal['bernstein'] = spline
-        self.span_factor: Tensor = span_factor
+        self.inference = inference
+        self.device = device
+
+        self.num_lambdas = number_variables * (number_variables - 1) / 2
+        self.spline = spline
+        if spline == "bernstein":
+            warnings.warn(
+                "Bernstein polynomial penalization is not implemented yet. only returns zeros hardcoded in bernstein_prediction.py fct"
+            )
+            n = self.degree + 1
+            self.binom_n = binomial_coeffs(n, device=self.device)
+            self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
+            self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
+
+        self.span_factor = span_factor
 
         self.span_restriction = span_restriction
-        
-        self._configure_spline(self.spline)
 
-        self.spline_order: int = spline_order
+        if self.spline == "bspline":
+            self.spline_prediction = self.bspline_prediction_method
+        elif self.spline == "bernstein":
+            self.spline_prediction = self.bernstein_prediction_method
+        else:
+            warnings.warn(
+                "Warning: Unknown Spline string passed, use bspline or bernstein instead. bspline is default."
+            )
 
-        self.params: Tensor = self.compute_starting_values_bspline(start_value=0.001)
+        self.spline_order = spline_order
 
-        self.num_covariates: int = int(number_covariates or 0)
+        self.params = self.compute_starting_values_bspline(start_value=0.001)
 
-        if self.num_covariates > 0:
+        self.number_covariates = number_covariates
+
+        if self.number_covariates is not False:
             if self.number_covariates > 1:
                 print("Warning, covariates not implemented for more than 1 covariate")
-            self.params_covariate: torch.Tensor = self.compute_starting_values_bspline(start_value=0.001)
+            self.params_covariate = self.compute_starting_values_bspline(
+                start_value=0.001
+            )
         else:
             self.params_covariate = False
 
         # Defines wether we have an additive or an affine (multiplicative) coupling layer
-        self.affine_layer: bool = affine_layer
-        self.degree_multi: bool = degree_multi
-        
-        if self.affine_layer:
-            self.params_multiplier: torch.Tensor = self.compute_starting_values_bspline(start_value=1.0)
+        self.affine_layer = affine_layer
+        self.degree_multi = degree_multi
+        if self.affine_layer is not False:
+            self.params_multiplier = self.compute_starting_values_bspline(
+                start_value=1.0
+            )
         else:
             self.params_multiplier = False
-            
-        self.covariate_effect: str = covariate_effect
-        
-        self.calc_method_bspline: str = calc_method_bspline
-        
+
+        self.covariate_effect = covariate_effect
+
+        self.calc_method_bspline = calc_method_bspline
+
         # TODO: Sort this out, I fixed the values here as it is currently the fastest computation by far
         self.vmap = True  # False #True
         # self.calc_method_bspline = "deBoor" #"deBoor" #"Naive"
-        
+
         ### Old
         # The following code ensures that:
         # we have knots equally spanning the range of the number of degrees
         # we have the first an last knot on the bound of the span
         # we get equally space boundary knots outside the spane to ensure that at the boundary of the span we get bspline predicitons without errors
-        
+
         # The distance between knots is the span divided by the number of knots minus 1
         # because between D points where we have one point at the min and one at the max of a span we have D-1 intervals between knots
-        
-        distance_between_knots_in_bounds: Tensor = (
+        distance_between_knots_in_bounds = (
             self.spline_range[1, 0] - self.spline_range[0, 0]
         ) / (self.degree - 1)
-        
-        number_of_bound_knots_per_side: int = self.spline_order # for cubcic splines (order 3) we need 2 knots on each side
-        
+
+        number_of_bound_knots_per_side = (
+            self.spline_order
+        )  # for cubcic splines (order 3) we need 2 knots on each side
+
         # We get the eqully spaced knots by equal spacing on the extended span
-        self.knots: Tensor = torch.linspace(
+        self.knots = torch.linspace(
             self.spline_range[0, 0]
             - number_of_bound_knots_per_side * distance_between_knots_in_bounds,
             self.spline_range[1, 0]
@@ -101,10 +122,10 @@ class Decorrelation(nn.Module):
             self.degree + 2 * number_of_bound_knots_per_side,  # 2* because of two sides
             dtype=torch.float32,
         )
-        
+
         self.knots = self.knots.to(self.device)
-        
-        """##### Update
+
+        ##### Update
         # if self.spline_order == 2:
         #    n = self.degree + 1
         # elif self.spline_order == 3:
@@ -115,10 +136,11 @@ class Decorrelation(nn.Module):
         #
         # self.knots = torch.linspace(self.spline_range[0,0] * (1 + self.span_factor) - self.spline_order * distance_between_knots,
         #                    self.spline_range[1,0] * (1 + self.span_factor) + self.spline_order * distance_between_knots,
-        #                    n + 4, dtype=torch.float32)"""
-        
-        self.var_num_list, self.covar_num_list = torch.tril_indices(self.number_variables, self.number_variables, offset=-1)
-        
+        #                    n + 4, dtype=torch.float32)
+
+        self.var_num_list, self.covar_num_list = torch.tril_indices(
+            self.number_variables, self.number_variables, offset=-1
+        )
         
         
         if self.inference == 'bayesian':
@@ -132,49 +154,8 @@ class Decorrelation(nn.Module):
                 )
             # Either store the whole dataclass…
             self.priors: BayesianPriors = priors
-            
-            
-    def _configure_spline(self, spline: Literal['bspline', 'bernstein']) -> None:
-        """
-        Centralizes selection-specific setup so it's not duplicated.
-        Safe to call any time you switch spline types.
-        """
-        if spline == "bspline":
-            self.spline_prediction = self.bspline_prediction_method
 
-        elif spline == "bernstein":
-            self.spline_prediction = self.bernstein_prediction_method
 
-            warnings.warn(
-                "Warning: Varying Spline Degree for each Dimension is not implemented for Bernstein, only for B-Spline.",
-                stacklevel=2,
-            )
-
-            warnings.warn(
-                "Bernstein polynomial penalization is not implemented yet; "
-                "returns zeros hardcoded in bernstein_prediction.py.",
-                stacklevel=2,
-            )
-
-            # Bernstein Polynomial Init
-            n = self.max_degree + 1
-            self._init_bernstein_binomials(n)
-
-        else:
-            warnings.warn(
-                "Warning: Unknown Spline string passed; use 'bspline' or 'bernstein'. Defaulting to 'bspline'.",
-                stacklevel=2,
-            )
-            self.spline = "bspline"
-            self.spline_prediction = self.bspline_prediction_method
-    
-    def _init_bernstein_binomials(self, n: int) -> None:
-        """Precompute binomial coefficients needed by Bernstein implementation."""
-        self.binom_n = binomial_coeffs(n, device=self.device)
-        self.binom_n1 = binomial_coeffs(n - 1, device=self.device)
-        self.binom_n2 = binomial_coeffs(n - 2, device=self.device)
-    
-    
     def create_return_dict_decorrelation(self, input):
         lambda_matrix_general = (
             torch.eye(self.number_variables, device=input.device)
