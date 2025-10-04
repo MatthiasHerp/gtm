@@ -54,10 +54,19 @@ if __name__ == "__main__":
             dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
 
             
-            hyperparameters= {
-                "transformation": { "sigma_a": 1, "sigma_b": 5, "tau_a": 3, "tau_b": 7 },
-                "decorrelation": { "sigma_a": 5, "sigma_b": 2, "tau_a": 1, "tau_b": 6 }
-                }
+            hyperparameters = {
+                "transformation": {
+                "sigma_a": 2.1, "sigma_b": 1e6,        #Ignored not used
+                "RW2": { "tau_a": 2.0, "tau_b": 5.0 },  #E[λ_T] = 0.40  (smooth but not stiff)
+                "RW1": { "tau_a": 10.0,"tau_b": 15.0 }  #Ignored not used
+                },
+                "decorrelation": {
+                "sigma_a": 2.1, "sigma_b": 1e6,              # mean σ² = very small close to 0 (weak)
+                "RW2": { "tau_a": 1.5, "tau_b": 30.0 },      # E[κ2] ≈ 0.05   (weak curvature smoothing)
+                "RW1": { "tau_a": 1.5, "tau_b": 15.0 },      # E[κ1] ≈ 0.10   (light shrink to linear)
+    }
+}
+
             
             model = GTM(
                 number_variables=10,
@@ -68,8 +77,9 @@ if __name__ == "__main__":
                 spline_transformation="bspline",
                 spline_decorrelation="bspline",
                 transformation_spline_range=(-15, 15),
-                inference = 'bayesian',
                 device="cpu",
+                ## NEW ARGUMENTS ##
+                inference = 'bayesian',
                 hyperparameter=hyperparameters
             )
 
