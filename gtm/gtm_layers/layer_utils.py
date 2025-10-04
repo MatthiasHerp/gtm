@@ -181,23 +181,24 @@ class bayesian_splines:
             K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
             
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
-            #varphi = sub_model.padded_params
+            varphi = sub_model.padded_params
             
-            #theta_T = bayesian_splines._restrict_parameters_(
-            #    params_a=varphi,
-            #    monotonically_increasing=sub_model.monotonically_increasing,
-            #    device=sub_model.device
-            #)
+            theta_T = bayesian_splines._restrict_parameters_(
+                params_a=varphi,
+                monotonically_increasing=sub_model.monotonically_increasing,
+                device=sub_model.device
+            )
             
-            theta_T = torch.vstack([
-                torch.nn.functional.pad(p, (0, K_Prior_RW2.shape[0] - p.numel()))
-                for p in sub_model.params]).T
+            #theta_T = torch.vstack([
+            #    torch.nn.functional.pad(p, (0, K_Prior_RW2.shape[0] - p.numel()))
+            #    for p in sub_model.padded_params]).T
+            
             
             total_logp = bayesian_splines.log_mvn_zero_mean_prec_ck(theta_T, K_Prior_RW2, lambda_hat)
             
         # NEGATIVE log prior to add onto NLL in your objective    
         return -total_logp
-            
+    
     @staticmethod
     def _restrict_parameters_(
         params_a: Tensor,
