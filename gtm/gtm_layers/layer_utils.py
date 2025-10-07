@@ -20,10 +20,10 @@ def generate_diagonal_matrix(n):
 class bayesian_splines:
     @staticmethod
     def difference_penalty_matrix(order, n_params) -> Tensor:
-        D = np.eye(n_params)
+        D = torch.eye(n_params)
         for _ in range(order):
-            D = np.diff(D, n=1, axis=0)
-        return torch.tensor(D.T @ D, dtype=torch.float32) # K = DᵀD
+            D = D[1:] - D[:-1]
+        return D.T @ D # K = DᵀD
     
     @staticmethod
     def gamma_hyperprior_distribution(a,b) -> InverseGamma:
@@ -127,7 +127,6 @@ class bayesian_splines:
             
             # Penalization Term
             # controls shrinkage toward linear behavior
-            
             pen_term1 = hyperparameter.get('RW1', {})
             a_kappa_1 = torch.as_tensor(pen_term1['tau_a'], device=model.device, dtype=torch.float32)
             b_kappa_1 = torch.as_tensor(pen_term1['tau_b'], device=model.device, dtype=torch.float32)
@@ -183,9 +182,10 @@ class bayesian_splines:
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
             varphi = sub_model.padded_params
             
-            theta_T = bayesian_splines._restrict_parameters_(
+            theta_T, logJ = bayesian_splines._restrict_parameters_(
                 params_a=varphi,
                 monotonically_increasing=sub_model.monotonically_increasing,
+                #use_softplus=False,
                 device=sub_model.device
             )
             
@@ -194,7 +194,11 @@ class bayesian_splines:
             #    for p in sub_model.padded_params]).T
             
             
-            total_logp = bayesian_splines.log_mvn_zero_mean_prec_ck(theta_T, K_Prior_RW2, lambda_hat)
+            
+            total_logp = (
+                bayesian_splines.log_mvn_zero_mean_prec_ck(theta_T, K_Prior_RW2, lambda_hat)
+                + logJ.sum()
+                )
             
         # NEGATIVE log prior to add onto NLL in your objective    
         return -total_logp
@@ -203,16 +207,24 @@ class bayesian_splines:
     def _restrict_parameters_(
         params_a: Tensor,
         monotonically_increasing: bool,
+        use_softplus: bool = True,
         device: torch.device=None
     ):
         
         if not monotonically_increasing:
             return params_a.clone()
 
-        params_restricted: Tensor = params_a.clone().T  # [B, K]
-        B, K = params_restricted.shape
+        #Prepropressing
+        a =params_a.T
+        
+        ## Jaccobian
+        tail_pre= a[: ,1:]
+        logJ = torch.nn.functional.logsigmoid(tail_pre).sum(dim=1) if use_softplus else tail_pre.sum(dim=1)# sum log σ(a_j), j>=2
 
-        params_restricted[:, 1:] = softplus(params_restricted[:, 1:])
+        # Param Restriction
+        params_restricted: Tensor = a.clone()  # [B, K]
+        B, K = params_restricted.shape
+        params_restricted[:, 1:] = softplus(params_restricted[:, 1:]) if use_softplus else torch.exp(params_restricted[:, 1:]) 
         #params_restricted[:, 1:] = torch.exp(params_restricted[:, 1:])
         
         # Create upper triangular summing matrix: [K, K]
@@ -221,7 +233,8 @@ class bayesian_splines:
         # Apply cumulative sum: [B, K] x [K, K]ᵗ = [B, K]
         params_restricted: Tensor = torch.matmul(input=params_restricted, other=sum_matrix)
 
-        return params_restricted.T
+        
+        return params_restricted.T, logJ
     
 @dataclass(frozen=True)
 class BayesianPriors:
