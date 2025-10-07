@@ -104,7 +104,7 @@ if __name__ == "__main__":
             
             
             
-            output = model.fit_bayes(
+            output = model.train(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
                 hyperparameters=None,
