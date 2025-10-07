@@ -1355,31 +1355,31 @@ class GTM(nn.Module):
 
     def __return_objective_for_hyperparameters__(
         self,
-        train_dataloader,
-        validate_dataloader=False,
-        train_covariates=False,
-        validate_covariates=False,
-        penalty_params=torch.FloatTensor([0, 0, 0, 0]),
-        adaptive_lasso_weights_matrix=False,
-        lambda_penalty_param=False,
-        learning_rate=1,
-        iterations=2000,
-        patience=5,
-        min_delta=1e-7,
-        optimizer="LBFGS",
-        lambda_penalty_mode="square",
-        objective_type="negloglik",
-        seperate_copula_training=False,
-        max_batches_per_iter=False,
+        train_dataloader: DataLoader,
+        validate_dataloader: DataLoader| bool = False,
+        #train_covariates=False,
+        #validate_covariates=False,
+        penalty_params: FloatTensor = torch.FloatTensor([0, 0, 0, 0]),
+        adaptive_lasso_weights_matrix:bool=False,
+        lambda_penalty_param:bool=False,
+        learning_rate:float=1.0,
+        iterations:int=2000,
+        patience:int=5,
+        min_delta:float=1e-7,
+        optimizer:Literal["LBFGS", "Adam"]="LBFGS",
+        lambda_penalty_mode:Literal["square"]="square", #Not used
+        objective_type:Literal['negloglik']="negloglik",
+        seperate_copula_training:bool=False,
+        max_batches_per_iter:bool|int|None=False,
         pretrained_transformation_layer=False,
-        cross_validation_folds=False,
-    ):
+        cross_validation_folds:bool|None=False,
+    )  -> float:
 
         import copy
 
-        gtm_tuning = copy.deepcopy(self)
+        gtm_tuning: GTM = copy.deepcopy(self)
 
-        gtm_tuning.to(self.device)
+        gtm_tuning.to(device=self.device)
         gtm_tuning.device = self.device
 
         # Logic here:
@@ -1388,16 +1388,14 @@ class GTM(nn.Module):
         # If cross_validation_folds is False then only in the first trial we do a pretrain and then store the transformation layer pretrained model
         # In each subsequent trial we load the pretrained model and directly do the joint training
         # This only works if we pretrain without a penalty on the transformation layer
-        if pretrained_transformation_layer == True:
-
-            if hasattr(
-                self, "pretrained_transformation_layer_model_state_dict"
-            ):  # pretrained_transformation_layer_model
-                # gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model.state_dict())
-                gtm_tuning.load_state_dict(
-                    self.pretrained_transformation_layer_model_state_dict
-                )
+        if pretrained_transformation_layer:
+            if hasattr(self, "pretrained_transformation_layer_model_state_dict"):  # pretrained_transformation_layer_model
+                
+                #gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model.state_dict())
+                gtm_tuning.load_state_dict(self.pretrained_transformation_layer_model_state_dict)
+                
             else:
+                
                 gtm_tuning.pretrain_transformation_layer(
                     train_dataloader=train_dataloader,
                     validate_dataloader=validate_dataloader,
@@ -1415,10 +1413,8 @@ class GTM(nn.Module):
 
                 if cross_validation_folds == False:
                     # self.pretrained_transformation_layer_model = copy.deepcopy(gtm_tuning)
-                    self.pretrained_transformation_layer_model_state_dict = (
-                        gtm_tuning.state_dict()
-                    )
-
+                    self.pretrained_transformation_layer_model_state_dict = gtm_tuning.state_dict()
+                    
         gtm_tuning.train(
             train_dataloader=train_dataloader,
             validate_dataloader=validate_dataloader,
@@ -1435,25 +1431,23 @@ class GTM(nn.Module):
             seperate_copula_training=seperate_copula_training,
             max_batches_per_iter=max_batches_per_iter,
         )
-
-        num_batches = 0
-        target = 0
+        
+        num_batches: int = 0
+        target: float = 0.0
+        covar_batch: bool = False
+        
         for y_validate in validate_dataloader:
-            y_validate = y_validate.to(self.device)
+            
+            y_validate: Tensor = y_validate.to(self.device)
             num_batches += 1
-            covar_batch = False
+            
             if objective_type == "negloglik":
-                target += (
-                    gtm_tuning.log_likelihood(y_validate, covar_batch)
-                    .cpu()
-                    .detach()
-                    .numpy()
-                    .mean()
-                )  # .mean()
-            elif (
-                objective_type == "score_matching"
-                or objective_type == "single_sliced_score_matching"
-            ):
+                
+                batch: Tensor = gtm_tuning.log_likelihood(y=y_validate, mean_loss=covar_batch)
+                target += batch.cpu().detach().numpy().mean()
+                
+            elif objective_type in ("score_matching", "single_sliced_score_matching"):
+                
                 # TODO: does the -1 * make sense is it not already in the exact_score_loss method
                 target += (
                     -1
@@ -1472,7 +1466,7 @@ class GTM(nn.Module):
                     .mean()
                 )  # TODO: For Now! Its cheating right?
 
-        target = target / num_batches
+        target /= num_batches
 
         # Handelling CUDA Out of Memory Error
         if self.device == "cuda":
@@ -1483,29 +1477,29 @@ class GTM(nn.Module):
             torch.cuda.empty_cache()
 
         return target
-    
+
     def hyperparameter_tune_penalties(
         self,
-        train_dataloader,
-        validate_dataloader,
+        train_dataloader: DataLoader,
+        validate_dataloader: DataLoader,
         penalty_decorrelation_ridge_param: float | str | None = None,
         penalty_decorrelation_ridge_first_difference: float | str | None = None,
         penalty_decorrelation_ridge_second_difference: float | str | None = None,
         penalty_transformation_ridge_second_difference: float | str | None = None,
         penalty_lasso_conditional_independence: float | str | None = None,
-        adaptive_lasso_weights_matrix=False,
-        optimizer="LBFGS",
-        learning_rate=1,
-        iterations=2000,
-        patience=5,
-        min_delta=1e-7,
-        seperate_copula_training=False,
-        max_batches_per_iter=False,
-        pretrained_transformation_layer=False,
-        n_trials=15,
-        temp_folder=".",
-        study_name=None,
-    ):
+        adaptive_lasso_weights_matrix: Tensor | Literal[False] | None  = False,
+        optimizer:Literal["LBFGS", "Adam"]| None = "LBFGS",
+        learning_rate:float | None =1.0,
+        iterations:int | None = 2000,
+        patience:Optional[int]=5,
+        min_delta:float=1e-7,
+        seperate_copula_training:bool=False,
+        max_batches_per_iter:bool|int|None=False,
+        pretrained_transformation_layer:bool|None=False,
+        n_trials:int=15,
+        temp_folder:str=".",
+        study_name:str=None,
+    ) -> Study | None:
         """
         Tunes the regularization hyperparameters of the GTM model using Optuna.
 
@@ -1562,7 +1556,8 @@ class GTM(nn.Module):
         min_delta : float, optional
             Minimum improvement in validation loss to qualify as a better model. Default is 1e-7.
         seperate_copula_training : bool, optional
-            If True, the decorrelation layers (copula) are trained after the transformation layers. Default is False.
+            If True, t
+            he decorrelation layers (copula) are trained after the transformation layers. Default is False.
         max_batches_per_iter : int or bool, optional
             If set to an integer, limits number of batches used in each training iteration. Default is False (use all).
         pretrained_transformation_layer : bool, optional
@@ -1601,10 +1596,7 @@ class GTM(nn.Module):
         # penalty_lasso_conditional_independence]
         # hyperparameter_combinations_list = list(itertools.product(*list_of_lists))
 
-        if train_covariates is False:
-            number_covariates = 0
-        else:
-            number_covariates = 1
+        number_covariates = 1 if train_covariates else 0
 
         if tuning_mode == "optuna":
             # From Old version where one could pass lists to do tuning using list of hyperparameters passed
@@ -1615,101 +1607,100 @@ class GTM(nn.Module):
                 train_dataloader=train_dataloader,
                 validate_dataloader=validate_dataloader,
             ):
-
-                if penalty_decorrelation_ridge_param == None:
+                
+                ##### DEFINING PENALISATION PARAMETERS (START) ####
+                if penalty_decorrelation_ridge_param is None:
+                    
                     penalty_decorrelation_ridge_param_opt = 0
-                elif isinstance(penalty_decorrelation_ridge_param, float) or isinstance(
-                    penalty_decorrelation_ridge_param, int
-                ):
-                    penalty_decorrelation_ridge_param_opt = (
-                        penalty_decorrelation_ridge_param
-                    )
+                    
+                elif isinstance(penalty_decorrelation_ridge_param, (float, int)):
+                    penalty_decorrelation_ridge_param_opt: float | int = penalty_decorrelation_ridge_param
+                    
                 elif penalty_decorrelation_ridge_param == "sample":
                     penalty_decorrelation_ridge_param_opt = trial.suggest_float(
-                        "penalty_decorrelation_ridge_param", 0.0000001, 30, log=False
+                        "penalty_decorrelation_ridge_param",
+                        0.0000001,
+                        30,
+                        log=False
                     )  # True
                 else:
                     warnings.warn(
                         'penalty_decorrelation_ridge_param not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_decorrelation_ridge_first_difference == None:
+                if penalty_decorrelation_ridge_first_difference is None:
+                    
                     penalty_decorrelation_ridge_first_difference_opt = 0
-                elif isinstance(
-                    penalty_decorrelation_ridge_first_difference, float
-                ) or isinstance(penalty_decorrelation_ridge_first_difference, int):
-                    penalty_decorrelation_ridge_first_difference_opt = (
-                        penalty_decorrelation_ridge_first_difference
-                    )
+                    
+                elif isinstance(penalty_decorrelation_ridge_first_difference, (float, int)):
+                    
+                    penalty_decorrelation_ridge_first_difference_opt: float | int = penalty_decorrelation_ridge_first_difference
+                    
                 elif penalty_decorrelation_ridge_first_difference == "sample":
-                    penalty_decorrelation_ridge_first_difference_opt = (
-                        trial.suggest_float(
-                            "penalty_decorrelation_ridge_first_difference",
-                            0.0000001,
-                            30,
-                            log=False,
-                        )
-                    )  # True
+                    penalty_decorrelation_ridge_first_difference_opt = trial.suggest_float(
+                        "penalty_decorrelation_ridge_first_difference",
+                        0.0000001,
+                        30,
+                        log=False,
+                    ) # True
                 else:
                     warnings.warn(
                         'penalty_decorrelation_ridge_first_difference not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_decorrelation_ridge_second_difference == None:
+                if penalty_decorrelation_ridge_second_difference is None:
+                    
                     penalty_decorrelation_ridge_second_difference_opt = 0
-                elif isinstance(
-                    penalty_decorrelation_ridge_second_difference, float
-                ) or isinstance(penalty_decorrelation_ridge_second_difference, int):
-                    penalty_decorrelation_ridge_second_difference_opt = (
-                        penalty_decorrelation_ridge_second_difference
-                    )
+                
+                elif isinstance(penalty_decorrelation_ridge_second_difference, (float, int)):
+                    
+                    penalty_decorrelation_ridge_second_difference_opt: float | int = penalty_decorrelation_ridge_second_difference
+                    
                 elif penalty_decorrelation_ridge_second_difference == "sample":
-                    penalty_decorrelation_ridge_second_difference_opt = (
-                        trial.suggest_float(
-                            "penalty_decorrelation_ridge_second_difference",
-                            0.0000001,
-                            30,
-                            log=False,
-                        )
-                    )  # True
+                    penalty_decorrelation_ridge_second_difference_opt = trial.suggest_float(
+                        "penalty_decorrelation_ridge_second_difference",
+                        0.0000001,
+                        30,
+                        log=False
+                        )  # True
                 else:
                     warnings.warn(
                         'penalty_decorrelation_ridge_second_difference not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_transformation_ridge_second_difference == None:
+                if penalty_transformation_ridge_second_difference is None:
+                    
                     penalty_transformation_ridge_second_difference_opt = 0
-                elif isinstance(
-                    penalty_transformation_ridge_second_difference, float
-                ) or isinstance(penalty_transformation_ridge_second_difference, int):
-                    penalty_transformation_ridge_second_difference_opt = (
-                        penalty_transformation_ridge_second_difference
-                    )
+                    
+                elif isinstance(penalty_transformation_ridge_second_difference, (float, int)):
+                    
+                    penalty_transformation_ridge_second_difference_opt: float | int = penalty_transformation_ridge_second_difference
+                    
                 elif penalty_transformation_ridge_second_difference == "sample":
-                    penalty_transformation_ridge_second_difference_opt = (
-                        trial.suggest_float(
-                            "penalty_transformation_ridge_second_difference",
-                            0.0000001,
-                            30,
-                            log=False,
-                        )
-                    )  # True
+                    penalty_transformation_ridge_second_difference_opt = trial.suggest_float(
+                        "penalty_transformation_ridge_second_difference",
+                        0.0000001,
+                        30,
+                        log=False
+                        )  # True
                 else:
                     warnings.warn(
                         'penalty_transformation_ridge_second_difference not understood. Please provide a float, int None, or the string "sample".'
                     )
 
-                if penalty_lasso_conditional_independence == None:
+                if penalty_lasso_conditional_independence is None:
+                    
                     penalty_lasso_conditional_independence_opt = 0
-                elif isinstance(
-                    penalty_lasso_conditional_independence, float
-                ) or isinstance(penalty_lasso_conditional_independence, int):
-                    penalty_lasso_conditional_independence_opt = (
-                        penalty_lasso_conditional_independence
-                    )
+                elif isinstance(penalty_lasso_conditional_independence, (float, int)):
+                    
+                    penalty_lasso_conditional_independence_opt: float | int = penalty_lasso_conditional_independence
+                    
                 elif penalty_lasso_conditional_independence == "sample":
                     penalty_lasso_conditional_independence_opt = trial.suggest_float(
-                        "penalty_lasso_conditional_independence", 0.0000001, 1, log=True
+                        "penalty_lasso_conditional_independence",
+                        0.0000001,
+                        1,
+                        log=True
                     )
                 else:
                     warnings.warn(
@@ -1722,14 +1713,16 @@ class GTM(nn.Module):
                 #    "penalty_decorrelation_ridge_second_difference_opt:", penalty_decorrelation_ridge_second_difference_opt, " ",
                 #    "penalty_transformation_ridge_second_difference_opt:", penalty_transformation_ridge_second_difference_opt, " ",
                 #    "penalty_lasso_conditional_independence_opt:", penalty_lasso_conditional_independence_opt)
-                penalty_lasso_conditional_independence_opt = (
-                    if_float_create_lambda_penalisation_matrix(
-                        penalty_lasso_conditional_independence_opt,
-                        num_vars=self.number_variables,
+                
+                penalty_lasso_conditional_independence_opt = if_float_create_lambda_penalisation_matrix(
+                    lambda_penalty_params=penalty_lasso_conditional_independence_opt,
+                    num_vars=self.number_variables
                     )
-                )
-                penalty_params_opt = torch.tensor(
-                    [
+                
+            ##### DEFINING PENALISATION PARAMETERS  (END) ####
+                
+                penalty_params_opt: Tensor = torch.tensor(
+                    data=[
                         penalty_decorrelation_ridge_param_opt,
                         penalty_decorrelation_ridge_first_difference_opt,
                         penalty_decorrelation_ridge_second_difference_opt,
@@ -1737,27 +1730,27 @@ class GTM(nn.Module):
                     ]
                 )
 
-                if cross_validation_folds == False:
+                if not cross_validation_folds:
                     # define model, train the model with tuning params and return the objective value on the given validation set
-                    target = self.__return_objective_for_hyperparameters__(
-                        train_dataloader,
-                        validate_dataloader,
-                        train_covariates,
-                        validate_covariates,
-                        penalty_params_opt,
-                        adaptive_lasso_weights_matrix,
-                        penalty_lasso_conditional_independence_opt,
-                        learning_rate,
-                        iterations,
-                        patience,
-                        min_delta,
-                        optimizer,
-                        lambda_penalty_mode,
-                        objective_type,
-                        seperate_copula_training,
-                        max_batches_per_iter,
-                        pretrained_transformation_layer,
-                        cross_validation_folds,
+                    target:float = self.__return_objective_for_hyperparameters__(
+                        train_dataloader=train_dataloader,
+                        validate_dataloader=validate_dataloader,
+                        #train_covariates=train_covariates, # ALLWAYS FALSE FOR THIS VERSION
+                        #validate_covariates=validate_covariates, # ALLWAYS FALSE FOR THIS VERSION
+                        penalty_params=penalty_params_opt,
+                        adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+                        lambda_penalty_param=penalty_lasso_conditional_independence_opt,
+                        learning_rate=learning_rate,
+                        iterations=iterations,
+                        patience=patience,
+                        min_delta=min_delta,
+                        optimizer=optimizer,
+                        lambda_penalty_mode=lambda_penalty_mode,
+                        objective_type=objective_type,
+                        seperate_copula_training=seperate_copula_training,
+                        max_batches_per_iter=max_batches_per_iter,
+                        pretrained_transformation_layer=pretrained_transformation_layer,
+                        cross_validation_folds=cross_validation_folds,
                     )
 
                     return target
@@ -1784,7 +1777,7 @@ class GTM(nn.Module):
             #        print(f"Train Batch Shape: {x.shape}, Labels: {y.shape}")
             #        break  # Just show one batch per fold
 
-            study = optuna.create_study(
+            study: Study = optuna.create_study(
                 sampler=TPESampler(
                     n_startup_trials=int(np.floor(n_trials / 2)),  # 7
                     consider_prior=False,  # True # is this useful without a prior weight?
@@ -1792,7 +1785,7 @@ class GTM(nn.Module):
                     prior_weight=0,  # 1.0, #default value 1.0 but then does not explore the space as good I think
                     multivariate=True,  # experimental but very useful here as our parameters are highly correlated
                 ),
-                storage="sqlite:///" + temp_folder + "/hyperparameter_tuning_study.db",
+                storage = f"sqlite:///{temp_folder}/hyperparameter_tuning_study.db",
                 # hyperparameter_tuning_study.db',
                 direction="maximize",
                 study_name=study_name,
@@ -1802,6 +1795,7 @@ class GTM(nn.Module):
             study.optimize(optuna_objective, n_trials=n_trials)
             print("hyperparameter_tuning done")
             return study
+
     def compute_conditional_independence_table(
         self,
         y: torch.Tensor | None = None,
