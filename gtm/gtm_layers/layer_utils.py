@@ -89,7 +89,7 @@ class bayesian_splines:
         
         I = torch.eye(Kdim, device=K1.device, dtype=K1.dtype)
         
-        Q = kappa1*K1 + kappa2*K2 + (1.0/sigma2)*I
+        Q = kappa1*K1 + kappa2*K2 #+ (1.0/sigma2)*I
         
         L = torch.linalg.cholesky(Q + eps*I)
         

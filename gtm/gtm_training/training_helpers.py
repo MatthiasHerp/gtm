@@ -12,6 +12,7 @@ from math import pi, cos
 # from torch import nn
 import numpy as np
 import torch
+import torch.nn as nn
 
 # from torch.distributions import Normal, Laplace
 # import matplotlib.pyplot as plt
@@ -806,7 +807,8 @@ def train_freq(
 
 @torch.no_grad()
 def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, sample_size, S_val=8, seed=123):
-    model.eval()
+    #model.eval()
+    nn.Module.train(model, False)
     total, nobs = 0.0, 0
     for y in val_loader:
         y = y.to(model.device)
@@ -852,8 +854,9 @@ def train_bayes(
 ):
     import time, torch
     was_training = model.training
-    model.eval()
-
+    #model.eval()
+    nn.Module.train(model, False)   # put modules in eval mode
+    
     N_total = len(train_dataloader.dataset)
     # hyperparams
     if hyperparameters is None:
@@ -975,7 +978,7 @@ def train_bayes(
     
     
     if was_training:
-        model.train()
+        nn.Module.train(model, True)
 
     return {
         "training_time": time.time() - start,
