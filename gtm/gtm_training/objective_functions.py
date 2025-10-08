@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM 
 
 
-def log_likelihood(model, samples, mean_loss=False):
+def log_likelihood(model: "GTM", samples, mean_loss=False):
     # train_covariates=False, train=True, evaluate=True,
 
     return_dict_nf_mctm = model.forward(
@@ -151,20 +151,45 @@ def unnormalized_posterior_computation(
     nll: Tensor = return_dict_model_loss.get('negative_log_likelihood_data')
     nll=nll.mean()
     
+    #if not nll < 0:
+    #    raise ValueError(f'nll should allways negative {nll}')
+    
     #Prior Transformation
     ntp = bayesian_splines.defining_prior(
-        model=model, hyperparameter= hyperparameter_transformation, is_transformation=True
+        model=model, 
+        hyperparameter= hyperparameter_transformation,
+        is_transformation=True
         )
     
+    #if not ntp < 0:
+    #    raise ValueError(f'ntp should allways negative {ntp}')
+    
+    
+    if not model.transform_only:
     #Prior Decorrelation
-    ndp = bayesian_splines.defining_prior(
-        model=model, hyperparameter=hyperparameter_decorrelation
-        )
+        ndp = bayesian_splines.defining_prior(
+            model=model, 
+            hyperparameter=hyperparameter_decorrelation
+            )
+    else:
+        ndp = torch.Tensor([0.0])
+    
+    
+    #if not ndp < 0:
+    #    raise ValueError(f'ndp should allways negative{ndp}')
+    
+    
+    neg_log_post= nll + (ntp + ndp)/sample_size # log \tilde p(θ, y) = - (NLL + priors)
+    
+    #print(f"Negative LogLike: {nll.item()}, \nnegative Transformation Prior: {ntp.item()}, \nnegative Decorrelation Prior: {ndp.item()}, \nweigthed negative LogPost: {neg_log_post.item()}")
+    
+    #if neg_log_post > 0:
+    #    raise ValueError('neg_log_post should allways negative')
     
     return {
-        'neg_posterior':nll + (ntp + ndp)/sample_size, # log \tilde p(θ, y) = - (NLL + priors)
-        'decorrelation_prior': ndp,
-        'transformation_prior': ntp,
+        'neg_posterior':neg_log_post,
+        'negative_decorrelation_prior': ndp,
+        'negative_transformation_prior': ntp,
         'negative_log_lik': nll
         }
 
@@ -180,14 +205,10 @@ def bayesian_training_objective(
     
     if objective_type == "negloglik":
         
-        dict_return_unnorm_post: dict[str, Tensor]= unnormalized_posterior_computation(
+        return unnormalized_posterior_computation(
                 model=model,
                 samples=samples,
                 hyperparameter_transformation=hyperparameter_transformation,
                 hyperparameter_decorrelation= hyperparameter_decorrelation,
                 sample_size=sample_size
                 )
-        
-        
-
-    return dict_return_unnorm_post['neg_posterior']
