@@ -1,6 +1,6 @@
-import itertools
 from typing import List, Literal, Tuple, Optional # Still needed
 
+import itertools
 import optuna
 import scipy
 import torch
@@ -929,8 +929,15 @@ class GTM(nn.Module):
         min_delta: float = 1e-7,
         optimizer: Literal["LBFGS", "Adam"] = "LBFGS",
         max_batches_per_iter: int | bool = False,
-        inference: Literal['frequentist'] | Literal['bayesian'] = 'frequentist',
-        hyperparameters_transformation_layer: dict = None 
+        hyperparameters = None,
+        mcmc_sample_train=4,
+        mcmc_sample_val=16,
+        mc_ramp_every=25,
+        mc_ramp_max=32,
+        rho_lr_multiplier=1.5,
+        sched_factor=0.5,
+        sched_patience=6,
+        sched_threshold=1.e-4
     ) -> None:
         
         """
@@ -993,24 +1000,45 @@ class GTM(nn.Module):
         lambda_penalty_mode: Literal['square'] = "square"  # Literal["square", "absolute"]
         train_covariates:bool = False
         validate_covariates:bool = False
-            
-        return_dict_model_training: None = train_freq(
-            model=self,
-            train_dataloader=train_dataloader,
-            validate_dataloader=validate_dataloader,
-            train_covariates=train_covariates,
-            validate_covariates=validate_covariates,
-            penalty_params=penalty_splines_params,
-            lambda_penalty_params=penalty_lasso_conditional_independence,
-            learning_rate=learning_rate,
-            iterations=iterations,
-            verbose=verbose,
-            patience=patience,
-            min_delta=min_delta,
-            optimizer=optimizer,
-            lambda_penalty_mode=lambda_penalty_mode,
-            objective_type=objective_type,
-            max_batches_per_iter=max_batches_per_iter
+        
+        if self.inference == "frequentist":
+            return_dict_model_training: None = train_freq(
+                model=self,
+                train_dataloader=train_dataloader,
+                validate_dataloader=validate_dataloader,
+                train_covariates=train_covariates,
+                validate_covariates=validate_covariates,
+                penalty_params=penalty_splines_params,
+                lambda_penalty_params=penalty_lasso_conditional_independence,
+                learning_rate=learning_rate,
+                iterations=iterations,
+                verbose=verbose,
+                patience=patience,
+                min_delta=min_delta,
+                optimizer=optimizer,
+                lambda_penalty_mode=lambda_penalty_mode,
+                objective_type=objective_type,
+                max_batches_per_iter=max_batches_per_iter
+                )
+        elif self.inference =="bayesian":
+            return_dict_model_training = train_bayes(
+                model= self,
+                train_dataloader=train_dataloader,
+                validate_dataloader=validate_dataloader,
+                hyperparameters=hyperparameters,
+                iterations=iterations,
+                verbose=verbose,
+                lr=learning_rate,
+                mcmc_sample_train=mcmc_sample_train,#4,
+                mcmc_sample_val=mcmc_sample_val,#16,
+                mc_ramp_every=mc_ramp_every,#25,
+                mc_ramp_max=mc_ramp_max,#32,
+                patience_val=patience,#15,
+                min_delta=min_delta,#15,
+                rho_lr_multiplier=rho_lr_multiplier,#1.5,
+                sched_factor=sched_factor,#0.5,
+                sched_patience=sched_patience,#6,
+                sched_threshold=sched_threshold,#1.e-4
             )
 
         self.transform_only = False

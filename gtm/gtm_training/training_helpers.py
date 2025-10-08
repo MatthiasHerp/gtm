@@ -890,12 +890,17 @@ def train_bayes(
     loss_history, val_history = [], []
     start = time.time()
 
+    nlp_history=[]
+    ndp_history = []
+    ntp_history=[]
+    
     for epoch in tqdm(range(iterations)):
         # --- MC ramp for TRAIN only (validation stays fixed) ---
         if mc_ramp_every is not None and epoch > 0 and (epoch % mc_ramp_every == 0):
             mcmc_sample_train = min(mc_ramp_max, max(mcmc_sample_train * 2, 1))
 
         running, n_batches = 0.0, 0
+        nlp,ndp,ntp = 0.0,0.0,0.0
         for b, y in enumerate(train_dataloader):
             if max_batches_per_iter and b >= max_batches_per_iter:
                 break
@@ -920,12 +925,20 @@ def train_bayes(
 
             running += float(loss.item())
             n_batches += 1
+            
+            nlp += out['neg_log_likelihood']
+            ndp += out['neg_prior_decorrelation']
+            ntp += out['neg_prior_transformation']
 
         if n_batches == 0:
             raise RuntimeError("No batches processed. Check your dataloader / max_batches_per_iter.")
 
         train_loss = running / n_batches
+        
         loss_history.append(train_loss)
+        nlp_history.append(nlp.mean())
+        ndp_history.append(ndp.mean())
+        ntp_history.append(ntp.mean())
 
         # --- VALIDATION with fixed seed & fixed S ---
         if validate_dataloader is not None:
@@ -986,6 +999,9 @@ def train_bayes(
         "best_val": best_val,
         "loss_history": loss_history,
         "val_history": val_history if validate_dataloader is not None else None,
+        "negative_log_posterior": nlp_history,
+        "negative_log_prior_decorrelation": ndp_history,
+        "negative_log_prior_transformation": ntp_history,
         "mu": VI.mu.detach(),
         "rho": VI.rho.detach(),
         "vi_model": VI,

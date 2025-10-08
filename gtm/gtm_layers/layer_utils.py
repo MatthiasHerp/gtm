@@ -201,7 +201,7 @@ class bayesian_splines:
                 )
             
         # NEGATIVE log prior to add onto NLL in your objective    
-        return -total_logp
+        return -1*total_logp
     
     @staticmethod
     def _restrict_parameters_(

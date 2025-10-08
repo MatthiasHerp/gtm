@@ -134,7 +134,10 @@ class VI_Model(nn.Module):
         log_q_vals = self.log_q(thetas)         # [S]
 
         log_p_tilde_vals = []  # log unnormalized posterior per sample
-
+        neg_likelihood_list = []
+        prior_dec_list = []
+        prior_trans_list = []
+        
         for s in range(mcmc_samples):
             theta_s = thetas[s]
             # Push θ into model
@@ -152,16 +155,25 @@ class VI_Model(nn.Module):
             
             # Your function returns a POSITIVE objective (NLL + priors).
             # log \tilde p(θ, y) = - (NLL + priors)
-            neglogpost = out
+            neglogpost = out['neg_posterior']
             log_p_tilde = -neglogpost
             log_p_tilde_vals.append(log_p_tilde.reshape(()))
+            
+            #Tracking
+            neg_likelihood_list.append(out['negative_log_lik'].reshape(()))
+            prior_dec_list.append(out['negative_decorrelation_prior'].reshape(()))
+            prior_trans_list.append(out['negative_transformation_prior'].reshape(()))
 
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
-        
         # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
         # (Note: additive constant log p(y) cancels in optimization)
         loss = torch.mean(log_q_vals - log_p_tilde_vals) #ELBO
 
+        
+        neg_likelihood_list= torch.stack(neg_likelihood_list)
+        prior_dec_list = torch.stack(prior_dec_list)
+        prior_trans_list = torch.stack(prior_trans_list)
+        
         return {
             "loss": loss,
             "mean_log_q": torch.mean(log_q_vals).detach(),
@@ -169,4 +181,7 @@ class VI_Model(nn.Module):
             "sigma_mean": self.sigma.mean().detach(),
             "sigma_max": self.sigma.max().detach(),
             "sigma_min": self.sigma.min().detach(),
+            "neg_log_likelihood": torch.mean(neg_likelihood_list).detach(),
+            "neg_prior_decorrelation": torch.mean(prior_dec_list).detach(),
+            "neg_prior_transformation": torch.mean(prior_trans_list).detach(),
         }
