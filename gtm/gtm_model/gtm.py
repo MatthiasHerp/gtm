@@ -291,8 +291,9 @@ class GTM(nn.Module):
         """
         self.device = device
         self.transformation.device = device
-        for decorrelation_layer in self.decorrelation_layers:
-            decorrelation_layer.device = device
+        if not self.transform_only:
+            for decorrelation_layer in self.decorrelation_layers:
+                decorrelation_layer.device = device
 
         return super().to(device=device)
 

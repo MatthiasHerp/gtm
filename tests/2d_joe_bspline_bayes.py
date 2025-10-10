@@ -167,7 +167,7 @@ joint_model = model_freq.train(train_dataloader=dataloader_train, validate_datal
                 penalty_splines_params=penalty_splines_params, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, penalty_lasso_conditional_independence=penalty_lasso_conditional_independence, 
                 max_batches_per_iter=False)
 
-print(f"Joint Training: \nloss_with_penalties {joint_model['loss_with_penalties']},  \nloss_without_penalties {joint_model['loss_without_penalties']} ")
+#print(f"Joint Training: \nloss_with_penalties {joint_model['loss_with_penalties']},  \nloss_without_penalties {joint_model['loss_without_penalties']} ")
 
 
 # Training 

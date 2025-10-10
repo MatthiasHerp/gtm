@@ -39,7 +39,7 @@ dl_va = DataLoader(Generic_Dataset(X_va), batch_size=N_val)
 model_freq = GTM(
     number_variables=2,
     number_transformation_layers=1,
-    number_decorrelation_layers=0,      # <— nothing to learn beyond marginals
+    number_decorrelation_layers=0, 
     degree_transformations=10,
     spline_transformation="bspline",
     transformation_spline_range=(-10, 10),
@@ -47,8 +47,36 @@ model_freq = GTM(
 )
 model_freq.transform_only = True
 
+study = model_freq.hyperparameter_tune_penalties( 
+        train_dataloader = dl_tr,
+        validate_dataloader = dl_va,
+        penalty_decorrelation_ridge_param = None,
+        penalty_decorrelation_ridge_first_difference = "sample",
+        penalty_decorrelation_ridge_second_difference = "sample",
+        penalty_transformation_ridge_second_difference = None,
+        penalty_lasso_conditional_independence = None,
+        adaptive_lasso_weights_matrix=False,
+        optimizer="LBFGS",
+        learning_rate=1,
+        iterations=2000,
+        patience=5,
+        min_delta=1e-7,
+        seperate_copula_training=False,
+        max_batches_per_iter=False,
+        pretrained_transformation_layer=True,
+        n_trials=30,
+        temp_folder=".",
+        study_name=None
+        )
+
 # tune penalties only for transformation layer if your API requires a vector
-penalty_splines_params = torch.FloatTensor([0, 0, 0, 0])
+penalty_splines_params = torch.FloatTensor([
+    0, #study.best_params["penalty_decorrelation_ridge_param"],
+    study.best_params["penalty_decorrelation_ridge_first_difference"],
+    study.best_params["penalty_decorrelation_ridge_second_difference"],
+    0 #study.best_params["penalty_transformation_ridge_second_difference"]
+    ])
+
 
 out_freq = model_freq.pretrain_transformation_layer(
     dl_tr,
@@ -56,6 +84,21 @@ out_freq = model_freq.pretrain_transformation_layer(
     max_batches_per_iter=False,
     penalty_splines_params=penalty_splines_params
 )
+
+#### Training Reference First Transformation ###
+adaptive_lasso_weights_matrix = False
+penalty_lasso_conditional_independence=False
+
+joint_model = model_freq.train(
+    train_dataloader=dl_tr,
+    validate_dataloader=dl_va,
+    iterations=1000,
+    optimizer="LBFGS",
+    penalty_splines_params=penalty_splines_params,
+    adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+    penalty_lasso_conditional_independence=penalty_lasso_conditional_independence,
+    max_batches_per_iter=False
+    )
 
 # evaluate: transform X -> Z and check standard normality per margin
 with torch.no_grad():
@@ -103,7 +146,7 @@ out_bayes = model_bayes.pretrain_transformation_layer(
     train_dataloader=dl_tr,
     validate_dataloader=dl_va,
     iterations=100,
-    learning_rate=0.01,
+    learning_rate=0.001,
     mcmc_sample_train=4,
     mcmc_sample_val=16,
     mc_ramp_every=10,
@@ -113,6 +156,24 @@ out_bayes = model_bayes.pretrain_transformation_layer(
     rho_lr_multiplier=2,
     sched_factor=0.5, sched_patience=6, sched_threshold=1e-4,
 )
+
+
+output = model_bayes.train(
+    train_dataloader=dl_tr,
+    validate_dataloader=dl_va,
+    hyperparameters=None,
+    iterations=100,
+    #verbose=True,
+    learning_rate=0.01,
+    mcmc_sample_train=4,            # will ramp
+    mcmc_sample_val=16,             # fixed & larger for stable eval
+    mc_ramp_every=10,               # 4→8→16→32 at epochs 25/50/75
+    mc_ramp_max=64,
+    patience=15,                # early-stop patience
+    min_delta=1e-3,                # ~0.1% absolute of your loss scale
+    rho_lr_multiplier=2,          # slightly faster variance adaption (optional)
+    sched_factor=0.5, sched_patience=6, sched_threshold=1e-4,
+    )
 
 with torch.no_grad():
     Z_tr_b = model_bayes.forward(X_tr)['output']
@@ -131,7 +192,9 @@ def qq_plot(z, label):
 plt.figure(figsize=(5,5))
 qq_plot(model_freq.forward(X_tr)['output'][:,1], 'freq dim2')
 qq_plot(model_bayes.forward(X_tr)['output'][:,1], 'bayes dim2')
-plt.legend(); plt.xlabel('Theoretical'); plt.ylabel('Empirical')
+plt.legend()
+plt.xlabel('Theoretical')
+plt.ylabel('Empirical')
 plt.title('Q–Q Plot of Transformed Margin 2')
 plt.show()
 
