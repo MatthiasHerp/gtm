@@ -115,6 +115,7 @@ class bayesian_splines:
                 return float(a) / float(b)
         
         sub_model = model.transformation if is_transformation else model.decorrelation_layers
+        
         total_logp = torch.zeros((), device=model.device, dtype=torch.float32)
         
         if not is_transformation:

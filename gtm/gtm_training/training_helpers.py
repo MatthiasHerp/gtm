@@ -834,7 +834,7 @@ def train_bayes(
     iterations: int = 100,
     lr: float = 1e-3,
     hyperparameters: dict | None = None,
-    verbose: bool = False,
+    verbose: bool = True,
     max_batches_per_iter: int | bool = False,
 
     # --- NEW knobs ---
