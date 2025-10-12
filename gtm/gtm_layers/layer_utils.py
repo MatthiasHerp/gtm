@@ -19,8 +19,8 @@ def generate_diagonal_matrix(n):
 
 class bayesian_splines:
     @staticmethod
-    def difference_penalty_matrix(order, n_params) -> Tensor:
-        D = torch.eye(n_params)
+    def difference_penalty_matrix(order, n_params, device=None, dtype=None) -> Tensor:
+        D = torch.eye(n_params, device=device, dtype=dtype)
         for _ in range(order):
             D = D[1:] - D[:-1]
         return D.T @ D # K = DᵀD
@@ -39,37 +39,51 @@ class bayesian_splines:
     
     @staticmethod
     def log_mvn_zero_mean_prec_ck(
-        theta: torch.Tensor,   # [Kdim, M]  columns = independent coefficient blocks
+        gamma: torch.Tensor,   # [Kdim, M]  columns = independent coefficient blocks
         K: torch.Tensor,       # [Kdim, Kdim] RW2 precision base: D2ᵀD2 (psd)
-        lam: torch.Tensor,     # scalar λ > 0 (precision)
+        tau2: torch.Tensor,     # scalar λ > 0 (precision)
         eps: float = 1e-6,
     ) -> torch.Tensor:
-        """
-        CK prior: θ ~ N(0, (λ K)^(-1)), with intrinsic RW2 K.
-        Returns log p(Γ | λ, K) up to θ-independent constants (we keep the useful ones).
-        """
+        
+        def pseudo_inverse_from_eigh(K, tol=1e-10):
+            # K is symmetric psd (RW2). Use eigendecomp to build K^+ safely.
+            evals, evecs = torch.linalg.eigh(K)
+            mask = evals > tol
+            if mask.sum() == 0:
+                raise RuntimeError("All eigenvalues are <= tol; K^+ undefined.")
+            inv_evals = torch.zeros_like(evals)
+            inv_evals[mask] = 1.0 / evals[mask]
+            # K^+ = Q diag(1/λ_i for λ_i>tol) Qᵀ
+            return (evecs * inv_evals) @ evecs.T
+        
         # symmetrize
         K = 0.5 * (K + K.T)
-        Kdim = K.shape[0]
 
-        # rank r for RW2 (null space: {1, x})
-        with torch.no_grad():
-            r = torch.linalg.matrix_rank(K)
 
-        # stable alternative: log|K+εI| - (Kdim-r) log ε  (≈ pseudo-logdet)
-        Kreg = K + eps * torch.eye(Kdim, device=K.device, dtype=K.dtype)
-        L = torch.linalg.cholesky(Kreg)
-        logdet_Kreg = 2.0 * torch.log(torch.diag(L)).sum()
-        log_pdet_K = logdet_Kreg - (Kdim - r) * torch.log(torch.as_tensor(eps, device=K.device, dtype=K.dtype))
-
-        # log |λK|_* = r log λ + log|K|_*   (pseudo-determinant)
-        logdet_Q = r * torch.log(lam) + log_pdet_K
-
-        # quadratic term = λ * Σ_m θ_mᵀ K θ_m  (nullspace not penalized)
-        quad = -1*lam * theta.T @ lam @theta #torch.einsum('im,ij,jm->', theta, K, theta)   # scalar
-
-        return 0.5 * (quad)
-
+        
+        gamma = gamma.unsqueeze(0) if gamma.ndim == 1 else gamma
+        D = gamma.shape[-1]
+        dgamma = gamma[..., 1:] - gamma[..., :-1]
+        safe_dgamma = dgamma + eps
+        
+        # β(γ): β1=γ1; βk=log(Δγ_k), k>=2
+        beta1 = gamma[..., :1]                      # [..., 1]
+        beta_tail = torch.log(safe_dgamma)          # [..., D-1]
+        beta = torch.cat([beta1, beta_tail], dim=-1)# [..., D]
+        
+        # quadratic form βᵀ K^+ β
+        K_pinv = pseudo_inverse_from_eigh(K)
+        
+        # reshape for bᵀ K^+ b over batches
+        beta_mat = beta.reshape(-1, D)              # [B, D]
+        
+        qf = torch.einsum('bi,ij,bj->b', beta_mat, K_pinv, beta_mat) #[B]
+        # Jacobian term: -sum log(Δγ_k)
+        log_jac = -torch.sum(torch.log(safe_dgamma), dim=-1).reshape(-1) #[B]
+        
+        out = -(0.5/tau2)*qf + log_jac
+        
+        return out.reshape(gamma.shape[:-1]) # drop batch if input was 1D
 
     @staticmethod
     def log_prior_gamma_ridge(
@@ -173,31 +187,31 @@ class bayesian_splines:
             a_lambda = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
             b_lambda = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
             
-            lambda_hat   = torch.distributions.Uniform(0,100000).sample()##torch.as_tensor(_gamma_mean(a_lambda, b_lambda),   device=model.device)
+            tau_hat   = torch.distributions.Uniform(0,100000).sample().to(sub_model.device)##torch.as_tensor(_gamma_mean(a_lambda, b_lambda),   device=model.device)
             
-            K_Prior_RW2 = sub_model.priors.K_prior_RW2.to(device=sub_model.device, dtype=torch.float32)
+            K_Prior_RW2 = sub_model.priors.K_prior_RW2.to(sub_model.device)
             
             K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
             
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
-            #varphi = sub_model.padded_params
+            varphi = sub_model.padded_params
+            varphi = sub_model.padded_params.to(sub_model.device)
             
-            #theta_T, logJ = bayesian_splines._restrict_parameters_(
-            #    params_a=varphi,
-            #    monotonically_increasing=sub_model.monotonically_increasing,
-            #    #use_softplus=False,
-            #    device=sub_model.device
-            #)
+            theta_T = bayesian_splines._restrict_parameters_(
+                params_a=varphi,
+                monotonically_increasing=sub_model.monotonically_increasing,
+                #use_softplus=False,
+                device=sub_model.device
+            )
             
-            theta_T = torch.vstack([
-                torch.nn.functional.pad(p, (0, K_Prior_RW2.shape[0] - p.numel()))
-                for p in sub_model.padded_params]).T
+            #theta_T = (torch.vstack([
+            #    torch.nn.functional.pad(p, (0, K_Prior_RW2.shape[0] - p.numel()))
+            #    for p in sub_model.padded_params]).T).to(sub_model.device)
             
             
             
             total_logp = (
-                bayesian_splines.log_mvn_zero_mean_prec_ck(theta_T, K_Prior_RW2, lambda_hat)
-                + logJ.sum()
+                bayesian_splines.log_mvn_zero_mean_prec_ck(theta_T, K_Prior_RW2, tau_hat)
                 )
             
         # NEGATIVE log prior to add onto NLL in your objective    
@@ -216,15 +230,11 @@ class bayesian_splines:
 
         #Prepropressing
         a =params_a.T
-        
-        ## Jaccobian
-        tail_pre= a[: ,1:]
-        logJ = torch.nn.functional.logsigmoid(tail_pre).sum(dim=1) if use_softplus else tail_pre.sum(dim=1)# sum log σ(a_j), j>=2
-
+       
         # Param Restriction
         params_restricted: Tensor = a.clone()  # [B, K]
         B, K = params_restricted.shape
-        params_restricted[:, 1:] = softplus(params_restricted[:, 1:]) if use_softplus else torch.exp(params_restricted[:, 1:]) 
+        params_restricted[:, 1:] = softplus(params_restricted[:, 1:]) if use_softplus else torch.exp(params_restricted[:, 1:]).to(device=device)
         #params_restricted[:, 1:] = torch.exp(params_restricted[:, 1:])
         
         # Create upper triangular summing matrix: [K, K]
@@ -234,7 +244,7 @@ class bayesian_splines:
         params_restricted: Tensor = torch.matmul(input=params_restricted, other=sum_matrix)
 
         
-        return params_restricted.T, logJ
+        return params_restricted.T
     
 @dataclass(frozen=True)
 class BayesianPriors:
@@ -285,11 +295,11 @@ class BayesianInitializer:
         b_tau_2 = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
         
         #order_prior_diff = 1
-        K_prior_RW1: Tensor = bayesian_splines.difference_penalty_matrix(order=1, n_params=n_params).to(device=device)
+        K_prior_RW1: Tensor = bayesian_splines.difference_penalty_matrix(order=1, n_params=n_params, device=device, dtype=dtype)
         
         #order_prior_diff = 2
         #n_params = int(model.padded_params.shape[0])
-        K_prior_RW2: Tensor = bayesian_splines.difference_penalty_matrix(order=2, n_params=n_params).to(device=device)
+        K_prior_RW2: Tensor = bayesian_splines.difference_penalty_matrix(order=2, n_params=n_params, device=device, dtype=dtype)
         
         # normalize once so τ² has a consistent meaning
         K_prior_RW1 = K_prior_RW1 / (K_prior_RW1.abs().max() + 1e-12)
