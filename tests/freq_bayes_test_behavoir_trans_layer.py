@@ -47,33 +47,12 @@ model_freq = GTM(
 )
 model_freq.transform_only = True
 
-study = model_freq.hyperparameter_tune_penalties( 
-        train_dataloader = dl_tr,
-        validate_dataloader = dl_va,
-        penalty_decorrelation_ridge_param = None,
-        penalty_decorrelation_ridge_first_difference = "sample",
-        penalty_decorrelation_ridge_second_difference = "sample",
-        penalty_transformation_ridge_second_difference = None,
-        penalty_lasso_conditional_independence = None,
-        adaptive_lasso_weights_matrix=False,
-        optimizer="LBFGS",
-        learning_rate=1,
-        iterations=2000,
-        patience=5,
-        min_delta=1e-7,
-        seperate_copula_training=False,
-        max_batches_per_iter=False,
-        pretrained_transformation_layer=True,
-        n_trials=30,
-        temp_folder=".",
-        study_name=None
-        )
 
 # tune penalties only for transformation layer if your API requires a vector
 penalty_splines_params = torch.FloatTensor([
     0, #study.best_params["penalty_decorrelation_ridge_param"],
-    study.best_params["penalty_decorrelation_ridge_first_difference"],
-    study.best_params["penalty_decorrelation_ridge_second_difference"],
+    0,#study.best_params["penalty_decorrelation_ridge_first_difference"],
+    0,#study.best_params["penalty_decorrelation_ridge_second_difference"],
     0 #study.best_params["penalty_transformation_ridge_second_difference"]
     ])
 
@@ -85,20 +64,7 @@ out_freq = model_freq.pretrain_transformation_layer(
     penalty_splines_params=penalty_splines_params
 )
 
-#### Training Reference First Transformation ###
-adaptive_lasso_weights_matrix = False
-penalty_lasso_conditional_independence=False
 
-joint_model = model_freq.train(
-    train_dataloader=dl_tr,
-    validate_dataloader=dl_va,
-    iterations=1000,
-    optimizer="LBFGS",
-    penalty_splines_params=penalty_splines_params,
-    adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
-    penalty_lasso_conditional_independence=penalty_lasso_conditional_independence,
-    max_batches_per_iter=False
-    )
 
 # evaluate: transform X -> Z and check standard normality per margin
 with torch.no_grad():
