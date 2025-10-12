@@ -66,10 +66,9 @@ class bayesian_splines:
         logdet_Q = r * torch.log(lam) + log_pdet_K
 
         # quadratic term = λ * Σ_m θ_mᵀ K θ_m  (nullspace not penalized)
-        quad = lam * torch.einsum('im,ij,jm->', theta, K, theta)   # scalar
+        quad = -1*lam * theta.T @ lam @theta #torch.einsum('im,ij,jm->', theta, K, theta)   # scalar
 
-        M = theta.shape[1]
-        return 0.5 * (M * logdet_Q - quad)
+        return 0.5 * (quad)
 
 
     @staticmethod
@@ -174,25 +173,25 @@ class bayesian_splines:
             a_lambda = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
             b_lambda = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
             
-            lambda_hat   = torch.as_tensor(_gamma_mean(a_lambda, b_lambda),   device=model.device)
+            lambda_hat   = torch.distributions.Uniform(0,100000).sample()##torch.as_tensor(_gamma_mean(a_lambda, b_lambda),   device=model.device)
             
             K_Prior_RW2 = sub_model.priors.K_prior_RW2.to(device=sub_model.device, dtype=torch.float32)
             
             K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
             
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
-            varphi = sub_model.padded_params
+            #varphi = sub_model.padded_params
             
-            theta_T, logJ = bayesian_splines._restrict_parameters_(
-                params_a=varphi,
-                monotonically_increasing=sub_model.monotonically_increasing,
-                #use_softplus=False,
-                device=sub_model.device
-            )
+            #theta_T, logJ = bayesian_splines._restrict_parameters_(
+            #    params_a=varphi,
+            #    monotonically_increasing=sub_model.monotonically_increasing,
+            #    #use_softplus=False,
+            #    device=sub_model.device
+            #)
             
-            #theta_T = torch.vstack([
-            #    torch.nn.functional.pad(p, (0, K_Prior_RW2.shape[0] - p.numel()))
-            #    for p in sub_model.padded_params]).T
+            theta_T = torch.vstack([
+                torch.nn.functional.pad(p, (0, K_Prior_RW2.shape[0] - p.numel()))
+                for p in sub_model.padded_params]).T
             
             
             
