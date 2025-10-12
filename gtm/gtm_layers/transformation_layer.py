@@ -316,17 +316,23 @@ class Transformation(nn.Module):
             monotonically_increasing=monotonically_increasing,
             device=input.device,
         )
+        
+        
+        
+        spline_range= (
+            self.spline_range[:, var_num]
+            if inverse == False 
+            else self.spline_range_inverse[:, var_num]
+            )
+        
+        spline_range = spline_range.to(self.device)
 
         return bspline_prediction_vectorized(
             params,
-            input[:, var_num].unsqueeze(1),
-            self.knots_list[var_num] if inverse == False else self.padded_knots_inverse,
-            self.degree[var_num] if not inverse else self.degree_inverse[var_num],
-            spline_range=(
-                self.spline_range[:, var_num]
-                if inverse == False
-                else self.spline_range_inverse[:, var_num]
-            ),
+            input_a=input[:, var_num].unsqueeze(1),
+            knots= (self.knots_list[var_num] if inverse == False else self.padded_knots_inverse).to(self.device),
+            degree= self.degree[var_num] if not inverse else self.degree_inverse[var_num],
+            spline_range=(self.spline_range[:, var_num]if inverse == False else self.spline_range_inverse[:, var_num]).to(self.device),
             # monotonically_increasing=monotonically_increasing,
             derivativ=derivativ,
             return_penalties=return_penalties,

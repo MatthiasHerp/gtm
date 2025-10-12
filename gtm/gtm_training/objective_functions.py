@@ -151,19 +151,12 @@ def unnormalized_posterior_computation(
     nll: Tensor = return_dict_model_loss.get('negative_log_likelihood_data')
     nll=nll.mean()
     
-    #if not nll < 0:
-    #    raise ValueError(f'nll should allways negative {nll}')
-    
     #Prior Transformation
     ntp = bayesian_splines.defining_prior(
         model=model, 
         hyperparameter= hyperparameter_transformation,
         is_transformation=True
         )
-    
-    #if not ntp < 0:
-    #    raise ValueError(f'ntp should allways negative {ntp}')
-    
     
     if not model.transform_only:
     #Prior Decorrelation
@@ -172,19 +165,13 @@ def unnormalized_posterior_computation(
             hyperparameter=hyperparameter_decorrelation
             )
     else:
-        ndp = torch.Tensor([0.0])
+        ndp = torch.tensor(0.0, device=model.device, dtype=nll.dtype)
     
-    
-    #if not ndp < 0:
-    #    raise ValueError(f'ndp should allways negative{ndp}')
-    
+    sample_size = torch.as_tensor(sample_size, device=model.device, dtype=nll.dtype)
     
     neg_log_post= nll + (ntp + ndp)/sample_size # log \tilde p(θ, y) = - (NLL + priors)
     
     #print(f"Negative LogLike: {nll.item()}, \nnegative Transformation Prior: {ntp.item()}, \nnegative Decorrelation Prior: {ndp.item()}, \nweigthed negative LogPost: {neg_log_post.item()}")
-    
-    #if neg_log_post > 0:
-    #    raise ValueError('neg_log_post should allways negative')
     
     return {
         'neg_posterior':neg_log_post,
