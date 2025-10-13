@@ -38,14 +38,7 @@ class bayesian_splines:
         return -(a + 1) * torch.log(x) - b / x
     
     @staticmethod
-    def log_mvn_zero_mean_prec_ck(
-        gamma: torch.Tensor,   # [Kdim, M]  columns = independent coefficient blocks
-        K: torch.Tensor,       # [Kdim, Kdim] RW2 precision base: D2ᵀD2 (psd)
-        tau2: torch.Tensor,     # scalar λ > 0 (precision)
-        eps: float = 1e-6,
-    ) -> torch.Tensor:
-        
-        def pseudo_inverse_from_eigh(K, tol=1e-10):
+    def _pseudo_inverse_from_eigh(K, tol=1e-10):
             # K is symmetric psd (RW2). Use eigendecomp to build K^+ safely.
             evals, evecs = torch.linalg.eigh(K)
             mask = evals > tol
@@ -55,14 +48,25 @@ class bayesian_splines:
             inv_evals[mask] = 1.0 / evals[mask]
             # K^+ = Q diag(1/λ_i for λ_i>tol) Qᵀ
             return (evecs * inv_evals) @ evecs.T
+    
+    @staticmethod
+    def log_mvn_zero_mean_prec_ck(
+        gamma: torch.Tensor,   # [Kdim, M]  columns = independent coefficient blocks
+        K: torch.Tensor,       # [Kdim, Kdim] RW2 precision base: D2ᵀD2 (psd)
+        tau2: torch.Tensor,     # scalar λ > 0 (precision)
+        eps: float = 1e-6,
+    ) -> torch.Tensor:
         
         # symmetrize
         K = 0.5 * (K + K.T)
-
-
+        K_pinv = bayesian_splines._pseudo_inverse_from_eigh(K)
         
-        gamma = gamma.unsqueeze(0) if gamma.ndim == 1 else gamma
-        D = gamma.shape[-1]
+        print(gamma)
+        print(gamma.shape)
+        gamma = gamma.T.contiguous()
+        
+        print(gamma)
+        print(gamma.shape)
         dgamma = gamma[..., 1:] - gamma[..., :-1]
         safe_dgamma = dgamma + eps
         
@@ -71,19 +75,14 @@ class bayesian_splines:
         beta_tail = torch.log(safe_dgamma)          # [..., D-1]
         beta = torch.cat([beta1, beta_tail], dim=-1)# [..., D]
         
-        # quadratic form βᵀ K^+ β
-        K_pinv = pseudo_inverse_from_eigh(K)
-        
-        # reshape for bᵀ K^+ b over batches
-        beta_mat = beta.reshape(-1, D)              # [B, D]
-        
-        qf = torch.einsum('bi,ij,bj->b', beta_mat, K_pinv, beta_mat) #[B]
-        # Jacobian term: -sum log(Δγ_k)
-        log_jac = -torch.sum(torch.log(safe_dgamma), dim=-1).reshape(-1) #[B]
+        # quadratic form per batch
+        qf = torch.einsum('bi,ij,bj->b', beta, K_pinv, beta)        #[B]
+        # Jacobian term: -sum log(Δγ_k) per batch
+        log_jac = -torch.sum(torch.log(safe_dgamma), dim=-1).reshape(-1)    #[B]
         
         out = -(0.5/tau2)*qf + log_jac
         
-        return out.reshape(gamma.shape[:-1]) # drop batch if input was 1D
+        return out.sum() # drop batch if input was 1D
 
     @staticmethod
     def log_prior_gamma_ridge(
@@ -234,11 +233,15 @@ class bayesian_splines:
         # Param Restriction
         params_restricted: Tensor = a.clone()  # [B, K]
         B, K = params_restricted.shape
-        params_restricted[:, 1:] = softplus(params_restricted[:, 1:]) if use_softplus else torch.exp(params_restricted[:, 1:]).to(device=device)
+        params_restricted[:, 1:] = softplus(params_restricted[:, 1:]) if use_softplus else torch.exp(params_restricted[:, 1:])
         #params_restricted[:, 1:] = torch.exp(params_restricted[:, 1:])
+        params_restricted = params_restricted.to(device)
         
+                
         # Create upper triangular summing matrix: [K, K]
         sum_matrix: Tensor = torch.triu(input=torch.ones(K, K, device=device))  # [K, K]
+        
+        print(params_restricted.device, sum_matrix.device)
         
         # Apply cumulative sum: [B, K] x [K, K]ᵗ = [B, K]
         params_restricted: Tensor = torch.matmul(input=params_restricted, other=sum_matrix)
