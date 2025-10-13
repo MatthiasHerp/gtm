@@ -22,7 +22,7 @@ from torch.optim import Optimizer, Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from gtm.gtm_training.training_bayes import VI_Model
+from gtm.gtm_training.training_bayes import VI_Model_FullBayes
 
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
@@ -866,7 +866,20 @@ def train_bayes(
         hyper_T = hyperparameters.get("transformation", {})
         hyper_D = hyperparameters.get("decorrelation", {})
 
-    VI = VI_Model(model=model).to(model.device)
+    #VI = VI_Model(model=model).to(model.device)
+    
+    VI = VI_Model_FullBayes(
+    model,
+    tau4_prior=(hyper_T["RW2"]["tau_a"], hyper_T["RW2"]["tau_b"]),
+    # provide one (a,b) per decorrelation block in the order you want to fill them:
+    tau_dec_priors=[
+        (hyper_D["RW1"]["tau_a"], hyper_D["RW1"]["tau_b"]),
+        (hyper_D["RW2"]["tau_a"], hyper_D["RW2"]["tau_b"]),
+        # add more if you have more blocks
+    ],
+    use_ar1=False,   # set True if/when you add AR(1) in the decorrelation layer
+    device=model.device
+    ).to(model.device)
 
     # optimizer (optionally faster LR for rho)
     if rho_lr_multiplier != 1.0:
@@ -970,7 +983,8 @@ def train_bayes(
                 print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  val={val_loss:.4f}  "
                     f"S_train={mcmc_sample_train} S_val={mcmc_sample_val} lr={lrs}"
                     f"σ̄={float(VI.sigma.mean()):.4f}  "
-                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}")
+                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}"
+                    f"mean param={VI.mu.abs()}")
             else:
                 print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  "
                     f"S_train={mcmc_sample_train} lr={lrs}"
