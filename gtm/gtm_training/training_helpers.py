@@ -5,6 +5,7 @@ import copy
 import os
 import pickle
 import time
+import re
 from functools import reduce
 from typing import Literal, TYPE_CHECKING
 from math import pi, cos
@@ -807,7 +808,7 @@ def train_freq(
 
 @torch.no_grad()
 def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, sample_size, S_val=8, seed=123):
-    #model.eval()
+    
     nn.Module.train(model, False)
     total, nobs = 0.0, 0
     for y in val_loader:
@@ -826,6 +827,21 @@ def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, sample_size, S_val=
         nobs += m
     return total / max(1,nobs)
 
+def _make_key_filter(patterns_include=None, patterns_exclude=None):
+    inc = [re.compile(p) for p in (patterns_include or [])]
+    exc = [re.compile(p) for p in (patterns_exclude or [])]
+    def _keep(k: str) -> bool:
+        if inc and not any(r.search(k) for r in inc):
+            return False
+        if any(r.search(k) for r in exc):
+            return False
+        return True
+    return _keep
+
+def _invgamma_mean(a, b):
+            # mean exists if a>1; fallback otherwise
+                a = float(a)
+                return b / (a - 1.0) if a > 1.0 else b / (a + 1.0)
 
 def train_bayes(
     model: "GTM",
@@ -852,9 +868,8 @@ def train_bayes(
     sched_cooldown: int = 1,
     sched_min_lr: float = 1e-6,
 ):
-    import time, torch
+    
     was_training = model.training
-    #model.eval()
     nn.Module.train(model, False)   # put modules in eval mode
     
     N_total = len(train_dataloader.dataset)
@@ -866,7 +881,27 @@ def train_bayes(
         hyper_T = hyperparameters.get("transformation", {})
         hyper_D = hyperparameters.get("decorrelation", {})
 
-    VI = VI_Model(model=model).to(model.device)
+    pen_term2 = hyper_T.get('RW2', {})
+    if pen_term2 is not None:
+        a_lambda = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
+        b_lambda = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
+        #hyper_T["nullspace_dim"] = torch.as_tensor(_invgamma_mean(a_lambda, b_lambda),   device=model.device)
+        hyper_T["tau"] = torch.as_tensor(_invgamma_mean(a_lambda, b_lambda),   device=model.device)
+    else:
+        #hyper_T["nullspace_dim"] = 2 ## Default
+        hyper_T["tau"] = 2
+    
+    # --------------------------
+    # VI over transformation-layer params only
+    # Adjust patterns if your naming differs; print(model.state_dict().keys()) to check.
+    # Keep: transformation-related weights; Drop: decorrelation, batchnorm stats, optim buffers.
+    
+    key_filter = _make_key_filter(
+        patterns_include=[r"transformation", r"transform", r"spline"],  # keep only these
+        patterns_exclude=[r"decor", r"rho_", r"optimizer", r"running_", r"num_batches_tracked"],
+    )
+
+    VI = VI_Model(model=model, device = model.device, key_filter=key_filter).to(model.device)
 
     # optimizer (optionally faster LR for rho)
     if rho_lr_multiplier != 1.0:
@@ -888,11 +923,19 @@ def train_bayes(
     no_improve = 0
 
     loss_history, val_history = [], []
+    nlp_history, ndp_history, ntp_history = [], [], []
+    
+    # --------------------------
+    # Empirical Bayes accumulators for tau_4
+    # For intrinsic RW2 prior, nullspace dimension = 2 (default). Override via hyper_T["nullspace_dim"].
+    
+    nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
+    dim_T = VI.mu.numel()
+    eb_rank_T = max(dim_T - nullspace_dim_T, 1)  # pseudo-rank
+    eb_den_E_quad = 0.0 # accumulates E_q[θᵀKθ] estimate via 2 * E[ntp / tau4]
+    eb_count = 0
+    
     start = time.time()
-
-    nlp_history=[]
-    ndp_history = []
-    ntp_history=[]
     
     for epoch in tqdm(range(iterations)):
         # --- MC ramp for TRAIN only (validation stays fixed) ---
@@ -908,13 +951,19 @@ def train_bayes(
             opt.zero_grad(set_to_none=True)
             out = VI.step(
                 samples=y,
-                hyperparameter_transformation=hyper_T,
+                hyperparameter_transformation=hyper_T['tau'],
                 hyperparameter_decorrelation=hyper_D,
                 sample_size=N_total,
                 model=model,
                 mcmc_samples=mcmc_sample_train,
                 seed=global_seed + epoch * 10_000 + b,  # different per step
             )
+            
+            tau4_curr = float(hyper_T.get("tau", 1.0))
+            if tau4_curr > 0:
+                eb_den_E_quad += 2.0 * (float(out['neg_prior_transformation']) / tau4_curr)
+                eb_count += 1
+                    
             loss = out["loss"]
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite loss @ epoch {epoch}, batch {b}: {loss.item()}")
@@ -943,8 +992,14 @@ def train_bayes(
         # --- VALIDATION with fixed seed & fixed S ---
         if validate_dataloader is not None:
             val_loss = _evaluate_epoch(
-                VI, model, validate_dataloader,
-                hyper_T, hyper_D, S_val=mcmc_sample_val, seed=global_seed + 12345, sample_size=N_total
+                VI, 
+                model, 
+                validate_dataloader,
+                hyper_T['tau'],
+                hyper_D,
+                S_val=mcmc_sample_val, 
+                seed=global_seed + 12345,
+                sample_size=N_total
             )
             val_history.append(val_loss)
             metric = val_loss
@@ -964,19 +1019,41 @@ def train_bayes(
         else:
             no_improve += 1
 
+        # -------- Empirical Bayes update for tau_4 (once per epoch) --------
+        if eb_count > 0:
+            E_quad = eb_den_E_quad / eb_count
+            if E_quad > 0.0:
+                tau4_new = eb_rank_T / E_quad
+                # clamp for stability
+                tau4_new = float(min(max(tau4_new, 1e-8), 1e8))
+                # write back into hyper_T dict and model.hyperparameter
+                hyper_T["tau"] = tau4_new
+                if hasattr(model, "hyperparameter") and isinstance(model.hyperparameter, dict):
+                    model.hyperparameter.setdefault("transformation", {})
+                    model.hyperparameter["transformation"]["tau"] = tau4_new
+            # reset accumulators for next epoch
+            eb_den_E_quad, eb_count = 0.0, 0
+        
+        ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ######
         if verbose:
+            
+            tau4_str = f"  tau4={hyper_T['tau']:.4g}" if hyper_T['tau'] is not None else ""
             lrs = [pg["lr"] for pg in opt.param_groups]
+            
             if val_loss is not None:
                 print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  val={val_loss:.4f}  "
                     f"S_train={mcmc_sample_train} S_val={mcmc_sample_val} lr={lrs}"
                     f"σ̄={float(VI.sigma.mean()):.4f}  "
-                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}")
+                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}"
+                    f"parameters={VI.mu}{tau4_str}")
             else:
                 print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  "
                     f"S_train={mcmc_sample_train} lr={lrs}"
                     f"σ̄={float(VI.sigma.mean()):.4f}  "
-                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}")
+                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}{tau4_str}")
 
+        ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ######
+        
         if validate_dataloader is not None and no_improve >= patience_val:
             if verbose:
                 print(f"Early stop @ epoch {epoch+1}: no val improvement for {patience_val} epochs.")

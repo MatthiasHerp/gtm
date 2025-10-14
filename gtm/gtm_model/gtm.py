@@ -988,7 +988,7 @@ class GTM(nn.Module):
         
         objective_type:Literal['negloglik'] = "negloglik"
         
-        verbose:bool = False
+        verbose:bool = True
         
         # ema_decay: float | bool = False, used to have ema_decay in training
 
