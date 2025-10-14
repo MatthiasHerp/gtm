@@ -61,11 +61,12 @@ class bayesian_splines:
         K = 0.5 * (K + K.T)
         K_pinv = bayesian_splines._pseudo_inverse_from_eigh(K)
         
-        #print(gamma)
-        #print(gamma.shape)
+        print(gamma)
+        print(gamma.shape)
         gamma = gamma.T.contiguous()
         
-        #print(gamma.shape)
+        print(gamma)
+        print(gamma.shape)
         dgamma = gamma[..., 1:] - gamma[..., :-1]
         safe_dgamma = dgamma + eps
         
@@ -118,11 +119,12 @@ class bayesian_splines:
         hyperparameter,
         is_transformation = False
         ):
-        
         def _invgamma_mean(a, b):
             # mean exists if a>1; fallback otherwise
                 a = float(a)
                 return b / (a - 1.0) if a > 1.0 else b / (a + 1.0)
+        def _gamma_mean(a, b):  # shape a, rate b
+                return float(a) / float(b)
         
         sub_model = model.transformation if is_transformation else model.decorrelation_layers
         
@@ -151,8 +153,8 @@ class bayesian_splines:
             a_sigma = torch.as_tensor(hyperparameter['sigma_a'], device=model.device, dtype=torch.float32)
             b_sigma = torch.as_tensor(hyperparameter['sigma_b'], device=model.device, dtype=torch.float32)
             
-            kappa_hat_1   = torch.as_tensor(_invgamma_mean(a_kappa_1, b_kappa_1),   device=model.device)
-            kappa_hat_2   = torch.as_tensor(_invgamma_mean(a_kappa_2, b_kappa_2),   device=model.device)
+            kappa_hat_1   = torch.as_tensor(_gamma_mean(a_kappa_1, b_kappa_1),   device=model.device)
+            kappa_hat_2   = torch.as_tensor(_gamma_mean(a_kappa_2, b_kappa_2),   device=model.device)
             
             sigma_hat = torch.as_tensor(_invgamma_mean(a_sigma, b_sigma),   device=model.device)
             
@@ -184,14 +186,14 @@ class bayesian_splines:
             a_lambda = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
             b_lambda = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
             
-            tau_hat   = torch.as_tensor(_invgamma_mean(a_lambda, b_lambda),   device=model.device)
+            tau_hat   = torch.distributions.Uniform(0,100000).sample().to(sub_model.device)##torch.as_tensor(_gamma_mean(a_lambda, b_lambda),   device=model.device)
             
             K_Prior_RW2 = sub_model.priors.K_prior_RW2.to(sub_model.device)
             
             K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
             
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
-            
+            varphi = sub_model.padded_params
             varphi = sub_model.padded_params.to(sub_model.device)
             
             theta_T = bayesian_splines._restrict_parameters_(
@@ -224,18 +226,22 @@ class bayesian_splines:
         
         if not monotonically_increasing:
             return params_a.clone()
+
         #Prepropressing
         a =params_a.T
-        
+       
         # Param Restriction
         params_restricted: Tensor = a.clone()  # [B, K]
         B, K = params_restricted.shape
-        #params_restricted[:, 1:] = softplus(params_restricted[:, 1:]) if use_softplus else torch.exp(params_restricted[:, 1:])
-        params_restricted[:, 1:] = torch.exp(params_restricted[:, 1:])
+        params_restricted[:, 1:] = softplus(params_restricted[:, 1:]) if use_softplus else torch.exp(params_restricted[:, 1:])
+        #params_restricted[:, 1:] = torch.exp(params_restricted[:, 1:])
         params_restricted = params_restricted.to(device)
         
+                
         # Create upper triangular summing matrix: [K, K]
         sum_matrix: Tensor = torch.triu(input=torch.ones(K, K, device=device))  # [K, K]
+        
+        print(params_restricted.device, sum_matrix.device)
         
         # Apply cumulative sum: [B, K] x [K, K]ᵗ = [B, K]
         params_restricted: Tensor = torch.matmul(input=params_restricted, other=sum_matrix)
