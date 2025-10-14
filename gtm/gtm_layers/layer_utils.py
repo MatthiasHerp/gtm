@@ -61,12 +61,8 @@ class bayesian_splines:
         K = 0.5 * (K + K.T)
         K_pinv = bayesian_splines._pseudo_inverse_from_eigh(K)
         
-        print(gamma)
-        print(gamma.shape)
         gamma = gamma.T.contiguous()
         
-        print(gamma)
-        print(gamma.shape)
         dgamma = gamma[..., 1:] - gamma[..., :-1]
         safe_dgamma = dgamma + eps
         
@@ -80,9 +76,15 @@ class bayesian_splines:
         # Jacobian term: -sum log(Δγ_k) per batch
         log_jac = -torch.sum(torch.log(safe_dgamma), dim=-1).reshape(-1)    #[B]
         
-        out = -(0.5/tau2)*qf + log_jac
+        out = (0.5*tau2)*qf + log_jac
         
-        return out.sum() # drop batch if input was 1D
+        return {
+            "neg_log_prior_total" : out.sum(),
+            "neg_log_prior_qf" : (0.5*tau2)*qf,
+            "neg_log_prior_jac": log_jac,
+            "qf_sum": ((0.5*tau2)*qf).sum()
+            
+            } # drop batch if input was 1D
 
     @staticmethod
     def log_prior_gamma_ridge(
@@ -182,11 +184,11 @@ class bayesian_splines:
             # smoothing (λ4 in the paper). :contentReference[oaicite:1]{index=1}
             
             # Penalization Term
-            pen_term2 = hyperparameter.get('RW2', {})
-            a_lambda = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
-            b_lambda = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
+            #pen_term2 = hyperparameter.get('RW2', {})
+            #a_lambda = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
+            #b_lambda = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
             
-            tau_hat   = torch.distributions.Uniform(0,100000).sample().to(sub_model.device)##torch.as_tensor(_gamma_mean(a_lambda, b_lambda),   device=model.device)
+            tau_hat   = hyperparameter#torch.as_tensor(_invgamma_mean(a_lambda, b_lambda),   device=model.device)
             
             K_Prior_RW2 = sub_model.priors.K_prior_RW2.to(sub_model.device)
             
@@ -206,8 +208,6 @@ class bayesian_splines:
             #theta_T = (torch.vstack([
             #    torch.nn.functional.pad(p, (0, K_Prior_RW2.shape[0] - p.numel()))
             #    for p in sub_model.padded_params]).T).to(sub_model.device)
-            
-            
             
             total_logp = (
                 bayesian_splines.log_mvn_zero_mean_prec_ck(theta_T, K_Prior_RW2, tau_hat)
@@ -240,8 +240,6 @@ class bayesian_splines:
                 
         # Create upper triangular summing matrix: [K, K]
         sum_matrix: Tensor = torch.triu(input=torch.ones(K, K, device=device))  # [K, K]
-        
-        print(params_restricted.device, sum_matrix.device)
         
         # Apply cumulative sum: [B, K] x [K, K]ᵗ = [B, K]
         params_restricted: Tensor = torch.matmul(input=params_restricted, other=sum_matrix)

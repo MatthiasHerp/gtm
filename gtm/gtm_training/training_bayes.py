@@ -1,7 +1,6 @@
 ### BAYESIAN APPROACH
 import torch
 import math
-
 from torch.distributions import Normal
 from torch import nn, Tensor
 from typing import TYPE_CHECKING
@@ -14,14 +13,16 @@ if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
 
 
-def _flatten_state_dict(sd):
+def _flatten_state_dict(sd, key_filter= None):
     """Flatten a (detached) state_dict with only tensor leaves into a single vector
-    and keep a schema to reconstruct the dict later."""
+    and keep a schema to reconstruct the dict later. Optionally filter by key."""
     keys = []
     shapes = []
     flats = []
     for k, v in sd.items():
         if not torch.is_tensor(v):
+            continue
+        if key_filter is not None and not key_filter(k):
             continue
         keys.append(k)
         shapes.append(v.shape)
@@ -48,6 +49,7 @@ class VI_Model(nn.Module):
         model: "GTM",
         init_scale: float = 0.05,
         learn_scale: bool = True,
+        key_filter= None,
         device: torch.device | str = "cpu",
         ):
         
@@ -60,13 +62,17 @@ class VI_Model(nn.Module):
         # Snapshot an initial state dict to define θ's dimension and schema.
         with torch.no_grad():
             base_sd = {k: v.detach().to(self.device) for k, v in model.state_dict().items() if torch.is_tensor(v)}
-            theta0, self._schema = _flatten_state_dict(base_sd)
+            theta0, self._schema = _flatten_state_dict(base_sd, key_filter=key_filter)
 
         D = theta0.numel()
-
+        
+        if D == 0:
+            raise RuntimeError("Key filter selected zero parameters; check your include/exclude patterns.")
+                
         # Variational parameters: μ and ρ with σ = softplus(ρ)
         self.mu = nn.Parameter(theta0.clone())
         self.rho = nn.Parameter(torch.full((D,), math.log(math.exp(init_scale) - 1.0)))
+        
         self.learn_scale = learn_scale
         if not learn_scale:
             self.rho.requires_grad_(False)
@@ -121,7 +127,7 @@ class VI_Model(nn.Module):
         sample_size,
         mcmc_samples: int = 100,
         seed: int | None = None,
-    ) :
+    ):
         """
         One stochastic-ELBO step (no optimizer step).
         Returns dict with 'loss' and components for logging.
@@ -140,8 +146,6 @@ class VI_Model(nn.Module):
         
         for s in range(mcmc_samples):
             theta_s = thetas[s]
-            # Push θ into model
-            #self.set_model_params(theta_s)
             params_s = self._theta_to_state_dict(theta_s)  # tensors keep graph to (mu, rho)
 
             with _reparametrize_module(self.model, params_s):
@@ -167,7 +171,7 @@ class VI_Model(nn.Module):
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
         # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
         # (Note: additive constant log p(y) cancels in optimization)
-        loss = torch.mean(log_q_vals - log_p_tilde_vals) #ELBO
+        loss = torch.mean(log_q_vals - log_p_tilde_vals) #-ELBO (i.e., E_q[log q - log p̃])
 
         
         neg_likelihood_list= torch.stack(neg_likelihood_list)
