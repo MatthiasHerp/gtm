@@ -169,7 +169,7 @@ def unnormalized_posterior_computation(
     
     sample_size = torch.as_tensor(sample_size, device=model.device, dtype=nll.dtype)
     
-    neg_log_post= nll + (ntp + ndp)/sample_size # log \tilde p(θ, y) = - (NLL + priors)
+    neg_log_post= nll + (ntp['neg_log_prior_total'] + ndp)/sample_size # log \tilde p(θ, y) = - (NLL + priors)
     
     #print(f"Negative LogLike: {nll.item()}, \nnegative Transformation Prior: {ntp.item()}, \nnegative Decorrelation Prior: {ndp.item()}, \nweigthed negative LogPost: {neg_log_post.item()}")
     
