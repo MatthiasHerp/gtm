@@ -76,15 +76,22 @@ class bayesian_splines:
         # Jacobian term: -sum log(Δγ_k) per batch
         log_jac = -torch.sum(torch.log(safe_dgamma), dim=-1).reshape(-1)    #[B]
         
-        out = (0.5*tau2)*qf + log_jac
+        neg_log_prior_qf  = 0.5 * tau2 * qf  # depends on tau
+        neg_log_prior_jac = -1*log_jac          # independent of tau
+        
+        #nlp = (neg_log_prior_qf + neg_log_prior_jac).sum()
+        
+        out = (
+            neg_log_prior_qf    #(0.5 * tau2 * qf)   dependent on tau
+            + neg_log_prior_jac  # log_jac independent on tau
+            ).sum()        
         
         return {
-            "neg_log_prior_total" : out.sum(),
-            "neg_log_prior_qf" : (0.5*tau2)*qf,
-            "neg_log_prior_jac": log_jac,
-            "qf_sum": ((0.5*tau2)*qf).sum()
-            
-            } # drop batch if input was 1D
+            "neg_log_prior_total" : out,
+            "neg_log_prior_qf" : neg_log_prior_qf.sum(), #Important for Sanity Check
+            "neg_log_prior_jac": neg_log_prior_jac.sum(),
+            "qf_sum": qf.sum()
+            } 
 
     @staticmethod
     def log_prior_gamma_ridge(
@@ -214,7 +221,7 @@ class bayesian_splines:
                 )
             
         # NEGATIVE log prior to add onto NLL in your objective    
-        return -1*total_logp
+        return total_logp
     
     @staticmethod
     def _restrict_parameters_(

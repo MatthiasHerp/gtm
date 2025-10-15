@@ -143,6 +143,7 @@ class VI_Model(nn.Module):
         neg_likelihood_list = []
         prior_dec_list = []
         prior_trans_list = []
+        qf_neg_prior_list = []
         
         for s in range(mcmc_samples):
             theta_s = thetas[s]
@@ -166,7 +167,8 @@ class VI_Model(nn.Module):
             #Tracking
             neg_likelihood_list.append(out['negative_log_lik'].reshape(()))
             prior_dec_list.append(out['negative_decorrelation_prior'].reshape(()))
-            prior_trans_list.append(out['negative_transformation_prior'].reshape(()))
+            prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
+            qf_neg_prior_list.append(out['negative_transformation_prior']['neg_log_prior_qf'].reshape(()))
 
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
         # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
@@ -177,6 +179,7 @@ class VI_Model(nn.Module):
         neg_likelihood_list= torch.stack(neg_likelihood_list)
         prior_dec_list = torch.stack(prior_dec_list)
         prior_trans_list = torch.stack(prior_trans_list)
+        qf_neg_prior_list = torch.stack(qf_neg_prior_list)
         
         return {
             "loss": loss,
@@ -188,4 +191,5 @@ class VI_Model(nn.Module):
             "neg_log_likelihood": torch.mean(neg_likelihood_list).detach(),
             "neg_prior_decorrelation": torch.mean(prior_dec_list).detach(),
             "neg_prior_transformation": torch.mean(prior_trans_list).detach(),
+            "transformation_neg_log_prior_df": torch.mean(qf_neg_prior_list).detach()  #= E[0.5 τ qf]
         }

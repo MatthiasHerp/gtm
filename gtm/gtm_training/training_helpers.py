@@ -8,7 +8,7 @@ import time
 import re
 from functools import reduce
 from typing import Literal, TYPE_CHECKING
-from math import pi, cos
+from math import pi, cos, isnan
 # import warnings
 # from torch import nn
 import numpy as np
@@ -24,6 +24,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from gtm.gtm_training.training_bayes import VI_Model
+from gtm.gtm_layers.layer_utils import bayesian_splines
 
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
@@ -843,6 +844,9 @@ def _invgamma_mean(a, b):
                 a = float(a)
                 return b / (a - 1.0) if a > 1.0 else b / (a + 1.0)
 
+def _gamma_mean(a, b):  # shape a, rate b
+                return float(a) / max(float(b),1e-12)
+
 def train_bayes(
     model: "GTM",
     train_dataloader,
@@ -882,14 +886,31 @@ def train_bayes(
         hyper_D = hyperparameters.get("decorrelation", {})
 
     pen_term2 = hyper_T.get('RW2', {})
+    
     if pen_term2 is not None:
-        a_lambda = torch.as_tensor(pen_term2['tau_a'], device=model.device, dtype=torch.float32)
-        b_lambda = torch.as_tensor(pen_term2['tau_b'], device=model.device, dtype=torch.float32)
-        #hyper_T["nullspace_dim"] = torch.as_tensor(_invgamma_mean(a_lambda, b_lambda),   device=model.device)
-        hyper_T["tau"] = torch.as_tensor(_invgamma_mean(a_lambda, b_lambda),   device=model.device)
+        a_lambda = torch.as_tensor(pen_term2.get('tau_a',1.1), device=model.device, dtype=torch.float32)
+        b_lambda = torch.as_tensor(pen_term2.get('tau_b', 1e-6), device=model.device, dtype=torch.float32)
+        hyper_T["tau"] = torch.as_tensor(pen_term2.get("tau_init", _gamma_mean(a_lambda, b_lambda)),   device=model.device) ### _gamma_mean(a_lambda, b_lambda)
     else:
-        #hyper_T["nullspace_dim"] = 2 ## Default
-        hyper_T["tau"] = 2
+        a_lambda, b_lambda= 1.1, 1e-6
+        hyper_T.setdefault("tau", _gamma_mean(a_lambda, b_lambda))
+    
+    hyper_T.setdefault("tau_a", a_lambda)
+    hyper_T.setdefault("tau_b", b_lambda)
+    
+    eta = float(hyper_T.get("tau_update_eta", 1.0))          # optional damping (0<η≤1)
+    update_every = int(hyper_T.get("tau_update_every", 1))   # update cadence
+    
+    with torch.no_grad():
+        K_rw2 = model.transformation.priors.K_prior_RW2.to(model.device)
+        # build theta_T once to read its column count M
+        varphi = model.transformation.padded_params.to(model.device)
+        theta_T = bayesian_splines._restrict_parameters_(
+            params_a=varphi,
+            monotonically_increasing=model.transformation.monotonically_increasing,
+            device=model.device
+        )
+        M = int(theta_T.shape[1])  # number of monotone splines
     
     # --------------------------
     # VI over transformation-layer params only
@@ -930,9 +951,15 @@ def train_bayes(
     # For intrinsic RW2 prior, nullspace dimension = 2 (default). Override via hyper_T["nullspace_dim"].
     
     nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
-    dim_T = VI.mu.numel()
-    eb_rank_T = max(dim_T - nullspace_dim_T, 1)  # pseudo-rank
-    eb_den_E_quad = 0.0 # accumulates E_q[θᵀKθ] estimate via 2 * E[ntp / tau4]
+    #dim_T = VI.mu.numel()
+    Krw2 = model.transformation.priors.K_prior_RW2.to(model.device)
+    
+    dim_T = Krw2.shape[0]
+    #dim_T = VI.mu.numel()
+    
+    rank_T = dim_T - nullspace_dim_T
+    eb_rank_T = max(int(rank_T),1)  # pseudo-rank
+    eb_E_qf_num = 0.0 # accumulates E_q[θᵀKθ] estimate via 2 * E[ntp / tau4]
     eb_count = 0
     
     start = time.time()
@@ -960,8 +987,9 @@ def train_bayes(
             )
             
             tau4_curr = float(hyper_T.get("tau", 1.0))
+            # neg_prior_qf = 0.5 * tau * qf  =>  qf = 2 * neg_prior_qf / tau
             if tau4_curr > 0:
-                eb_den_E_quad += 2.0 * (float(out['neg_prior_transformation']) / tau4_curr)
+                eb_E_qf_num += 2.0 * (float(out['transformation_neg_log_prior_df']) / tau4_curr)
                 eb_count += 1
                     
             loss = out["loss"]
@@ -1020,44 +1048,62 @@ def train_bayes(
             no_improve += 1
 
         # -------- Empirical Bayes update for tau_4 (once per epoch) --------
-        if eb_count > 0:
-            E_quad = eb_den_E_quad / eb_count
-            if E_quad > 0.0:
-                tau4_new = eb_rank_T / E_quad
-                # clamp for stability
-                tau4_new = float(min(max(tau4_new, 1e-8), 1e8))
-                # write back into hyper_T dict and model.hyperparameter
-                hyper_T["tau"] = tau4_new
-                if hasattr(model, "hyperparameter") and isinstance(model.hyperparameter, dict):
-                    model.hyperparameter.setdefault("transformation", {})
-                    model.hyperparameter["transformation"]["tau"] = tau4_new
-            # reset accumulators for next epoch
-            eb_den_E_quad, eb_count = 0.0, 0
         
+        if (epoch + 1) % max(update_every, 1) == 0 and eb_count > 0:
+            E_qf = eb_E_qf_num / eb_count
+            E_qf = max(E_qf, 1e-12)  # numeric safety
+            E_qf_last = E_qf
+
+            a0 = float(hyper_T.get("tau_a", 1.1))
+            b0 = float(hyper_T.get("tau_b", 1e-6))
+            
+            
+            # rank from RW2 structure: r = rank(K) = dim - 2 (intrinsic); multiply if J margins
+            K_rw2 = model.transformation.priors.K_prior_RW2.to(model.device)
+            r = max(int(K_rw2.shape[0] - 2), 1) * int(hyper_T.get("rank_mult", 1)) * M
+                    
+            tau_target = (r + 2.0 * a0 - 2.0) / (E_qf + 2.0 * b0)
+
+            # optional damping
+            tau_new = (1.0 - eta) * float(hyper_T["tau"]) + eta * tau_target
+            tau_new = float(min(max(tau_new, 1e-12), 1e8))
+
+            hyper_T["tau"] = tau_new
+            if hasattr(model, "hyperparameter") and isinstance(model.hyperparameter, dict):
+                model.hyperparameter.setdefault("transformation", {})
+                model.hyperparameter["transformation"]["tau"] = tau_new
+
+            # reset accumulators
+            eb_E_qf_num, eb_count = 0.0, 0
+            
         ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ######
         if verbose:
-            
-            tau4_str = f"  tau4={hyper_T['tau']:.4g}" if hyper_T['tau'] is not None else ""
             lrs = [pg["lr"] for pg in opt.param_groups]
+            tau4_str = f"  tau4={hyper_T['tau']:.4g}"
+            tau_old = float(hyper_T["tau"])
+            tau_target = (r + 2.0*a0 - 2.0)/(E_qf + 2.0*b0)
+            tau_new = (1.0 - eta)*tau_old + eta*tau_target
+            info = f"rank={eb_rank_T}  E_qf≈{(E_qf_last if eb_count==0 else eb_E_qf_num/max(eb_count,1)):.3g}"
+            prod = (hyper_T['tau'] * (E_qf_last if not isnan(E_qf_last) else 0.0))
+            
             
             if val_loss is not None:
                 print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  val={val_loss:.4f}  "
-                    f"S_train={mcmc_sample_train} S_val={mcmc_sample_val} lr={lrs}"
-                    f"σ̄={float(VI.sigma.mean()):.4f}  "
-                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}"
-                    f"parameters={VI.mu}{tau4_str}")
+                      f"S_train={mcmc_sample_train} S_val={mcmc_sample_val} lr={lrs} "
+                      f"σ̄={float(VI.sigma.mean()):.4f} σmin={float(VI.sigma.min()):.4f} σmax={float(VI.sigma.max()):.4f} "
+                      f"{tau4_str} {info}  tau*E[qf]≈{prod:.4g}" 
+                      f"Δ={tau_new - tau_old:+.2e}")
             else:
-                print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  "
-                    f"S_train={mcmc_sample_train} lr={lrs}"
-                    f"σ̄={float(VI.sigma.mean()):.4f}  "
-                    f"σmin={float(VI.sigma.min()):.4f}  σmax={float(VI.sigma.max()):.4f}{tau4_str}")
+                print(f"[{epoch+1}/{iterations}] train={train_loss:.4f} S_train={mcmc_sample_train} lr={lrs} "
+                      f"σ̄={float(VI.sigma.mean()):.4f} σmin={float(VI.sigma.min()):.4f} σmax={float(VI.sigma.max()):.4f} "
+                      f"{tau4_str} {info}")
 
         ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ######
         
         if validate_dataloader is not None and no_improve >= patience_val:
             if verbose:
                 print(f"Early stop @ epoch {epoch+1}: no val improvement for {patience_val} epochs.")
-            break
+            #break
 
     # restore best VI params (critical when val diverges)
     with torch.no_grad():
