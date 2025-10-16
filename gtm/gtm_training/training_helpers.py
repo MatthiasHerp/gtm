@@ -876,7 +876,6 @@ def train_bayes(
     was_training = model.training
     nn.Module.train(model, False)   # put modules in eval mode
     
-    N_total = len(train_dataloader.dataset)
     # hyperparams
     if hyperparameters is None:
         hyper_T = model.hyperparameter.get("transformation", {})
@@ -898,19 +897,8 @@ def train_bayes(
     hyper_T.setdefault("tau_a", a_lambda)
     hyper_T.setdefault("tau_b", b_lambda)
     
-    eta = float(hyper_T.get("tau_update_eta", 1.0))          # optional damping (0<η≤1)
+    eta = float(hyper_T.get("tau_update_eta", 0.1))          # optional damping (0<η≤1)
     update_every = int(hyper_T.get("tau_update_every", 1))   # update cadence
-    
-    with torch.no_grad():
-        K_rw2 = model.transformation.priors.K_prior_RW2.to(model.device)
-        # build theta_T once to read its column count M
-        varphi = model.transformation.padded_params.to(model.device)
-        theta_T = bayesian_splines._restrict_parameters_(
-            params_a=varphi,
-            monotonically_increasing=model.transformation.monotonically_increasing,
-            device=model.device
-        )
-        M = int(theta_T.shape[1])  # number of monotone splines
     
     # --------------------------
     # VI over transformation-layer params only
@@ -958,7 +946,7 @@ def train_bayes(
     #dim_T = VI.mu.numel()
     
     rank_T = dim_T - nullspace_dim_T
-    eb_rank_T = max(int(rank_T),1)  # pseudo-rank
+    eb_rank_T = max(int(rank_T),1) * int(model.number_variables) # pseudo-rank
     eb_E_qf_num = 0.0 # accumulates E_q[θᵀKθ] estimate via 2 * E[ntp / tau4]
     eb_count = 0
     
@@ -972,6 +960,8 @@ def train_bayes(
         running, n_batches = 0.0, 0
         nlp,ndp,ntp = 0.0,0.0,0.0
         for b, y in enumerate(train_dataloader):
+            
+            B = y.shape[0]
             if max_batches_per_iter and b >= max_batches_per_iter:
                 break
             y = y.to(model.device)
@@ -980,18 +970,19 @@ def train_bayes(
                 samples=y,
                 hyperparameter_transformation=hyper_T['tau'],
                 hyperparameter_decorrelation=hyper_D,
-                sample_size=N_total,
+                sample_size=B,#N_total,
                 model=model,
                 mcmc_samples=mcmc_sample_train,
                 seed=global_seed + epoch * 10_000 + b,  # different per step
             )
             
-            tau4_curr = float(hyper_T.get("tau", 1.0))
-            # neg_prior_qf = 0.5 * tau * qf  =>  qf = 2 * neg_prior_qf / tau
-            if tau4_curr > 0:
-                eb_E_qf_num += 2.0 * (float(out['transformation_neg_log_prior_df']) / tau4_curr)
-                eb_count += 1
-                    
+            # If VI.step already summed over the S samples, divide by S; 
+            # If it already averaged over S, skip this divide. (From your code it looks summed.)
+            qf_sum_over_batch = 2.0 * float(out['transformation_sum_qf'])
+
+            eb_E_qf_num += qf_sum_over_batch
+            eb_count += 1
+            
             loss = out["loss"]
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite loss @ epoch {epoch}, batch {b}: {loss.item()}")
@@ -1027,7 +1018,7 @@ def train_bayes(
                 hyper_D,
                 S_val=mcmc_sample_val, 
                 seed=global_seed + 12345,
-                sample_size=N_total
+                sample_size=y.shape[0]#N_total
             )
             val_history.append(val_loss)
             metric = val_loss
@@ -1048,30 +1039,31 @@ def train_bayes(
             no_improve += 1
 
         # -------- Empirical Bayes update for tau_4 (once per epoch) --------
-        
+
         if (epoch + 1) % max(update_every, 1) == 0 and eb_count > 0:
-            E_qf = eb_E_qf_num / eb_count
+            tau_old = float(hyper_T["tau"])
+            
+            E_qf = eb_E_qf_num / max(eb_count, 1) 
             E_qf = max(E_qf, 1e-12)  # numeric safety
             E_qf_last = E_qf
 
             a0 = float(hyper_T.get("tau_a", 1.1))
             b0 = float(hyper_T.get("tau_b", 1e-6))
-            
-            
-            # rank from RW2 structure: r = rank(K) = dim - 2 (intrinsic); multiply if J margins
-            K_rw2 = model.transformation.priors.K_prior_RW2.to(model.device)
-            r = max(int(K_rw2.shape[0] - 2), 1) * int(hyper_T.get("rank_mult", 1)) * M
-                    
-            tau_target = (r + 2.0 * a0 - 2.0) / (E_qf + 2.0 * b0)
+                
+                
+            # rank(K) per margin = D-2 (RW2); multiply by num variables (margins)
+            K = model.transformation.priors.K_prior_RW2.to(model.device)
+            rank_T = max(int(K.shape[0] - 2), 1) * int(model.number_variables)
 
-            # optional damping
-            tau_new = (1.0 - eta) * float(hyper_T["tau"]) + eta * tau_target
+            tau_target = (rank_T + 2.0*a0 - 2.0) / (E_qf + 2.0*b0)
+
+            #eta = float(hyper_T.get("tau_update_eta", 0.5))    # mild damping recommended
+            tau_new = (1.0 - eta) * float(hyper_T["tau"]) + eta * float(tau_target)
             tau_new = float(min(max(tau_new, 1e-12), 1e8))
 
             hyper_T["tau"] = tau_new
-            if hasattr(model, "hyperparameter") and isinstance(model.hyperparameter, dict):
-                model.hyperparameter.setdefault("transformation", {})
-                model.hyperparameter["transformation"]["tau"] = tau_new
+            model.hyperparameter.setdefault("transformation", {})
+            model.hyperparameter["transformation"]["tau"] = tau_new
 
             # reset accumulators
             eb_E_qf_num, eb_count = 0.0, 0
@@ -1079,10 +1071,7 @@ def train_bayes(
         ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ######
         if verbose:
             lrs = [pg["lr"] for pg in opt.param_groups]
-            tau4_str = f"  tau4={hyper_T['tau']:.4g}"
-            tau_old = float(hyper_T["tau"])
-            tau_target = (r + 2.0*a0 - 2.0)/(E_qf + 2.0*b0)
-            tau_new = (1.0 - eta)*tau_old + eta*tau_target
+            tau4_str = f"  tau4={hyper_T['tau']:.10g}"
             info = f"rank={eb_rank_T}  E_qf≈{(E_qf_last if eb_count==0 else eb_E_qf_num/max(eb_count,1)):.3g}"
             prod = (hyper_T['tau'] * (E_qf_last if not isnan(E_qf_last) else 0.0))
             
@@ -1092,7 +1081,7 @@ def train_bayes(
                       f"S_train={mcmc_sample_train} S_val={mcmc_sample_val} lr={lrs} "
                       f"σ̄={float(VI.sigma.mean()):.4f} σmin={float(VI.sigma.min()):.4f} σmax={float(VI.sigma.max()):.4f} "
                       f"{tau4_str} {info}  tau*E[qf]≈{prod:.4g}" 
-                      f"Δ={tau_new - tau_old:+.2e}")
+                      f"  Δ={tau_new - tau_old:+.2e}")
             else:
                 print(f"[{epoch+1}/{iterations}] train={train_loss:.4f} S_train={mcmc_sample_train} lr={lrs} "
                       f"σ̄={float(VI.sigma.mean()):.4f} σmin={float(VI.sigma.min()):.4f} σmax={float(VI.sigma.max()):.4f} "

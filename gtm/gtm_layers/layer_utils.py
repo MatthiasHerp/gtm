@@ -59,10 +59,7 @@ class bayesian_splines:
         
         # symmetrize
         K = 0.5 * (K + K.T)
-        K_pinv = bayesian_splines._pseudo_inverse_from_eigh(K)
-        
         gamma = gamma.T.contiguous()
-        
         dgamma = gamma[..., 1:] - gamma[..., :-1]
         safe_dgamma = dgamma + eps
         
@@ -72,7 +69,17 @@ class bayesian_splines:
         beta = torch.cat([beta1, beta_tail], dim=-1)# [..., D]
         
         # quadratic form per batch
-        qf = torch.einsum('bi,ij,bj->b', beta, K_pinv, beta)        #[B]
+        #OLD VERSION
+        #K_pinv = bayesian_splines._pseudo_inverse_from_eigh(K)
+        #qf = torch.einsum('bi,ij,bj->b', beta, K_pinv, beta)        #[B]
+        
+        #NEW VERSION WITH 
+        evals, evecs = torch.linalg.eigh(K)
+        mask = evals > 1e-10
+        Q = evecs[:, mask]
+        Lsqrt = (Q * evals[mask].sqrt())      # shape [D, r]
+        qf = torch.sum((beta @ Lsqrt)**2, dim=-1)  # [batch]
+        
         # Jacobian term: -sum log(Δγ_k) per batch
         log_jac = -torch.sum(torch.log(safe_dgamma), dim=-1).reshape(-1)    #[B]
         

@@ -143,7 +143,7 @@ def unnormalized_posterior_computation(
     samples,
     hyperparameter_transformation,
     hyperparameter_decorrelation, 
-    sample_size
+    batch_size
 ):
     
     #Likelihood
@@ -167,11 +167,9 @@ def unnormalized_posterior_computation(
     else:
         ndp = torch.tensor(0.0, device=model.device, dtype=nll.dtype)
     
-    sample_size = torch.as_tensor(sample_size, device=model.device, dtype=nll.dtype)
+    batch_size = torch.as_tensor(batch_size, device=model.device, dtype=nll.dtype)
     
-    neg_log_post= nll + (ntp['neg_log_prior_total'] + ndp)/sample_size # log \tilde p(θ, y) = - (NLL + priors)
-    
-    #print(f"Negative LogLike: {nll.item()}, \nnegative Transformation Prior: {ntp.item()}, \nnegative Decorrelation Prior: {ndp.item()}, \nweigthed negative LogPost: {neg_log_post.item()}")
+    neg_log_post= nll + (ntp['neg_log_prior_total'] + ndp)/batch_size # log \tilde p(θ, y) = - (NLL + priors)
     
     return {
         'neg_posterior':neg_log_post,
@@ -197,5 +195,5 @@ def bayesian_training_objective(
                 samples=samples,
                 hyperparameter_transformation=hyperparameter_transformation,
                 hyperparameter_decorrelation= hyperparameter_decorrelation,
-                sample_size=sample_size
+                batch_size=sample_size
                 )
