@@ -933,17 +933,15 @@ def train_bayes(
 
     loss_history, val_history = [], []
     nlp_history, ndp_history, ntp_history = [], [], []
-    
+    nlpost_history=[]
     # --------------------------
     # Empirical Bayes accumulators for tau_4
     # For intrinsic RW2 prior, nullspace dimension = 2 (default). Override via hyper_T["nullspace_dim"].
     
     nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
-    #dim_T = VI.mu.numel()
     Krw2 = model.transformation.priors.K_prior_RW2.to(model.device)
     
     dim_T = Krw2.shape[0]
-    #dim_T = VI.mu.numel()
     
     rank_T = dim_T - nullspace_dim_T
     eb_rank_T = max(int(rank_T),1) * int(model.number_variables) # pseudo-rank
@@ -958,7 +956,9 @@ def train_bayes(
             mcmc_sample_train = min(mc_ramp_max, max(mcmc_sample_train * 2, 1))
 
         running, n_batches = 0.0, 0
+        #ACCUMULATORS FOR TRACKING
         nlp,ndp,ntp = 0.0,0.0,0.0
+        nlpost = 0.0
         for b, y in enumerate(train_dataloader):
             
             B = y.shape[0]
@@ -994,9 +994,10 @@ def train_bayes(
             running += float(loss.item())
             n_batches += 1
             
-            nlp += out['neg_log_likelihood']
-            ndp += out['neg_prior_decorrelation']
-            ntp += out['neg_prior_transformation']
+            nlpost  += out["neg_log_posterior"]
+            nlp             += out['neg_log_likelihood']
+            ndp             += out['neg_prior_decorrelation']
+            ntp             += out['neg_prior_transformation']
 
         if n_batches == 0:
             raise RuntimeError("No batches processed. Check your dataloader / max_batches_per_iter.")
@@ -1004,9 +1005,10 @@ def train_bayes(
         train_loss = running / n_batches
         
         loss_history.append(train_loss)
-        nlp_history.append(nlp.mean())
-        ndp_history.append(ndp.mean())
-        ntp_history.append(ntp.mean())
+        nlp_history.append(nlp/n_batches)
+        ndp_history.append(ndp/n_batches)
+        ntp_history.append(ntp/n_batches)
+        nlpost_history.append(nlpost/n_batches)
 
         # --- VALIDATION with fixed seed & fixed S ---
         if validate_dataloader is not None:
@@ -1111,9 +1113,10 @@ def train_bayes(
         "best_val": best_val,
         "loss_history": loss_history,
         "val_history": val_history if validate_dataloader is not None else None,
-        "negative_log_posterior": nlp_history,
+        "negative_log_likelihood": nlp_history,
         "negative_log_prior_decorrelation": ndp_history,
         "negative_log_prior_transformation": ntp_history,
+        "neg_log_posterior_bgtm": nlpost_history,
         "mu": VI.mu.detach(),
         "rho": VI.rho.detach(),
         "vi_model": VI,
