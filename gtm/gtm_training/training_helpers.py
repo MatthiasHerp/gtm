@@ -809,24 +809,23 @@ def train_freq(
 
 @torch.no_grad()
 def _evaluate_epoch(VI, model, val_loader, hyper_T, hyper_D, sample_size, S_val=8, seed=123):
-    
     nn.Module.train(model, False)
-    total, nobs = 0.0, 0
+    total_loglik_sum, nobs = 0.0, 0
     for y in val_loader:
         y = y.to(model.device)
-        out = VI.step(
-            samples=y,
+        logsum = VI.predictive_loglik_sum_batch(
+            y_batch=y,
+            model=model,
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
-            model=model,
-            mcmc_samples=S_val,
-            seed=seed,     # keep constant across epochs for comparability
-            sample_size=sample_size
+            sample_size=y.shape[0],     # <<< pass current val batch size
+            S=S_val,
+            seed=seed,
         )
-        m = y.shape[0]
-        total += float(out["loss"].item())*m
-        nobs += m
-    return total / max(1,nobs)
+        total_loglik_sum += logsum    # SUM over batch
+        nobs += y.shape[0]
+    return total_loglik_sum / max(1, nobs)  # per-observation ELPD (higher is better)
+
 
 def _make_key_filter(patterns_include=None, patterns_exclude=None):
     inc = [re.compile(p) for p in (patterns_include or [])]
@@ -912,6 +911,8 @@ def train_bayes(
 
     VI = VI_Model(model=model, device = model.device, key_filter=key_filter).to(model.device)
 
+    print("D =", VI.mu.numel())
+    print("First 30 param keys:", [k for k,_ in VI._schema][:30])
     # optimizer (optionally faster LR for rho)
     if rho_lr_multiplier != 1.0:
         opt = torch.optim.Adam([
@@ -994,10 +995,10 @@ def train_bayes(
             running += float(loss.item())
             n_batches += 1
             
-            nlpost  += out["neg_log_posterior"]
-            nlp             += out['neg_log_likelihood']
-            ndp             += out['neg_prior_decorrelation']
-            ntp             += out['neg_prior_transformation']
+            nlpost          += out["neg_log_posterior"].cpu().numpy()
+            nlp             += out['neg_log_likelihood'].cpu().numpy()
+            ndp             += out['neg_prior_decorrelation'].cpu().numpy()
+            ntp             += out['neg_prior_transformation'].cpu().numpy()
 
         if n_batches == 0:
             raise RuntimeError("No batches processed. Check your dataloader / max_batches_per_iter.")
@@ -1012,7 +1013,7 @@ def train_bayes(
 
         # --- VALIDATION with fixed seed & fixed S ---
         if validate_dataloader is not None:
-            val_loss = _evaluate_epoch(
+            val_elpd = _evaluate_epoch(
                 VI, 
                 model, 
                 validate_dataloader,
@@ -1022,8 +1023,8 @@ def train_bayes(
                 seed=global_seed + 12345,
                 sample_size=y.shape[0]#N_total
             )
-            val_history.append(val_loss)
-            metric = val_loss
+            val_history.append(val_elpd)
+            metric = -val_elpd # minimize negative ELPD
         else:
             val_loss, metric = None, train_loss
 
@@ -1071,6 +1072,19 @@ def train_bayes(
             eb_E_qf_num, eb_count = 0.0, 0
             
         ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ######
+        
+        # Sanity: does NLL change with θ?
+        with torch.no_grad():
+            y = next(iter(validate_dataloader)).to(model.device)
+            base = VI.predictive_loglik_sum_batch(y, model, hyper_T['tau'], hyper_D, sample_size=y.shape[0], S=1)
+            # Nudge μ in-place on a few entries
+            idx = torch.randint(0, VI.mu.numel(), (10,))
+            old = VI.mu[idx].clone()
+            VI.mu[idx] += 0.1
+            moved = VI.predictive_loglik_sum_batch(y, model, hyper_T['tau'], hyper_D, sample_size=y.shape[0], S=1)
+            VI.mu[idx] = old
+            print("ELPD change after μ-nudge:", moved - base)
+        
         if verbose:
             lrs = [pg["lr"] for pg in opt.param_groups]
             tau4_str = f"  tau4={hyper_T['tau']:.10g}"
@@ -1078,8 +1092,8 @@ def train_bayes(
             prod = (hyper_T['tau'] * (E_qf_last if not isnan(E_qf_last) else 0.0))
             
             
-            if val_loss is not None:
-                print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  val={val_loss:.4f}  "
+            if val_elpd is not None:
+                print(f"[{epoch+1}/{iterations}] train={train_loss:.4f}  val_ELPD={val_elpd:.4f}  "
                       f"S_train={mcmc_sample_train} S_val={mcmc_sample_val} lr={lrs} "
                       f"σ̄={float(VI.sigma.mean()):.4f} σmin={float(VI.sigma.min()):.4f} σmax={float(VI.sigma.max()):.4f} "
                       f"{tau4_str} {info}  tau*E[qf]≈{prod:.4g}" 
@@ -1094,7 +1108,7 @@ def train_bayes(
         if validate_dataloader is not None and no_improve >= patience_val:
             if verbose:
                 print(f"Early stop @ epoch {epoch+1}: no val improvement for {patience_val} epochs.")
-            #break
+            break
 
     # restore best VI params (critical when val diverges)
     with torch.no_grad():

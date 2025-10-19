@@ -12,6 +12,10 @@ from gtm.gtm_model import gtm
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
 
+def _logmeanexp(x: torch.Tensor, dim: int = 0) -> torch.Tensor:
+    """Stable log-mean-exp along dim."""
+    m, _ = torch.max(x, dim=dim, keepdim=True)
+    return m.squeeze(dim) + torch.log(torch.mean(torch.exp(x - m), dim=dim))
 
 def _flatten_state_dict(sd, key_filter= None):
     """Flatten a (detached) state_dict with only tensor leaves into a single vector
@@ -201,3 +205,39 @@ class VI_Model(nn.Module):
             "transformation_neg_log_prior_df": torch.mean(qf_neg_prior_list).detach(),  #= E[0.5 τ qf]
             "transformation_sum_qf": torch.mean(qf_sum_list).detach()#qf
         }
+        
+    RETURNS_MEAN_NLL = True  # <— set this once according to your objective
+
+    @torch.no_grad()
+    def predictive_loglik_sum_batch(
+        self,
+        y_batch: torch.Tensor,
+        model: "GTM",
+        hyperparameter_transformation,
+        hyperparameter_decorrelation,
+        sample_size: int,
+        S: int = 8,
+        RETURNS_MEAN_NLL = True,  # <— set this once according to your objective
+        seed: int | None = None,
+    ) -> float:
+        if seed is not None:
+            torch.manual_seed(seed)
+
+        thetas = self.sample_theta(S)  # [S, D]
+        ll_list = []
+        for s in range(S):
+            theta_s = thetas[s]
+            params_s = self._theta_to_state_dict(theta_s)
+            with _reparametrize_module(model, params_s):
+                out = model.__bayesian_training_objective__(
+                    samples=y_batch,
+                    hyperparameters_transformation=hyperparameter_transformation,
+                    hyperparameters_decorrelation=hyperparameter_decorrelation,
+                    sample_size=sample_size,
+                )
+                nll = out["negative_log_lik"].reshape(())
+                if RETURNS_MEAN_NLL:               # <<< guard
+                    nll = nll * y_batch.shape[0]   # convert to SUM over batch
+                ll_list.append(-nll)               # <<< THE MISSING MINUS
+        ll = torch.stack(ll_list)                  # [S], each is SUM log-lik for the batch
+        return float(_logmeanexp(ll, dim=0))       # SUM log predictive for the batch
