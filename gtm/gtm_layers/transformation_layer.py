@@ -307,7 +307,7 @@ class Transformation(nn.Module):
             self.params[var_num].unsqueeze(1)
             if inverse == False
             else self.params_inverse[var_num].unsqueeze(1)
-        )
+        ).to(self.device)
 
         params = restrict_parameters(
             params,  # .contiguous().unsqueeze(1),
