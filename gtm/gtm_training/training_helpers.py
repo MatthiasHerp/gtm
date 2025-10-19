@@ -979,7 +979,7 @@ def train_bayes(
             
             # If VI.step already summed over the S samples, divide by S; 
             # If it already averaged over S, skip this divide. (From your code it looks summed.)
-            qf_sum_over_batch = 2.0 * float(out['transformation_sum_qf'])
+            qf_sum_over_batch = float(out['transformation_sum_qf'])
 
             eb_E_qf_num += qf_sum_over_batch
             eb_count += 1
@@ -1056,9 +1056,10 @@ def train_bayes(
                 
             # rank(K) per margin = D-2 (RW2); multiply by num variables (margins)
             K = model.transformation.priors.K_prior_RW2.to(model.device)
-            rank_T = max(int(K.shape[0] - 2), 1) * int(model.number_variables)
+            rank_per_margin = torch.linalg.matrix_rank(K)
+            rank_T = int(rank_per_margin) * int(model.number_variables)
 
-            tau_target = (rank_T + 2.0*a0 - 2.0) / (E_qf + 2.0*b0)
+            tau_target = (rank_T + 0.5*a0) / (E_qf + 0.5*b0)
 
             #eta = float(hyper_T.get("tau_update_eta", 0.5))    # mild damping recommended
             tau_new = (1.0 - eta) * float(hyper_T["tau"]) + eta * float(tau_target)

@@ -149,7 +149,7 @@ def unnormalized_posterior_computation(
     #Likelihood
     return_dict_model_loss: Tensor = model.__log_likelihood_loss__(y=samples)
     nll: Tensor = return_dict_model_loss.get('negative_log_likelihood_data')
-    nll=nll.mean()
+    nll=nll.sum()
     
     #Prior Transformation
     ntp = bayesian_splines.defining_prior(
