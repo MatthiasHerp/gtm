@@ -2,20 +2,34 @@ from dataclasses import dataclass
 from typing import Mapping, TYPE_CHECKING
 
 import torch
-import numpy as np
+import re
 
 from torch.distributions import InverseGamma, Laplace
 from torch import Tensor
 from torch.nn.functional import softplus
-from torch.linalg import matrix_rank
 
 
 if TYPE_CHECKING:
     from gtm_model.gtm import GTM 
 
+_TRANSFORM_PARAM_RE = re.compile(r"^transformation\.params\.(\d+)$")
+
 def generate_diagonal_matrix(n):
     matrix = torch.eye(n, dtype=torch.float32)  # Create an identity matrix of size n
     return torch.flip(matrix, dims=[0])  # Flip the matrix along the vertical axis
+
+def get_transformation_param_matrix_live(model):
+    name_to_param = dict(model.named_parameters())
+    cols = []
+    for i in range(9999):  # or discover i’s via a regex on names
+        key = f"transformation.params.{i}"
+        if key not in name_to_param: break
+        cols.append(name_to_param[key].reshape(-1))   # 1-D view is fine
+    if not cols:
+        raise RuntimeError("No transformation.params.* found.")
+    varphi = torch.stack(cols, dim=1).contiguous()    # [K, M], contiguous
+    M = varphi.shape[1]
+    return varphi, M
 
 class bayesian_splines:
     @staticmethod
@@ -60,13 +74,13 @@ class bayesian_splines:
         # symmetrize
         K = 0.5 * (K + K.T)
         gamma = gamma.T.contiguous()
-        dgamma = gamma[..., 1:] - gamma[..., :-1]
-        safe_dgamma = dgamma + eps
+        dgamma = gamma[:, 1:] - gamma[:, :-1]
+        safe_dgamma = (dgamma + eps).clamp_min(1e-8)
         
         # β(γ): β1=γ1; βk=log(Δγ_k), k>=2
-        beta1 = gamma[..., :1]                      # [..., 1]
-        beta_tail = torch.log(safe_dgamma)          # [..., D-1]
-        beta = torch.cat([beta1, beta_tail], dim=-1)# [..., D]
+        beta1 = gamma[:, :1].contiguous()                        # [..., 1]
+        beta_tail = torch.log(safe_dgamma)                       # [..., D-1]
+        beta = torch.cat([beta1, beta_tail], dim=-1).contiguous()# [..., D]
         
         # quadratic form per batch
         #OLD VERSION
@@ -76,9 +90,14 @@ class bayesian_splines:
         #NEW VERSION WITH 
         evals, evecs = torch.linalg.eigh(K)
         mask = evals > 1e-10
-        Q = evecs[:, mask]
-        Lsqrt = (Q * evals[mask].sqrt())      # shape [D, r]
-        qf = torch.sum((beta @ Lsqrt)**2, dim=-1)  # [batch]
+        #SAFETY
+        if mask.sum() == 0:
+            raise RuntimeError("RW2 K has no positive eigenvalues with given tol.")
+        
+        Q = evecs[:, mask].contiguous()
+        Lsqrt = (Q * evals[mask].sqrt()).unsqueeze(0)      # shape [D, r]
+        Z=beta @ Lsqrt
+        qf = torch.sum(Z*Z, dim=-1)          # [batch]
         
         # Jacobian term: -sum log(Δγ_k) per batch
         log_jac = -torch.sum(torch.log(safe_dgamma), dim=-1).reshape(-1)    #[B]
@@ -97,7 +116,8 @@ class bayesian_splines:
             "neg_log_prior_total" : out,
             "neg_log_prior_qf" : neg_log_prior_qf.sum(), #Important for Sanity Check
             "neg_log_prior_jac": neg_log_prior_jac.sum(),
-            "qf_sum": qf.sum()
+            "qf_sum": qf.sum(),                             ## sum over margins
+            "qf_mean": qf.mean()                            #mean over margins
             } 
 
     @staticmethod
@@ -209,8 +229,15 @@ class bayesian_splines:
             K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
             
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
-            varphi = sub_model.padded_params
-            varphi = sub_model.padded_params.to(sub_model.device)
+            #varphi = sub_model.padded_params
+            varphi, M = get_transformation_param_matrix_live(model)  # [K, M], live params
+            varphi = varphi.to(sub_model.device)
+            
+            # If you need to pad rows to match K_Prior_RW2 (rare):
+            Kdim = K_Prior_RW2.shape[0]
+            if varphi.shape[0] < Kdim:
+                pad_rows = Kdim - varphi.shape[0]
+                varphi = torch.nn.functional.pad(varphi, (0, 0, 0, pad_rows))
             
             theta_T = bayesian_splines._restrict_parameters_(
                 params_a=varphi,
@@ -239,27 +266,25 @@ class bayesian_splines:
     ):
         
         if not monotonically_increasing:
-            return params_a.clone()
+            # Return a fresh tensor to avoid any aliasing surprises
+            return params_a.contiguous()
 
-        #Prepropressing
-        a =params_a.T
-       
-        # Param Restriction
-        params_restricted: Tensor = a.clone()  # [B, K]
-        B, K = params_restricted.shape
-        params_restricted[:, 1:] = softplus(params_restricted[:, 1:]) if use_softplus else torch.exp(params_restricted[:, 1:])
-        #params_restricted[:, 1:] = torch.exp(params_restricted[:, 1:])
-        params_restricted = params_restricted.to(device)
-        
-                
-        # Create upper triangular summing matrix: [K, K]
-        sum_matrix: Tensor = torch.triu(input=torch.ones(K, K, device=device))  # [K, K]
-        
-        # Apply cumulative sum: [B, K] x [K, K]ᵗ = [B, K]
-        params_restricted: Tensor = torch.matmul(input=params_restricted, other=sum_matrix)
+        # Work in [B, K] = [M, K] by transposing and making contiguous
+        a = params_a.T.contiguous()                                  # [M, K]
 
-        
-        return params_restricted.T
+        head = a[:, :1]                                              # [M, 1]
+        tail = a[:, 1:]                                              # [M, K-1]
+
+        if use_softplus:
+            tail_pos = softplus(tail) + 1e-6                       # [M, K-1]
+        else:
+            tail_pos = torch.exp(tail)
+
+        eps = torch.cat([head, tail_pos], dim=1)                     # [M, K]
+        eps_cum = torch.cumsum(eps, dim=1)                           # [M, K]
+
+        out = eps_cum.T.contiguous()                                 # [K, M]
+        return out
     
 @dataclass(frozen=True)
 class BayesianPriors:

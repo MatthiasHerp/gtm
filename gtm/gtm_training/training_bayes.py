@@ -62,6 +62,7 @@ class VI_Model(nn.Module):
         self.model = model
         self.device = model.device
         
+        self._rng = None  # optional; can be set from outside
         
         # Snapshot an initial state dict to define θ's dimension and schema.
         with torch.no_grad():
@@ -86,14 +87,33 @@ class VI_Model(nn.Module):
             torch.ones(D, device=self.device),
         )
     
+    def set_rng(self, gen: torch.Generator | None):
+        self._rng = gen
+
+    
     @property
     def sigma(self) -> Tensor:
         return 1e-6 + nn.functional.softplus(self.rho) #to avoid softplus near-zero stickiness 1e-6
         
-    def sample_theta(self, num_samples: int = 1) -> Tensor:
+    def sample_theta(self, num_samples: int = 1, antithetic = False) -> Tensor:
         """Reparameterized samples θ = μ + σ ⊙ ε, ε ~ N(0, I). Shape: [S, D]."""
-        eps = self._normal0.sample((num_samples,))
-        return self.mu + self.sigma * eps
+        #eps = self._normal0.sample((num_samples,))
+        #return self.mu + self.sigma * eps
+        gen = self._rng
+        if antithetic and num_samples >= 2:
+            half = num_samples // 2
+            eps = torch.randn((half, self.mu.numel()), device=self.mu.device, generator=gen)
+            thetas = torch.cat([self.mu + self.sigma * eps,
+                                self.mu - self.sigma * eps], dim=0)
+            if thetas.shape[0] < num_samples:
+                # one extra draw if odd
+                extra = torch.randn((1, self.mu.numel()), device=self.mu.device, generator=gen)
+                thetas = torch.cat([thetas, self.mu + self.sigma * extra], dim=0)
+            return thetas
+        else:
+            eps = torch.randn((num_samples, self.mu.numel()), device=self.mu.device, generator=gen)
+            return self.mu + self.sigma * eps
+        
 
     def log_q(self, theta: Tensor) -> Tensor:
         """log q_phi(θ) under mean-field Normal. theta shape [S, D] or [D]. Returns [S]."""
@@ -128,7 +148,7 @@ class VI_Model(nn.Module):
         hyperparameter_transformation,
         hyperparameter_decorrelation,
         model: "GTM",
-        sample_size,
+        sample_size_total,
         mcmc_samples: int = 100,
         seed: int | None = None,
     ):
@@ -136,11 +156,9 @@ class VI_Model(nn.Module):
         One stochastic-ELBO step (no optimizer step).
         Returns dict with 'loss' and components for logging.
         """
-        if seed is not None:
-            torch.manual_seed(seed)
-
+        
         # Sample θ ~ q
-        thetas = self.sample_theta(mcmc_samples)  # [S, D]
+        thetas = self.sample_theta(mcmc_samples, antithetic=True)  # [S, D]
         log_q_vals = self.log_q(thetas)         # [S]
 
         log_p_tilde_vals = []  # log unnormalized posterior per sample
@@ -149,6 +167,7 @@ class VI_Model(nn.Module):
         prior_trans_list = []
         qf_neg_prior_list = []
         qf_sum_list=[]
+        qf_mean_list=[]
         neg_log_post_list=[]
         
         for s in range(mcmc_samples):
@@ -156,12 +175,20 @@ class VI_Model(nn.Module):
             params_s = self._theta_to_state_dict(theta_s)  # tensors keep graph to (mu, rho)
 
             with _reparametrize_module(self.model, params_s):
+                # Pick one key from the schema that you know we optimize
+                name0, _ = self._schema[0]
+                live = dict(self.model.named_parameters())[name0]
+                want = self._theta_to_state_dict(theta_s)[name0]
+                if not torch.allclose(live, want, atol=1e-6, rtol=1e-6):
+                    raise RuntimeError(f"Reparam not visible for {name0}")
+                
             # Use your provided objective to compute: posterior = NLL + priors
                 out = model.__bayesian_training_objective__(
                     samples=samples,
                     hyperparameters_transformation=hyperparameter_transformation,
                     hyperparameters_decorrelation=hyperparameter_decorrelation,
-                    sample_size=sample_size
+                    N_total=sample_size_total,
+                    B=samples.shape[0]
                 )
             
             # Your function returns a POSITIVE objective (NLL + priors).
@@ -177,6 +204,7 @@ class VI_Model(nn.Module):
             prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
             qf_neg_prior_list.append(out['negative_transformation_prior']['neg_log_prior_qf'].reshape(()))
             qf_sum_list.append(out["negative_transformation_prior"]["qf_sum"].reshape(()))
+            qf_mean_list.append(out['negative_transformation_prior']['qf_mean'].reshape(()))
             
 
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
@@ -190,6 +218,7 @@ class VI_Model(nn.Module):
         prior_trans_list = torch.stack(prior_trans_list)
         qf_neg_prior_list = torch.stack(qf_neg_prior_list)
         qf_sum_list= torch.stack(qf_sum_list)
+        qf_mean_list = torch.stack(qf_mean_list)
         
         return {
             "loss": elbo_loss,
@@ -203,7 +232,8 @@ class VI_Model(nn.Module):
             "neg_prior_decorrelation": torch.mean(prior_dec_list).detach(),
             "neg_prior_transformation": torch.mean(prior_trans_list).detach(),
             "transformation_neg_log_prior_df": torch.mean(qf_neg_prior_list).detach(),  #= E[0.5 τ qf]
-            "transformation_sum_qf": torch.mean(qf_sum_list).detach()#qf
+            "transformation_sum_qf": torch.mean(qf_sum_list).detach(), #qf sum
+            "transformation_mean_qf": torch.mean(qf_mean_list).detach()
         }
         
     RETURNS_MEAN_NLL = True  # <— set this once according to your objective
@@ -220,10 +250,8 @@ class VI_Model(nn.Module):
         RETURNS_MEAN_NLL = True,  # <— set this once according to your objective
         seed: int | None = None,
     ) -> float:
-        if seed is not None:
-            torch.manual_seed(seed)
 
-        thetas = self.sample_theta(S)  # [S, D]
+        thetas = self.sample_theta(S, antithetic=True)  # [S, D]
         ll_list = []
         for s in range(S):
             theta_s = thetas[s]
@@ -233,7 +261,8 @@ class VI_Model(nn.Module):
                     samples=y_batch,
                     hyperparameters_transformation=hyperparameter_transformation,
                     hyperparameters_decorrelation=hyperparameter_decorrelation,
-                    sample_size=sample_size,
+                    N_total=sample_size,
+                    B=y_batch.shape[0]
                 )
                 nll = out["negative_log_lik"].reshape(())
                 if RETURNS_MEAN_NLL:               # <<< guard
