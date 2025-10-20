@@ -143,13 +143,14 @@ def unnormalized_posterior_computation(
     samples,
     hyperparameter_transformation,
     hyperparameter_decorrelation, 
-    batch_size
+    B,
+    N_total
 ):
     
     #Likelihood
     return_dict_model_loss: Tensor = model.__log_likelihood_loss__(y=samples)
     nll: Tensor = return_dict_model_loss.get('negative_log_likelihood_data')
-    nll=nll.sum()
+    nll_batch=nll.sum()
     
     #Prior Transformation
     ntp = bayesian_splines.defining_prior(
@@ -167,15 +168,15 @@ def unnormalized_posterior_computation(
     else:
         ndp = torch.tensor(0.0, device=model.device, dtype=nll.dtype)
     
-    batch_size = torch.as_tensor(batch_size, device=model.device, dtype=nll.dtype)
-    
-    neg_log_post= nll + (ntp['neg_log_prior_total'] + ndp)/batch_size # log \tilde p(θ, y) = - (NLL + priors)
+    # ---- unbiased minibatch objective ----
+    scale = torch.as_tensor(N_total / max(B, 1), device=model.device, dtype=nll_batch.dtype)
+    neg_log_post = scale * nll_batch + ntp['neg_log_prior_total'] + ndp
     
     return {
         'neg_posterior':neg_log_post,
         'negative_decorrelation_prior': ndp,
         'negative_transformation_prior': ntp,
-        'negative_log_lik': nll
+        'negative_log_lik': nll_batch
         }
 
 def bayesian_training_objective(
@@ -184,6 +185,7 @@ def bayesian_training_objective(
     hyperparameter_transformation,
     hyperparameter_decorrelation,
     sample_size,
+    batch_size,
     objective_type:Literal['negloglik']="negloglik",
     
 ):
@@ -195,5 +197,6 @@ def bayesian_training_objective(
                 samples=samples,
                 hyperparameter_transformation=hyperparameter_transformation,
                 hyperparameter_decorrelation= hyperparameter_decorrelation,
-                batch_size=sample_size
+                N_total=sample_size,
+                B = batch_size
                 )

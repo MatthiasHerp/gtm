@@ -714,9 +714,9 @@ class GTM(nn.Module):
         samples: Tensor,
         hyperparameters_transformation: dict[str, float],
         hyperparameters_decorrelation: dict [str, float],
-        sample_size,
-        objective_type: Literal['negloglik'] = "negloglik",
-        mcmc_sample:int = 1000
+        N_total,
+        B,
+        objective_type: Literal['negloglik'] = "negloglik"
     ):
         
         return bayesian_training_objective(
@@ -725,7 +725,8 @@ class GTM(nn.Module):
             hyperparameter_transformation =hyperparameters_transformation,
             samples= samples,
             objective_type= objective_type,
-            sample_size=sample_size
+            sample_size=N_total,
+            batch_size=B
         )
 
     def train(
