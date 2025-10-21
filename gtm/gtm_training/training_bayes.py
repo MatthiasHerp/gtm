@@ -248,25 +248,31 @@ class VI_Model(nn.Module):
         sample_size: int,
         S: int = 8,
         RETURNS_MEAN_NLL = True,  # <— set this once according to your objective
-        seed: int | None = None,
+        seed: int | None = None
     ) -> float:
 
         thetas = self.sample_theta(S, antithetic=True)  # [S, D]
         ll_list = []
         for s in range(S):
+            
             theta_s = thetas[s]
             params_s = self._theta_to_state_dict(theta_s)
+            
             with _reparametrize_module(model, params_s):
+                
                 out = model.__bayesian_training_objective__(
                     samples=y_batch,
                     hyperparameters_transformation=hyperparameter_transformation,
                     hyperparameters_decorrelation=hyperparameter_decorrelation,
                     N_total=sample_size,
-                    B=y_batch.shape[0]
+                    B=1
                 )
+                
                 nll = out["negative_log_lik"].reshape(())
-                if RETURNS_MEAN_NLL:               # <<< guard
-                    nll = nll * y_batch.shape[0]   # convert to SUM over batch
+                
+                #if RETURNS_MEAN_NLL:               # <<< guard
+                #    nll = nll * y_batch.shape[0]   # convert to SUM over batch
+                
                 ll_list.append(-nll)               # <<< THE MISSING MINUS
         ll = torch.stack(ll_list)                  # [S], each is SUM log-lik for the batch
         return float(_logmeanexp(ll, dim=0))       # SUM log predictive for the batch
