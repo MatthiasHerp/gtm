@@ -808,23 +808,39 @@ def train_freq(
 
 
 @torch.no_grad()
-def _evaluate_epoch(VI: 'VI_Model', model: 'GTM', val_loader, hyper_T, hyper_D,sample_size_total, S_val=8, seed=123):
+def _evaluate_epoch(
+    VI: 'VI_Model', 
+    model: 'GTM',
+    val_loader,
+    hyper_T,
+    hyper_D,
+    sample_size_total,
+    S_val=8, 
+    seed=123
+    ):
+    
     nn.Module.train(model, False)
     total_loglik_sum, nobs = 0.0, 0
     for y in val_loader:
+        
         y = y.to(model.device)
+        
         logsum = VI.predictive_loglik_sum_batch(
             y_batch=y,
             model=model,
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
             S=S_val,
-            sample_size= sample_size_total,
+            sample_size=1,
             seed=seed,
         )
+        
         total_loglik_sum += logsum    # SUM over batch
         nobs += y.shape[0]
-    return total_loglik_sum / max(1, nobs)  # per-observation ELPD (higher is better)
+    
+    return (
+        total_loglik_sum / nobs
+        )  # per-observation ELPD (higher is better)
 
 
 def _make_key_filter(patterns_include=None, patterns_exclude=None):
@@ -837,11 +853,6 @@ def _make_key_filter(patterns_include=None, patterns_exclude=None):
             return False
         return True
     return _keep
-
-def _invgamma_mean(a, b):
-            # mean exists if a>1; fallback otherwise
-                a = float(a)
-                return b / (a - 1.0) if a > 1.0 else b / (a + 1.0)
 
 def _gamma_mean(a, b):  # shape a, rate b
                 return float(a) / max(float(b),1e-12)
@@ -901,6 +912,7 @@ def train_bayes(
     eta_base = float(hyper_T.get("tau_update_eta", 0.1))          # optional damping (0<η≤1)
     update_every = int(hyper_T.get("tau_update_every", 1))   # update cadence
     warm_tau_epochs = 3
+    warm_sigma_epochs = 5  # try 5–10
     # --------------------------
     # VI over transformation-layer params only
     # Adjust patterns if your naming differs; print(model.state_dict().keys()) to check.
@@ -947,10 +959,7 @@ def train_bayes(
     num_margins = int(model.number_variables)    
     nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
     rank_per_margin = K.shape[0] - nullspace_dim_T
-    
-    
 
-    
     eb_E_qf_num = 0.0 # accumulates E_q[θᵀKθ] estimate via 2 * E[ntp / tau4]
     eb_count = 0
     no_improve = 0
@@ -977,6 +986,14 @@ def train_bayes(
         nlpost = 0.0
         for b, y in enumerate(train_dataloader):
             B = y.shape[0]
+            
+            if epoch < warm_sigma_epochs:
+                for p in [VI.rho]:
+                    p.requires_grad_(False)
+            else:
+                for p in [VI.rho]:
+                    p.requires_grad_(True)
+            
             if epoch == 0 and b == 0:
                 print(f"[sanity] N={N_total}  current B={B}  "
                     f"(training objective uses scaled likelihood & unscaled prior)")
@@ -989,7 +1006,7 @@ def train_bayes(
                 samples=y,
                 hyperparameter_transformation=hyper_T['tau'],
                 hyperparameter_decorrelation=hyper_D,
-                sample_size_total=N_total, #B
+                sample_size_total=N_total,
                 model=model,
                 mcmc_samples=mcmc_sample_train,
                 seed=global_seed + epoch * 10_000 + b,  # different per step
@@ -1028,10 +1045,10 @@ def train_bayes(
         train_loss = running / n_batches
         
         loss_history.append(train_loss)
-        nll_history.append(nll/n_batches)
-        ndp_history.append(ndp/n_batches)
-        ntp_history.append(ntp/n_batches)
-        nlpost_history.append(nlpost/n_batches)
+        nll_history.append(nll / n_batches)
+        ndp_history.append(ndp / n_batches)
+        ntp_history.append(ntp / n_batches)
+        nlpost_history.append(nlpost / n_batches)
 
         # --- VALIDATION with fixed seed & fixed S ---
         if validate_dataloader is not None:
@@ -1056,20 +1073,15 @@ def train_bayes(
         # early stopping on straight "no improvement"
         improved = (metric < best_val - min_delta)
         if improved:
+            print("IMPROVED! Congrats")
             best_val = metric
             no_improve = 0
             best_state["mu"] = VI.mu.detach().clone()
             best_state["rho"] = VI.rho.detach().clone()
         else:
             no_improve += 1
+            print(f"NOT IMPROVED! Nr. {no_improve}")
         
-        warm_sigma_epochs = 5  # try 5–10
-        if epoch < warm_sigma_epochs:
-            for p in [VI.rho]:
-                p.requires_grad_(False)
-        else:
-            for p in [VI.rho]:
-                p.requires_grad_(True)
         
         # -------- Empirical Bayes update for tau_4 (once per epoch) --------
         a0 = float(hyper_T.get("tau_a", 1.1))
@@ -1149,24 +1161,24 @@ def train_bayes(
         lrs = [pg["lr"] for pg in opt.param_groups]
 
         # Optional: scale-aware μ-nudge diagnostic (replaces the big fixed 0.1 step)
-        with torch.no_grad():
-            y_dbg = next(iter(validate_dataloader)).to(model.device)
-            base = VI.predictive_loglik_sum_batch(
-                y_dbg, model, hyper_T['tau'], hyper_D, sample_size=y_dbg.shape[0], S=4
-            )
-            idx = torch.randint(0, VI.mu.numel(), (10,))
-            step = 0.25 * float(VI.sigma[idx].mean())   # FIX: scale-aware, much less noisy than +0.1
-            old = VI.mu[idx].clone()
-            VI.mu[idx] = old + step
-            moved_plus = VI.predictive_loglik_sum_batch(
-                y_dbg, model, hyper_T['tau'], hyper_D, sample_size=y_dbg.shape[0], S=4
-            )
-            VI.mu[idx] = old - step
-            moved_minus = VI.predictive_loglik_sum_batch(
-                y_dbg, model, hyper_T['tau'], hyper_D, sample_size=y_dbg.shape[0], S=4
-            )
-            VI.mu[idx] = old
-            mu_nudge = float((moved_plus - base + moved_minus - base) / 2.0)
+        #with torch.no_grad():
+        #    y_dbg = next(iter(validate_dataloader)).to(model.device)
+        #    base = VI.predictive_loglik_sum_batch(
+        #        y_dbg, model, hyper_T['tau'], hyper_D, sample_size=y_dbg[0], S=4
+        #    )
+        #    idx = torch.randint(0, VI.mu.numel(), (10,))
+        #    step = 0.25 * float(VI.sigma[idx].mean())   # FIX: scale-aware, much less noisy than +0.1
+        #    old = VI.mu[idx].clone()
+        #    VI.mu[idx] = old + step
+        #    moved_plus = VI.predictive_loglik_sum_batch(
+        #        y_dbg, model, hyper_T['tau'], hyper_D, sample_size=y_dbg[0], S=4
+        #    )
+        #    VI.mu[idx] = old - step
+        #    moved_minus = VI.predictive_loglik_sum_batch(
+        #        y_dbg, model, hyper_T['tau'], hyper_D, sample_size=y_dbg[0], S=4
+        #    )
+        #    VI.mu[idx] = old
+        #    mu_nudge = float((moved_plus - base + moved_minus - base) / 2.0)
 
 
         # Main line (keep it compact but complete)
@@ -1176,7 +1188,7 @@ def train_bayes(
                 
                 f"train={train_loss:.4f}  val_ELPD={val_elpd:.4f}  "
                 
-                f"S_train={mcmc_sample_train} S_val={mcmc_sample_val}  lr={[pg['lr'] for pg in opt.param_groups]}  "
+                f"S_train={mcmc_sample_train} S_val={mcmc_sample_val}  lr={lrs}  "
                 
                 f"σ̄={float(VI.sigma.mean()):.4f} σmin={float(VI.sigma.min()):.4f} σmax={float(VI.sigma.max()):.4f}  "
                 
@@ -1192,9 +1204,9 @@ def train_bayes(
                 
                 f"resid≈{residual:.3g}  "
                 
-                f"Δ={delta_tau:+.2e}" 
+                f"Δ={delta_tau:+.2e}   " 
                 
-                f"μ-nudge(±)≈{mu_nudge:.3g}"
+                #f"μ-nudge(±)≈{mu_nudge:.3g} "
                 )
 
         else:
