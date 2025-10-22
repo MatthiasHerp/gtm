@@ -187,7 +187,8 @@ def unnormalized_posterior_computation(
         'neg_posterior':neg_log_post,
         'negative_decorrelation_prior': ndp,
         'negative_transformation_prior': ntp,
-        'negative_log_lik': nll_scaled
+        'negative_log_lik': nll_scaled,
+        'nll_batch': nll_batch
         }
 
 def bayesian_training_objective(

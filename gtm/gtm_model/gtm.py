@@ -939,7 +939,14 @@ class GTM(nn.Module):
         rho_lr_multiplier=1.5,
         sched_factor=0.5,
         sched_patience=6,
-        sched_threshold=1.e-4
+        sched_threshold=1.e-4,
+        #WARMING
+        warm_tau_epochs: int = 3,
+        warm_sigma_epochs: int = 10,  # try 5–10
+        
+        #Optimization method
+        beta_kl_start: float = 3.0,    # try 1.5–3.0
+        beta_kl_anneal_epochs: int = 20,  # how fast to decay to 1.0
     ) -> None:
         
         """
@@ -1040,7 +1047,13 @@ class GTM(nn.Module):
                 rho_lr_multiplier=rho_lr_multiplier,#1.5,
                 sched_factor=sched_factor,#0.5,
                 sched_patience=sched_patience,#6,
-                sched_threshold=sched_threshold,#1.e-4
+                sched_threshold=sched_threshold,
+                warm_tau_epochs=warm_tau_epochs,
+                warm_sigma_epochs= warm_sigma_epochs,  # try 5–10
+                
+                #Optimization method
+                beta_kl_start = beta_kl_start,    # try 1.5–3.0
+                beta_kl_anneal_epochs = beta_kl_anneal_epochs,  # how fast to decay to 1.0
             )
 
         self.transform_only = False
