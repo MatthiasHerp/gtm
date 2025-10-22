@@ -854,6 +854,13 @@ def _make_key_filter(patterns_include=None, patterns_exclude=None):
         return True
     return _keep
 
+
+def _beta_kl_at(epoch: int, beta_kl_anneal_epochs, beta_kl_start) -> float:
+    # epoch is 0-indexed; linearly anneal from beta_kl_start -> 1.0
+    t = min(1.0, epoch / max(1, beta_kl_anneal_epochs))
+    return beta_kl_start * (1.0 - t) + 1.0 * t
+
+
 def _gamma_mean(a, b):  # shape a, rate b
                 return float(a) / max(float(b),1e-12)
 
@@ -881,6 +888,14 @@ def train_bayes(
     sched_threshold: float = 1e-4,
     sched_cooldown: int = 1,
     sched_min_lr: float = 5e-5,
+    
+    #WARMING
+    warm_tau_epochs: int = 3,
+    warm_sigma_epochs: int = 10,  # try 5–10
+    
+    #Optimization method
+    beta_kl_start: float = 3.0,    # try 1.5–3.0
+    beta_kl_anneal_epochs: int = 20,  # how fast to decay to 1.0
 ):
     
     was_training = model.training
@@ -911,8 +926,7 @@ def train_bayes(
     
     eta_base = float(hyper_T.get("tau_update_eta", 0.1))          # optional damping (0<η≤1)
     update_every = int(hyper_T.get("tau_update_every", 1))   # update cadence
-    warm_tau_epochs = 3
-    warm_sigma_epochs = 5  # try 5–10
+    
     # --------------------------
     # VI over transformation-layer params only
     # Adjust patterns if your naming differs; print(model.state_dict().keys()) to check.
@@ -966,7 +980,9 @@ def train_bayes(
 
     loss_history, val_history = [], []
     nll_history, ndp_history, ntp_history = [], [], []
-    nlpost_history = []
+    ll_scaled_history=[]
+    mean_log_q_history = []
+    mean_log_p_tilde_history=[]
     
     start = time.time()
     
@@ -975,17 +991,23 @@ def train_bayes(
         # Per-epoch diagnostics accumulators
         obs_seen_epoch = 0          # total observations processed in this epoch
         last_B = None               # last batch size, printed as B for quick glance
-        
+        beta_kl = _beta_kl_at(epoch, beta_kl_anneal_epochs=beta_kl_anneal_epochs, beta_kl_start=beta_kl_start)
         # --- MC ramp for TRAIN only (validation stays fixed) ---
         if mc_ramp_every is not None and epoch > 0 and (epoch % mc_ramp_every == 0):
             mcmc_sample_train = min(mc_ramp_max, max(mcmc_sample_train * 2, 1))
 
         running, n_batches = 0.0, 0
         #ACCUMULATORS FOR TRACKING
-        nll,ndp,ntp = 0.0,0.0,0.0
-        nlpost = 0.0
+        ndp,ntp = 0.0,0.0
+        ll_batch = 0.0
+        mean_log_q =0.0
+        mean_log_p_tilde=0.0
         for b, y in enumerate(train_dataloader):
             B = y.shape[0]
+            
+            if epoch == 0 and b == 0:
+                print(f"[sanity] N={N_total}  current B={B}  "
+                    f"(training objective uses scaled likelihood & unscaled prior)")
             
             if epoch < warm_sigma_epochs:
                 for p in [VI.rho]:
@@ -993,10 +1015,6 @@ def train_bayes(
             else:
                 for p in [VI.rho]:
                     p.requires_grad_(True)
-            
-            if epoch == 0 and b == 0:
-                print(f"[sanity] N={N_total}  current B={B}  "
-                    f"(training objective uses scaled likelihood & unscaled prior)")
             
             if max_batches_per_iter and b >= max_batches_per_iter:
                 break
@@ -1010,6 +1028,7 @@ def train_bayes(
                 model=model,
                 mcmc_samples=mcmc_sample_train,
                 seed=global_seed + epoch * 10_000 + b,  # different per step
+                beta_kl=beta_kl
             )
             
             
@@ -1023,7 +1042,7 @@ def train_bayes(
             eb_E_qf_num += qf_mean_over_margins
             eb_count += 1
             
-            loss = out["loss"]
+            loss = out["elbo_loss"]
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite loss @ epoch {epoch}, batch {b}: {loss.item()}")
 
@@ -1034,21 +1053,28 @@ def train_bayes(
             running += float(loss.item())
             n_batches += 1
             
-            nlpost          += out["neg_log_posterior"].cpu().numpy()
-            nll             += out['neg_log_likelihood'].cpu().numpy()
             ndp             += out['neg_prior_decorrelation'].cpu().numpy()
             ntp             += out['neg_prior_transformation'].cpu().numpy()
+            mean_log_q      +=out['mean_log_q'].cpu().numpy()
+            mean_log_p_tilde+=out['mean_log_p_tilde'].cpu().numpy()
+            
+            ll_batch       +=out['log_likelihhod_batch']
+            
 
         if n_batches == 0:
             raise RuntimeError("No batches processed. Check your dataloader / max_batches_per_iter.")
 
-        train_loss = running / n_batches
-        
+        train_loss = running / obs_seen_epoch
         loss_history.append(train_loss)
-        nll_history.append(nll / n_batches)
-        ndp_history.append(ndp / n_batches)
-        ntp_history.append(ntp / n_batches)
-        nlpost_history.append(nlpost / n_batches)
+        
+        ndp_history.append(ndp / obs_seen_epoch)
+        ntp_history.append(ntp / obs_seen_epoch)
+        
+        mean_log_p_tilde_history.append(mean_log_p_tilde/obs_seen_epoch)
+        mean_log_q_history.append(mean_log_q/obs_seen_epoch)
+        
+        per_obs_llk = ll_batch / obs_seen_epoch
+        ll_scaled_history.append(per_obs_llk)
 
         # --- VALIDATION with fixed seed & fixed S ---
         if validate_dataloader is not None:
@@ -1142,7 +1168,6 @@ def train_bayes(
         # keep them as-is. If they are totals, divide by obs_seen_epoch.
         prior_trn_per_obs = float(ntp / max(n_batches, 1))       # you already fixed this to be per-obs
         prior_dec_per_obs = float(ndp / max(n_batches, 1))       # decor=0 in transform-only
-        lik_per_obs = nll / max(obs_seen_epoch, 1)
         
         # Robust RW2 rank: (K - nullspace_dim) per margin, times #margins
         nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
@@ -1151,7 +1176,7 @@ def train_bayes(
 
         # Residual MUST use the same total rank used in the EB update.
         # WRONG before: mixed 'rank_T' (per-margin) with a total E_qf, which can never give resid=0.
-        residual = (float(a0) + 0.5 * rank_T_total) - float(tau_old) * (float(b0) + 0.5 * E_qf_total)   # FIX
+        residual = (float(a0) + 0.5 * rank_T_total) - float(tau_old) * (float(b0) + 0.5 * E_qf_total)
 
         # Product that should approach ~ 2*(a0 + rank/2) when b0 ≈ 0
         prod_now = float(hyper_T['tau']) * E_qf_total
@@ -1160,39 +1185,18 @@ def train_bayes(
         # Learning rates (helpful when ReduceLROnPlateau shrinks too far)
         lrs = [pg["lr"] for pg in opt.param_groups]
 
-        # Optional: scale-aware μ-nudge diagnostic (replaces the big fixed 0.1 step)
-        #with torch.no_grad():
-        #    y_dbg = next(iter(validate_dataloader)).to(model.device)
-        #    base = VI.predictive_loglik_sum_batch(
-        #        y_dbg, model, hyper_T['tau'], hyper_D, sample_size=y_dbg[0], S=4
-        #    )
-        #    idx = torch.randint(0, VI.mu.numel(), (10,))
-        #    step = 0.25 * float(VI.sigma[idx].mean())   # FIX: scale-aware, much less noisy than +0.1
-        #    old = VI.mu[idx].clone()
-        #    VI.mu[idx] = old + step
-        #    moved_plus = VI.predictive_loglik_sum_batch(
-        #        y_dbg, model, hyper_T['tau'], hyper_D, sample_size=y_dbg[0], S=4
-        #    )
-        #    VI.mu[idx] = old - step
-        #    moved_minus = VI.predictive_loglik_sum_batch(
-        #        y_dbg, model, hyper_T['tau'], hyper_D, sample_size=y_dbg[0], S=4
-        #    )
-        #    VI.mu[idx] = old
-        #    mu_nudge = float((moved_plus - base + moved_minus - base) / 2.0)
-
-
         # Main line (keep it compact but complete)
         if validate_dataloader is not None:
             print(
                 f"[{epoch+1}/{iterations}] "
                 
-                f"train={train_loss:.4f}  val_ELPD={val_elpd:.4f}  "
+                f"ELBO train={train_loss:.4f}  val_ELPD={val_elpd:.4f}  train_ELPD={per_obs_llk:.4f}  "
                 
                 f"S_train={mcmc_sample_train} S_val={mcmc_sample_val}  lr={lrs}  "
                 
                 f"σ̄={float(VI.sigma.mean()):.4f} σmin={float(VI.sigma.min()):.4f} σmax={float(VI.sigma.max()):.4f}  "
                 
-                f"N={N_total} B={last_B} B̄≈{obs_seen_epoch/max(n_batches,1):.1f}  lik/obs≈{nll/max(lik_per_obs,1):.4g}  "
+                f"N={N_total} B={last_B} B̄≈{obs_seen_epoch/max(n_batches,1):.1f}  "
                 
                 f"priors/obs: decor≈{prior_dec_per_obs:.3g} trans≈{prior_trn_per_obs:.3g}  "
                 
@@ -1206,7 +1210,8 @@ def train_bayes(
                 
                 f"Δ={delta_tau:+.2e}   " 
                 
-                #f"μ-nudge(±)≈{mu_nudge:.3g} "
+                f"β_KL={beta_kl:.2f}  "
+                
                 )
 
         else:
@@ -1244,9 +1249,11 @@ def train_bayes(
         "loss_history": loss_history,
         "val_history": val_history if validate_dataloader is not None else None,
         "negative_log_likelihood": nll_history,
+        "ll_history": ll_scaled_history,
+        "mean_log_q": mean_log_q_history, 
+        "mean_log_p_tilde":mean_log_p_tilde_history,
         "negative_log_prior_decorrelation": ndp_history,
         "negative_log_prior_transformation": ntp_history,
-        "neg_log_posterior_bgtm": nlpost_history,
         "mu": VI.mu.detach(),
         "rho": VI.rho.detach(),
         "vi_model": VI,

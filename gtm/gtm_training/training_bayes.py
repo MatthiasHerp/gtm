@@ -151,6 +151,8 @@ class VI_Model(nn.Module):
         sample_size_total,
         mcmc_samples: int = 100,
         seed: int | None = None,
+        beta_kl=1.0,
+        beta_logp=1.0
     ):
         """
         One stochastic-ELBO step (no optimizer step).
@@ -163,12 +165,12 @@ class VI_Model(nn.Module):
 
         log_p_tilde_vals = []  # log unnormalized posterior per sample
         neg_likelihood_list = []
+        ll_list = []
         prior_dec_list = []
         prior_trans_list = []
         qf_neg_prior_list = []
         qf_sum_list=[]
         qf_mean_list=[]
-        neg_log_post_list=[]
         
         for s in range(mcmc_samples):
             theta_s = thetas[s]
@@ -198,10 +200,10 @@ class VI_Model(nn.Module):
             log_p_tilde_vals.append(log_p_tilde.reshape(()))
             
             #Tracking
-            neg_log_post_list.append(neglogpost.reshape(()))
             neg_likelihood_list.append(out['negative_log_lik'].reshape(()))
+            ll_list.append(-out['nll_batch'].reshape(()))
             prior_dec_list.append(out['negative_decorrelation_prior'].reshape(()))
-            prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
+            prior_trans_list.append(-out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
             qf_neg_prior_list.append(out['negative_transformation_prior']['neg_log_prior_qf'].reshape(()))
             qf_sum_list.append(out["negative_transformation_prior"]["qf_sum"].reshape(()))
             qf_mean_list.append(out['negative_transformation_prior']['qf_mean'].reshape(()))
@@ -210,10 +212,10 @@ class VI_Model(nn.Module):
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
         # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
         # (Note: additive constant log p(y) cancels in optimization)
-        elbo_loss = torch.mean(log_q_vals - log_p_tilde_vals) #-ELBO (i.e., E_q[log q - log p̃])
+        elbo_loss = torch.mean(beta_kl*log_q_vals - beta_logp*log_p_tilde_vals) #-ELBO (i.e., E_q[log q - log p̃])
 
-        neg_log_post_list=torch.stack(neg_log_post_list)
         neg_likelihood_list= torch.stack(neg_likelihood_list)
+        ll_list=torch.stack(ll_list)
         prior_dec_list = torch.stack(prior_dec_list)
         prior_trans_list = torch.stack(prior_trans_list)
         qf_neg_prior_list = torch.stack(qf_neg_prior_list)
@@ -221,14 +223,15 @@ class VI_Model(nn.Module):
         qf_mean_list = torch.stack(qf_mean_list)
         
         return {
-            "loss": elbo_loss,
-            "neg_log_posterior": torch.mean(neg_log_post_list).detach(),
+            "elbo_loss": elbo_loss,
             "mean_log_q": torch.mean(log_q_vals).detach(),
             "mean_log_p_tilde": torch.mean(log_p_tilde_vals).detach(),
+            "log_likelihhod_batch": float(_logmeanexp(ll_list, dim=0).detach()),
+            
             "sigma_mean": self.sigma.mean().detach(),
             "sigma_max": self.sigma.max().detach(),
             "sigma_min": self.sigma.min().detach(),
-            "neg_log_likelihood": torch.mean(neg_likelihood_list).detach(),
+            
             "neg_prior_decorrelation": torch.mean(prior_dec_list).detach(),
             "neg_prior_transformation": torch.mean(prior_trans_list).detach(),
             "transformation_neg_log_prior_df": torch.mean(qf_neg_prior_list).detach(),  #= E[0.5 τ qf]
@@ -236,8 +239,6 @@ class VI_Model(nn.Module):
             "transformation_mean_qf": torch.mean(qf_mean_list).detach()
         }
         
-    RETURNS_MEAN_NLL = True  # <— set this once according to your objective
-
     @torch.no_grad()
     def predictive_loglik_sum_batch(
         self,
@@ -247,6 +248,7 @@ class VI_Model(nn.Module):
         hyperparameter_decorrelation,
         sample_size: int,
         S: int = 8,
+        batch_size=1,
         RETURNS_MEAN_NLL = True,  # <— set this once according to your objective
         seed: int | None = None
     ) -> float:
@@ -265,7 +267,7 @@ class VI_Model(nn.Module):
                     hyperparameters_transformation=hyperparameter_transformation,
                     hyperparameters_decorrelation=hyperparameter_decorrelation,
                     N_total=sample_size,
-                    B=1
+                    B=batch_size
                 )
                 
                 nll = out["negative_log_lik"].reshape(())
