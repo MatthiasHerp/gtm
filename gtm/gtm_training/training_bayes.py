@@ -2,6 +2,7 @@
 import torch
 import math
 from torch.distributions import Normal
+from torch.special import digamma as ψ
 from torch import nn, Tensor
 from typing import TYPE_CHECKING
 
@@ -203,7 +204,7 @@ class VI_Model(nn.Module):
             neg_likelihood_list.append(out['negative_log_lik'].reshape(()))
             ll_list.append(-out['nll_batch'].reshape(()))
             prior_dec_list.append(out['negative_decorrelation_prior'].reshape(()))
-            prior_trans_list.append(-out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
+            prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
             qf_neg_prior_list.append(out['negative_transformation_prior']['neg_log_prior_qf'].reshape(()))
             qf_sum_list.append(out["negative_transformation_prior"]["qf_sum"].reshape(()))
             qf_mean_list.append(out['negative_transformation_prior']['qf_mean'].reshape(()))
@@ -278,3 +279,46 @@ class VI_Model(nn.Module):
                 ll_list.append(-nll)               # <<< THE MISSING MINUS
         ll = torch.stack(ll_list)                  # [S], each is SUM log-lik for the batch
         return float(_logmeanexp(ll, dim=0))       # SUM log predictive for the batch
+
+
+class VariationalGamma:
+    """q(tau) = Gamma(a_hat, b_hat) (shape-rate) with analytics you need for ELBO."""
+    def __init__(self, a0: float, b0: float, rank_total: int):
+        self.a0 = float(a0)
+        self.b0 = float(b0)
+        self.rank_total = int(rank_total)
+        # initialize with prior (or a mild update)
+        self.a_hat = self.a0 + 0.5 * self.rank_total
+        self.b_hat = self.b0 + 1e-6
+
+    @property
+    def mean(self) -> float:
+        return float(self.a_hat / max(self.b_hat, 1e-12))
+
+    @property
+    def log_mean(self) -> float:
+        # E_q[log tau] = ψ(a_hat) - log(b_hat)
+        return float(ψ(torch.tensor(self.a_hat)).item() - math.log(self.b_hat))
+
+    def update_from_E_qf_total(self, E_qf_total: float):
+        """CAVI-style update using E_q[βᵀKβ] (can be MC-estimated)."""
+        self.a_hat = self.a0 + 0.5 * self.rank_total
+        self.b_hat = self.b0 + 0.5 * float(E_qf_total)
+
+    def kl_to_prior(self) -> float:
+        """
+        KL(q||p) for Gamma(shape-rate).
+        KL = (a_hat - a0)*ψ(a_hat) - log Γ(a_hat) + log Γ(a0)
+             + a0*(log b_hat - log b0) + a_hat*(b0/b_hat - 1)
+        """
+        a_hat, b_hat, a0, b0 = self.a_hat, self.b_hat, self.a0, self.b0
+        # use torch for stability but return float
+        a_hat_t = torch.tensor(a_hat)
+        term = (
+            (a_hat - a0) * ψ(a_hat_t)
+            - torch.lgamma(a_hat_t)
+            + torch.lgamma(torch.tensor(a0))
+            + a0 * (math.log(b_hat) - math.log(b0))
+            + a_hat * (b0 / b_hat - 1.0)
+        )
+        return float(term)

@@ -23,8 +23,7 @@ from torch.optim import Optimizer, Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from gtm.gtm_training.training_bayes import VI_Model
-from gtm.gtm_layers.layer_utils import bayesian_splines
+from gtm.gtm_training.training_bayes import VI_Model, VariationalGamma
 
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
@@ -896,12 +895,42 @@ def train_bayes(
     #Optimization method
     beta_kl_start: float = 3.0,    # try 1.5–3.0
     beta_kl_anneal_epochs: int = 20,  # how fast to decay to 1.0
+    use_empirical_bayes:bool = False
 ):
     
     was_training = model.training
     nn.Module.train(model, False)   # put modules in eval mode
     
+    # Defining important 
     N_total = len(train_dataloader.dataset)
+    
+    if model.decorrelation_layers != 0:
+        parameters_patterns = [
+            r"^transformation\.params\.\d+$"
+            ]
+    else:
+        parameters_patterns = [
+            r"^transformation\.params\.\d+$",
+            r"^decorrelation_layers\.params\.d+$"
+            ]
+    
+    key_filter = _make_key_filter(
+        patterns_include= parameters_patterns,  # keep only these
+        patterns_exclude=[r"decor", r"rho_", r"optimizer", r"running_", r"num_batches_tracked"],
+    )
+    
+    K = model.transformation.priors.K_prior_RW2.to(model.device)
+    num_margins = int(model.number_variables)    
+    
+    
+    VI = VI_Model(model=model, device = model.device, key_filter=key_filter).to(model.device)
+    gen = torch.Generator(device=model.device)
+    gen.manual_seed(global_seed)
+    VI.set_rng(gen)
+    
+    print("First 30 param keys:", [k for k,_ in VI._schema][:30])
+    if use_empirical_bayes:
+        print("You are currently using the Full Bayesian Closed form coordinate-ascent VI (CAVI)")
     
     # hyperparams
     if hyperparameters is None:
@@ -910,13 +939,25 @@ def train_bayes(
     else:
         hyper_T = hyperparameters.get("transformation", {})
         hyper_D = hyperparameters.get("decorrelation", {})
-
+            
+    nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
+    rank_per_margin = K.shape[0] - nullspace_dim_T
+    rank_T_total = rank_per_margin * num_margins
+    
     pen_term2 = hyper_T.get('RW2', {})
     
     if pen_term2 is not None:
+        
         a_lambda = torch.as_tensor(pen_term2.get('tau_a',1.1), device=model.device, dtype=torch.float32)
         b_lambda = torch.as_tensor(pen_term2.get('tau_b', 1e-6), device=model.device, dtype=torch.float32)
-        hyper_T["tau"] = torch.as_tensor(pen_term2.get("tau_init", _gamma_mean(a_lambda, b_lambda)),   device=model.device) ### _gamma_mean(a_lambda, b_lambda)
+        
+        if use_empirical_bayes:
+            hyper_T["tau"] = torch.as_tensor(
+                pen_term2.get("tau_init", _gamma_mean(a_lambda, b_lambda)),   device=model.device) ### _gamma_mean(a_lambda, b_lambda)
+        else:
+            q_tau4 = VariationalGamma(a0=a_lambda, b0=b_lambda, rank_total=rank_T_total)
+            hyper_T["tau"] = q_tau4.mean
+            
     else:
         a_lambda, b_lambda= 1.1, 1e-6
         hyper_T.setdefault("tau", _gamma_mean(a_lambda, b_lambda))
@@ -927,27 +968,13 @@ def train_bayes(
     eta_base = float(hyper_T.get("tau_update_eta", 0.1))          # optional damping (0<η≤1)
     update_every = int(hyper_T.get("tau_update_every", 1))   # update cadence
     
+    
+    
     # --------------------------
     # VI over transformation-layer params only
     # Adjust patterns if your naming differs; print(model.state_dict().keys()) to check.
     # Keep: transformation-related weights; Drop: decorrelation, batchnorm stats, optim buffers.
-    
-    key_filter = _make_key_filter(
-        patterns_include=[
-            r"^transformation\.params\.\d+$",
-            #r"transformation", 
-            #r"transform", 
-            #r"spline"
-            ],  # keep only these
-        patterns_exclude=[r"decor", r"rho_", r"optimizer", r"running_", r"num_batches_tracked"],
-    )
 
-    VI = VI_Model(model=model, device = model.device, key_filter=key_filter).to(model.device)
-    gen = torch.Generator(device=model.device)
-    gen.manual_seed(global_seed)
-    VI.set_rng(gen)
-    
-    print("First 30 param keys:", [k for k,_ in VI._schema][:30])
     # optimizer (optionally faster LR for rho)
     if rho_lr_multiplier != 1.0:
         opt = torch.optim.Adam([
@@ -969,11 +996,7 @@ def train_bayes(
     # --------------------------
     # Empirical Bayes accumulators for tau_4
     # rank(K) per margin = D-2 (RW2); multiply by num variables (margins)
-    K = model.transformation.priors.K_prior_RW2.to(model.device)
-    num_margins = int(model.number_variables)    
-    nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
-    rank_per_margin = K.shape[0] - nullspace_dim_T
-
+    
     eb_E_qf_num = 0.0 # accumulates E_q[θᵀKθ] estimate via 2 * E[ntp / tau4]
     eb_count = 0
     no_improve = 0
@@ -1002,6 +1025,8 @@ def train_bayes(
         ll_batch = 0.0
         mean_log_q =0.0
         mean_log_p_tilde=0.0
+        E_qf_sum_accum=0.0
+        
         for b, y in enumerate(train_dataloader):
             B = y.shape[0]
             
@@ -1037,9 +1062,9 @@ def train_bayes(
             
             # If VI.step already summed over the S samples, divide by S; 
             # If it already averaged over S, skip this divide. (From your code it looks summed.)
-            qf_mean_over_margins = float(out['transformation_mean_qf'])
+            eb_E_qf_num += float(out['transformation_mean_qf'])
+            E_qf_sum_accum += float(out['transformation_sum_qf'])
 
-            eb_E_qf_num += qf_mean_over_margins
             eb_count += 1
             
             loss = out["elbo_loss"]
@@ -1064,11 +1089,21 @@ def train_bayes(
         if n_batches == 0:
             raise RuntimeError("No batches processed. Check your dataloader / max_batches_per_iter.")
 
-        train_loss = running / obs_seen_epoch
+        if not use_empirical_bayes:
+            kl_tau4 = q_tau4.kl_to_prior()   # scalar
+            # Convert to per-observation if you want the same scaling as your printed train loss:
+            kl_tau4_per_obs = kl_tau4 / max(obs_seen_epoch, 1)  # or /N_total if you prefer
+        else:
+            kl_tau4_per_obs =0.0
+            
+        train_loss = running / obs_seen_epoch + kl_tau4_per_obs
         loss_history.append(train_loss)
         
-        ndp_history.append(ndp / obs_seen_epoch)
-        ntp_history.append(ntp / obs_seen_epoch)
+        prior_trn_per_obs = float(ntp / max(obs_seen_epoch, 1))       # you already fixed this to be per-obs
+        prior_dec_per_obs = float(ndp / max(obs_seen_epoch, 1))       # decor=0 in transform-only
+        
+        ndp_history.append(prior_dec_per_obs)
+        ntp_history.append(prior_trn_per_obs)
         
         mean_log_p_tilde_history.append(mean_log_p_tilde/obs_seen_epoch)
         mean_log_q_history.append(mean_log_q/obs_seen_epoch)
@@ -1113,37 +1148,47 @@ def train_bayes(
         a0 = float(hyper_T.get("tau_a", 1.1))
         b0 = float(hyper_T.get("tau_b", 1e-6))
         
-        if (epoch + 1) % max(update_every, 1) == 0 and eb_count > 0:
+        did_update = ((epoch + 1) % max(update_every, 1) == 0)
+        
+        if did_update and eb_count > 0:
             tau_old = float(hyper_T["tau"])
 
             # Mean per margin -> total across margins for fixed-point
             E_qf_mean_per_margin = eb_E_qf_num / eb_count
-            E_qf_total = max(E_qf_mean_per_margin, 1e-12) * num_margins
+            E_qf_total_mc = E_qf_sum_accum / eb_count
+            
+            if use_empirical_bayes:
+            
+                E_qf_total = max(E_qf_mean_per_margin, 1e-12) * num_margins
 
 
-            # Robust rank: use K.shape[0] - nullspace_dim (RW2: nullspace=2)
-            nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
-            rank_per_margin = K.shape[0] - nullspace_dim_T
-            rank_T_total = rank_per_margin * num_margins
+                # Robust rank: use K.shape[0] - nullspace_dim (RW2: nullspace=2)
+                rank_per_margin = K.shape[0] - nullspace_dim_T
+                
+                
+                tau_target = (a0 + 0.5 * rank_T_total) / (b0 + 0.5 * E_qf_total)
 
-            tau_target = (a0 + 0.5 * rank_T_total) / (b0 + 0.5 * E_qf_total)
-
-            # Warm-start: jump fast in the first epochs
-            if epoch < warm_tau_epochs:
-                eta_now = 1.0
-            else:
-                # If residual flips sign or is small, use small eta; if far, use larger eta
-                residual = (a0 + 0.5 * rank_T_total) - tau_old * (b0 + 0.5 * E_qf_total)
-                dist = abs(residual)
-                if dist > 5.0:
-                    eta_now = min(0.5, 4 * eta_base)   # accelerate if we're far off
-                elif dist > 1.0:
-                    eta_now = min(0.25, 2 * eta_base)
+                # Warm-start: jump fast in the first epochs
+                if epoch < warm_tau_epochs:
+                    eta_now = 1.0
                 else:
-                    eta_now = eta_base                 # fine damping near fixed point
+                    # If residual flips sign or is small, use small eta; if far, use larger eta
+                    residual = (a0 + 0.5 * rank_T_total) - tau_old * (b0 + 0.5 * E_qf_total)
+                    dist = abs(residual)
+                    if dist > 5.0:
+                        eta_now = min(0.5, 4 * eta_base)   # accelerate if we're far off
+                    elif dist > 1.0:
+                        eta_now = min(0.25, 2 * eta_base)
+                    else:
+                        eta_now = eta_base                 # fine damping near fixed point
 
-            tau_new = (1.0 - eta_now) * tau_old + eta_now * float(tau_target)
-            tau_new = float(min(max(tau_new, 1e-12), 1e8))
+                tau_new = (1.0 - eta_now) * tau_old + eta_now * float(tau_target)
+                tau_new = float(min(max(tau_new, 1e-12), 1e8))
+            
+            else:
+                q_tau4.update_from_E_qf_total(E_qf_total=E_qf_total_mc)
+                tau_new = float(q_tau4.mean)  # E_q[tau]
+                
 
             hyper_T["tau"] = tau_new
             model.hyperparameter.setdefault("transformation", {})
@@ -1151,7 +1196,7 @@ def train_bayes(
 
             eb_E_qf_num, eb_count = 0.0, 0  # reset
 
-        ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ######
+        ###### @@ VERBOSE @@ ###### ###### @@ VERBOSE @@ ###### ###### @@ VERBOSE @@ ###### ###### @@  VERBOSE @@ ######
         
         # --- Prepare consistently scaled quantities for printing ---
         
@@ -1159,18 +1204,13 @@ def train_bayes(
         if eb_count > 0:
             E_qf_mean_per_margin = eb_E_qf_num / max(eb_count, 1)
         
-        E_qf_total = float(max(E_qf_mean_per_margin, 1e-12) * num_margins)      # FIX: total across margins
+        E_qf_total = E_qf_total_mc if not use_empirical_bayes else float(max(E_qf_mean_per_margin, 1e-12) * num_margins)
+        
         
         # Δτ: only show when we actually updated this epoch
-        did_update = ((epoch + 1) % max(update_every, 1) == 0)
         delta_tau = float(hyper_T["tau"] - tau_old) if did_update else 0.0
-        # (Optional) If your priors accumulated (ntp/ndp) are already per-obs,
-        # keep them as-is. If they are totals, divide by obs_seen_epoch.
-        prior_trn_per_obs = float(ntp / max(n_batches, 1))       # you already fixed this to be per-obs
-        prior_dec_per_obs = float(ndp / max(n_batches, 1))       # decor=0 in transform-only
         
         # Robust RW2 rank: (K - nullspace_dim) per margin, times #margins
-        nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
         rank_per_margin = int(K.shape[0] - nullspace_dim_T)
         rank_T_total = int(rank_per_margin * num_margins)
 
@@ -1185,6 +1225,16 @@ def train_bayes(
         # Learning rates (helpful when ReduceLROnPlateau shrinks too far)
         lrs = [pg["lr"] for pg in opt.param_groups]
 
+        # Full Bayes
+        
+        tau4_mean=f"{float(q_tau4.mean):.3g}" if not use_empirical_bayes else "empirical bayes used!"
+        a_dach=f"{float(q_tau4.a_hat):.3g}" if not use_empirical_bayes else "empirical bayes used!"
+        b_dach =f"{float(q_tau4.b_hat):.3g}" if not use_empirical_bayes else "empirical bayes used!"
+        Elog_tau=f"{q_tau4.log_mean:.3g}" if not use_empirical_bayes else "empirical bayes used! "
+        
+        
+        KL_qtau_ptaz = f"{float(kl_tau4_per_obs):.3g}" if not use_empirical_bayes else "empirical bayes used!"
+        
         # Main line (keep it compact but complete)
         if validate_dataloader is not None:
             print(
@@ -1206,9 +1256,9 @@ def train_bayes(
                 
                 f"tau*E_qf≈{float(hyper_T['tau'])*E_qf_total:.3g}  target≈{2*(a0+0.5*rank_T_total):.3g}  "
                 
-                f"resid≈{residual:.3g}  "
+                f"resid≈{residual:.3g}    tau4_mean={tau4_mean}   Elog_tau={Elog_tau}    â={a_dach}     b̂={b_dach}  "   
                 
-                f"Δ={delta_tau:+.2e}   " 
+                f"Δ={delta_tau:+.2e}      KL(qτ||pτ)≈{KL_qtau_ptaz}     " 
                 
                 f"β_KL={beta_kl:.2f}  "
                 
@@ -1224,7 +1274,7 @@ def train_bayes(
                 f"tau*E_qf≈{prod_now:.3g}  target≈{prod_target:.3g}  resid≈{residual:.3g}  Δ={tau_new - tau_old:+.2e}"
             )
 
-        ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ###### ###### VERBOSE ######
+        ###### @@ VERBOSE @@ ###### ###### @@ VERBOSE @@ ###### ###### @@ VERBOSE @@ ###### ###### @@  VERBOSE @@ ######
         
         if validate_dataloader is not None and no_improve >= patience_val:
             if verbose:
