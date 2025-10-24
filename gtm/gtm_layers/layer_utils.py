@@ -117,7 +117,7 @@ class bayesian_splines:
             "neg_log_prior_qf" : neg_log_prior_qf.sum(), #Important for Sanity Check
             "neg_log_prior_jac": neg_log_prior_jac.sum(),
             "qf_sum": qf.sum(),                             ## sum over margins
-            "qf_mean": qf.mean()                            #mean over margins
+            "qf_mean": qf.mean()                           #mean over margins
             } 
 
     @staticmethod
