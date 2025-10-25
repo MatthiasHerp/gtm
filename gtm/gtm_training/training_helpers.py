@@ -901,10 +901,9 @@ def train_bayes(
     was_training = model.training
     nn.Module.train(model, False)   # put modules in eval mode
     
-    # Defining important 
     N_total = len(train_dataloader.dataset)
     
-    if model.decorrelation_layers != 0:
+    if model.number_decorrelation_layers == 0 or model.transform_only:
         parameters_patterns = [
             r"^transformation\.params\.\d+$"
             ]
@@ -919,6 +918,7 @@ def train_bayes(
         patterns_exclude=[r"decor", r"rho_", r"optimizer", r"running_", r"num_batches_tracked"],
     )
     
+    
     K = model.transformation.priors.K_prior_RW2.to(model.device)
     num_margins = int(model.number_variables)    
     
@@ -928,9 +928,7 @@ def train_bayes(
     gen.manual_seed(global_seed)
     VI.set_rng(gen)
     
-    print("First 30 param keys:", [k for k,_ in VI._schema][:30])
-    if use_empirical_bayes:
-        print("You are currently using the Full Bayesian Closed form coordinate-ascent VI (CAVI)")
+    print("Parameters to be affected by the bayesian approach:", [k for k,_ in VI._schema][:30])
     
     # hyperparams
     if hyperparameters is None:
@@ -940,35 +938,96 @@ def train_bayes(
         hyper_T = hyperparameters.get("transformation", {})
         hyper_D = hyperparameters.get("decorrelation", {})
             
+    ######## Transformation __init__ ##########
+
     nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
     rank_per_margin = K.shape[0] - nullspace_dim_T
     rank_T_total = rank_per_margin * num_margins
     
-    pen_term2 = hyper_T.get('RW2', {})
+    pen_term2_T = hyper_T.get('RW2', {})
     
-    if pen_term2 is not None:
-        
-        a_lambda = torch.as_tensor(pen_term2.get('tau_a',1.1), device=model.device, dtype=torch.float32)
-        b_lambda = torch.as_tensor(pen_term2.get('tau_b', 1e-6), device=model.device, dtype=torch.float32)
-        
-        if use_empirical_bayes:
-            hyper_T["tau"] = torch.as_tensor(
-                pen_term2.get("tau_init", _gamma_mean(a_lambda, b_lambda)),   device=model.device) ### _gamma_mean(a_lambda, b_lambda)
-        else:
-            q_tau4 = VariationalGamma(a0=a_lambda, b0=b_lambda, rank_total=rank_T_total)
-            hyper_T["tau"] = q_tau4.mean
-            
+    if pen_term2_T is not None:
+        a_lambda = torch.as_tensor(pen_term2_T.get('tau_a',1.1), device=model.device, dtype=torch.float32)
+        b_lambda = torch.as_tensor(pen_term2_T.get('tau_b', 1e-6), device=model.device, dtype=torch.float32)
+        print(f"The selected hyperparameters for the transformation layer,\nthe hyperparameters lambda_a={a_lambda} and lambda_b={b_lambda} were selected and will by processed.")
     else:
-        a_lambda, b_lambda= 1.1, 1e-6
-        hyper_T.setdefault("tau", _gamma_mean(a_lambda, b_lambda))
+        a_lambda = 1.1
+        b_lambda= 1e-6
+        Warning(f"For the transformation layer,\nno hyperparameters lambda_a & lambda_b given or interpreted by the program,\nas default hyperparameter are used lambda_a={a_lambda} & lambda_b={b_lambda}.")
     
     hyper_T.setdefault("tau_a", a_lambda)
     hyper_T.setdefault("tau_b", b_lambda)
     
-    eta_base = float(hyper_T.get("tau_update_eta", 0.1))          # optional damping (0<η≤1)
-    update_every = int(hyper_T.get("tau_update_every", 1))   # update cadence
+    if use_empirical_bayes:
+        print("You are currently using an approximation approach for the Bayesian Variational Inference Compuation")
+        
+        tau_4 = torch.as_tensor(pen_term2_T.get("tau_init",_gamma_mean(a_lambda, b_lambda)),device=model.device)
+    else:
+        print("You are currently using the Full Bayesian Closed form coordinate-ascent VI (CAVI)")
+        q_tau4 = VariationalGamma(a0=a_lambda, b0=b_lambda, rank_total=rank_T_total)
+        tau_4 = q_tau4.mean
     
+    hyper_T["tau"] = tau_4
     
+    eta_base = float(hyper_T.get("tau_4_update_eta", 0.1))          # optional damping (0<η≤1)
+    update_every = int(hyper_T.get("tau_4_update_every", 1))        # update cadence
+    
+    ######## Transformation __init__ ##########
+    
+    ######## Decorrelation __init__ ###########
+    if not (model.number_decorrelation_layers == 0 or model.transform_only):
+        K_RW1 = model.decorrelation_layers[0].priors.K_prior_RW1
+        K_RW2 = model.decorrelation_layers[0].priors.K_prior_RW2
+        
+        rank_per_margin_RW1 = K_RW1.shape[0] - 1  # nullspace_dim_RW1 = 1
+        rank_per_margin_RW2 = K_RW2.shape[0] - 2  # nullspace_dim_RW2 = 2
+
+        rank_T_total_RW1 = rank_per_margin_RW1 * num_margins
+        rank_T_total_RW2 = rank_per_margin_RW2 * num_margins
+        
+        
+        pen_term1_D = hyper_D.get('RW1',{})
+        pen_term2_D = hyper_D.get('RW2',{}) 
+        
+        if pen_term1_D is not None:
+            a_lambda_1 = torch.as_tensor(pen_term1_D.get('tau_a',1.1), device=model.device, dtype=torch.float32)
+            b_lambda_1 = torch.as_tensor(pen_term1_D.get('tau_b', 1e-6), device=model.device, dtype=torch.float32)
+            print(f"The selected hyperparameters for tau_1 of the decorrelation layers,\nthe hyperparameters lambda_a={a_lambda_1} and lambda_b={b_lambda_1} were selected and will by processed.")
+        else:
+            a_lambda_1 = 1.1
+            b_lambda_1 = 1e-6
+            Warning(f"For the penalty term tau_1 of the decorrelation layers,\nno hyperparameters given or interpreted by the program,\n as default hyperparameter are used lambda_a={a_lambda_1} & lambda_b={b_lambda_1}.")
+        
+        hyper_D.setdefault("tau_1_a",a_lambda_1)
+        hyper_D.setdefault("tau_1_b",b_lambda_1)
+        
+        if pen_term2_D is not None:
+            a_lambda_2 = torch.as_tensor(pen_term2_D.get('tau_a',1.1), device=model.device, dtype=torch.float32)
+            b_lambda_2 = torch.as_tensor(pen_term2_D.get('tau_b', 1e-6), device=model.device, dtype=torch.float32)
+            print(f"The selected hyperparameters for tau_1 of the decorrelation layers,\nthe hyperparameters lambda_a={a_lambda_2} and lambda_b={b_lambda_2} were selected and will by processed.")
+        else:
+            a_lambda_2 = 1.1
+            b_lambda_2 = 1e-6
+            Warning(f"For the penalty term tau_1 of the decorrelation layers,\nno hyperparameters given or interpreted by the program,\n as default hyperparameter are used lambda_a={a_lambda_2} & lambda_b={b_lambda_2}.")
+        
+        hyper_D.setdefault("tau_2_a",a_lambda_1)
+        hyper_D.setdefault("tau_2_b",b_lambda_2)
+        
+        if use_empirical_bayes:
+            hyper_D["tau_1"] = torch.as_tensor(pen_term1_D.get("tau_init",_gamma_mean(a_lambda_1, b_lambda_1)),device= model.device)
+            hyper_D["tau_2"] = torch.as_tensor(pen_term2_D.get("tau_init",_gamma_mean(a_lambda_2, b_lambda_2)),device= model.device)
+        else: 
+            q_tau1 = VariationalGamma(a_lambda_1,b_lambda_1, rank_total=rank_T_total_RW1)
+            hyper_D["tau_1"] = q_tau1.mean
+            
+            q_tau2 = VariationalGamma(a_lambda, b_lambda, rank_total=rank_T_total_RW2)
+            hyper_D["tau_2"] = q_tau2.mean
+    else:
+        print("training only transformation layer!") 
+        hyper_D["tau_1"] = 0.0
+        hyper_D["tau_2"] = 0.0
+        
+    ######## Decorrelation __init__ ##########
     
     # --------------------------
     # VI over transformation-layer params only
@@ -1026,11 +1085,13 @@ def train_bayes(
         mean_log_q =0.0
         mean_log_p_tilde=0.0
         E_qf_sum_accum=0.0
+        qf_1_dec=0.0
+        qf_2_dec=0.0
         
         for b, y in enumerate(train_dataloader):
             B = y.shape[0]
             
-            if epoch == 0 and b == 0:
+            if epoch == 0 and b == 0 and verbose:
                 print(f"[sanity] N={N_total}  current B={B}  "
                     f"(training objective uses scaled likelihood & unscaled prior)")
             
@@ -1056,12 +1117,14 @@ def train_bayes(
                 beta_kl=beta_kl
             )
             
-            
             last_B = B
             obs_seen_epoch += B
             
-            # If VI.step already summed over the S samples, divide by S; 
-            # If it already averaged over S, skip this divide. (From your code it looks summed.)
+            #Decorrelation Layer
+            qf_1_dec += float(out['qf1_decorrelation'])
+            qf_2_dec += float(out['qf2_decorrelation'])
+            
+            # Transformation Layer
             eb_E_qf_num += float(out['transformation_mean_qf'])
             E_qf_sum_accum += float(out['transformation_sum_qf'])
 
@@ -1089,16 +1152,34 @@ def train_bayes(
         if n_batches == 0:
             raise RuntimeError("No batches processed. Check your dataloader / max_batches_per_iter.")
 
-        if not use_empirical_bayes:
+        if use_empirical_bayes:
+            kl_tau4_per_obs = 0.0
+            kl_tau1_per_obs = 0.0
+            kl_tau2_per_obs = 0.0
+        else:
             kl_tau4 = q_tau4.kl_to_prior()   # scalar
             # Convert to per-observation if you want the same scaling as your printed train loss:
             kl_tau4_per_obs = kl_tau4 / max(obs_seen_epoch, 1)  # or /N_total if you prefer
-        else:
-            kl_tau4_per_obs =0.0
             
-        train_loss = running / obs_seen_epoch + kl_tau4_per_obs
-        loss_history.append(train_loss)
+            kl_tau1 = (
+                q_tau1.kl_to_prior() 
+                if not (model.number_decorrelation_layers == 0 or model.transform_only) 
+                else 0.0
+                )
+            
+            kl_tau1_per_obs = kl_tau1 / max(obs_seen_epoch, 1)  
+            
+            kl_tau2 = (
+                q_tau2.kl_to_prior() 
+                if not (model.number_decorrelation_layers == 0 or model.transform_only) 
+                else 0.0
+                )
+            
+            kl_tau2_per_obs = kl_tau2 / max(obs_seen_epoch, 1)  
+            
+        train_loss = running / obs_seen_epoch + kl_tau4_per_obs + kl_tau1_per_obs +kl_tau2_per_obs
         
+        loss_history.append(train_loss)
         prior_trn_per_obs = float(ntp / max(obs_seen_epoch, 1))       # you already fixed this to be per-obs
         prior_dec_per_obs = float(ndp / max(obs_seen_epoch, 1))       # decor=0 in transform-only
         

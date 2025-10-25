@@ -883,16 +883,16 @@ class GTM(nn.Module):
                 iterations=iterations,
                 verbose=verbose,
                 lr=learning_rate,
-                mcmc_sample_train=mcmc_sample_train,#4,
-                mcmc_sample_val=mcmc_sample_val,#16,
-                mc_ramp_every=mc_ramp_every,#25,
-                mc_ramp_max=mc_ramp_max,#32,
-                patience_val=patience,#15,
-                min_delta=min_delta,#15,
-                rho_lr_multiplier=rho_lr_multiplier,#1.5,
-                sched_factor=sched_factor,#0.5,
-                sched_patience=sched_patience,#6,
-                sched_threshold=sched_threshold,#1.e-4
+                mcmc_sample_train=mcmc_sample_train,
+                mcmc_sample_val=mcmc_sample_val,
+                mc_ramp_every=mc_ramp_every,
+                mc_ramp_max=mc_ramp_max,
+                patience_val=patience,
+                min_delta=min_delta,
+                rho_lr_multiplier=rho_lr_multiplier,
+                sched_factor=sched_factor,
+                sched_patience=sched_patience,
+                sched_threshold=sched_threshold,
                 )
         else:
             raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')

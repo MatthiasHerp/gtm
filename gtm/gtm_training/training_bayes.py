@@ -167,11 +167,17 @@ class VI_Model(nn.Module):
         log_p_tilde_vals = []  # log unnormalized posterior per sample
         neg_likelihood_list = []
         ll_list = []
+        
+        #Decorrelation
         prior_dec_list = []
+        qf1_sum_dec_list = []
+        qf2_sum_dec_list = []
+        
+        #Transformation
         prior_trans_list = []
-        qf_neg_prior_list = []
-        qf_sum_list=[]
-        qf_mean_list=[]
+        qf_neg_prior_trans_list = []
+        qf_sum_trans_list=[]
+        qf_mean_trans_list=[]
         
         for s in range(mcmc_samples):
             theta_s = thetas[s]
@@ -200,15 +206,21 @@ class VI_Model(nn.Module):
             log_p_tilde = -neglogpost
             log_p_tilde_vals.append(log_p_tilde.reshape(()))
             
-            #Tracking
+            #Likelihood
             neg_likelihood_list.append(out['negative_log_lik'].reshape(()))
             ll_list.append(-out['nll_batch'].reshape(()))
-            prior_dec_list.append(out['negative_decorrelation_prior'].reshape(()))
-            prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
-            qf_neg_prior_list.append(out['negative_transformation_prior']['neg_log_prior_qf'].reshape(()))
-            qf_sum_list.append(out["negative_transformation_prior"]["qf_sum"].reshape(()))
-            qf_mean_list.append(out['negative_transformation_prior']['qf_mean'].reshape(()))
             
+            
+            #Transformation Layer
+            prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
+            qf_neg_prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_qf'].reshape(()))
+            qf_sum_trans_list.append(out["negative_transformation_prior"]["qf_sum"].reshape(()))
+            qf_mean_trans_list.append(out['negative_transformation_prior']['qf_mean'].reshape(()))
+            
+            #Decorrelation Layer
+            prior_dec_list.append(out['negative_decorrelation_prior']['neg_log_prior_total'].reshape(()))
+            qf1_sum_dec_list.append(out['negative_decorrelation_prior']['qf1'])
+            qf2_sum_dec_list.append(out['negative_decorrelation_prior']['qf2'])
 
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
         # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
@@ -217,11 +229,17 @@ class VI_Model(nn.Module):
 
         neg_likelihood_list= torch.stack(neg_likelihood_list)
         ll_list=torch.stack(ll_list)
+        
+        # Decorrelation Layer
         prior_dec_list = torch.stack(prior_dec_list)
+        qf1_sum_dec_list = torch.stack(qf1_sum_dec_list)
+        qf2_sum_dec_list = torch.stack(qf2_sum_dec_list)
+        
+        # Transformation Layer
         prior_trans_list = torch.stack(prior_trans_list)
-        qf_neg_prior_list = torch.stack(qf_neg_prior_list)
-        qf_sum_list= torch.stack(qf_sum_list)
-        qf_mean_list = torch.stack(qf_mean_list)
+        qf_neg_prior_trans_list = torch.stack(qf_neg_prior_trans_list)
+        qf_sum_trans_list= torch.stack(qf_sum_trans_list)
+        qf_mean_trans_list = torch.stack(qf_mean_trans_list)
         
         return {
             "elbo_loss": elbo_loss,
@@ -229,15 +247,21 @@ class VI_Model(nn.Module):
             "mean_log_p_tilde": torch.mean(log_p_tilde_vals).detach(),
             "log_likelihhod_batch": float(_logmeanexp(ll_list, dim=0).detach()),
             
+            # Variance Tracking
             "sigma_mean": self.sigma.mean().detach(),
             "sigma_max": self.sigma.max().detach(),
             "sigma_min": self.sigma.min().detach(),
             
+            #Decorrelation Layer
             "neg_prior_decorrelation": torch.mean(prior_dec_list).detach(),
+            "qf1_decorrelation": torch.mean(qf1_sum_dec_list).detach(),
+            "qf2_decorrelation": torch.mean(qf2_sum_dec_list).detach(),
+            
+            #Transformation Layer
             "neg_prior_transformation": torch.mean(prior_trans_list).detach(),
-            "transformation_neg_log_prior_df": torch.mean(qf_neg_prior_list).detach(),  #= E[0.5 τ qf]
-            "transformation_sum_qf": torch.mean(qf_sum_list).detach(), #qf sum
-            "transformation_mean_qf": torch.mean(qf_mean_list).detach()
+            "transformation_neg_log_prior_df": torch.mean(qf_neg_prior_trans_list).detach(),  #= E[0.5 τ qf]
+            "transformation_sum_qf": torch.mean(qf_sum_trans_list).detach(), #qf sum
+            "transformation_mean_qf": torch.mean(qf_mean_trans_list).detach()
         }
         
     @torch.no_grad()
@@ -250,10 +274,10 @@ class VI_Model(nn.Module):
         sample_size: int,
         S: int = 8,
         batch_size=1,
-        RETURNS_MEAN_NLL = True,  # <— set this once according to your objective
         seed: int | None = None
     ) -> float:
-
+        """For Validation used the ELPD Approach."""
+    
         thetas = self.sample_theta(S, antithetic=True)  # [S, D]
         ll_list = []
         for s in range(S):
@@ -272,9 +296,6 @@ class VI_Model(nn.Module):
                 )
                 
                 nll = out["negative_log_lik"].reshape(())
-                
-                #if RETURNS_MEAN_NLL:               # <<< guard
-                #    nll = nll * y_batch.shape[0]   # convert to SUM over batch
                 
                 ll_list.append(-nll)               # <<< THE MISSING MINUS
         ll = torch.stack(ll_list)                  # [S], each is SUM log-lik for the batch
