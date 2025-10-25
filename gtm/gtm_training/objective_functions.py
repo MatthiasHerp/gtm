@@ -148,14 +148,8 @@ def unnormalized_posterior_computation(
 ):
     
     #Likelihood
-    
-    
-    return_dict_model_loss: Tensor = model.__log_likelihood_loss__(y=samples)
-    
-    
+    return_dict_model_loss=model.__log_likelihood_loss__(y=samples)
     nll_batch=return_dict_model_loss.get('negative_log_likelihood_data').sum()
-    
-    
     
     #Prior Transformation
     ntp = bayesian_splines.defining_prior(
@@ -164,24 +158,28 @@ def unnormalized_posterior_computation(
         is_transformation=True
         )
     
-    if not model.transform_only:
     #Prior Decorrelation
+    if model.transform_only or model.number_decorrelation_layers == 0:
+        ndp={}
+        ndp['neg_log_prior_total'] = torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype)
+        ndp['qf1'] = torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype)
+        ndp['qf2'] = torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype)
+        
+    else:
         ndp = bayesian_splines.defining_prior(
             model=model, 
             hyperparameter=hyperparameter_decorrelation
             )
-    else:
-        ndp = torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype)
     
     # ---- unbiased minibatch objective ----
     scale = torch.as_tensor(
-        N_total / max(B, 1),
+        (N_total / max(B, 1)),
         device=model.device,
         dtype=nll_batch.dtype
         )
     
     nll_scaled = scale * nll_batch
-    neg_log_post = nll_scaled + ntp['neg_log_prior_total'] + ndp
+    neg_log_post = nll_scaled + ntp['neg_log_prior_total'] + ndp['neg_log_prior_total']
     
     return {
         'neg_posterior':neg_log_post,
