@@ -299,23 +299,18 @@ class GTM(nn.Module):
 
     def __create_return_dict_nf_mctm__(self, input: Tensor) -> dict[str, Tensor|float|None]:
         
-        output: Tensor = input.clone() if input.dim() > 1 else input.clone().unsqueeze(1)
-        log_d_init: Tensor = torch.zeros(
-            input.size() if input.dim() > 1 else input.unsqueeze(1).size()
-            ).to(self.device)
-        
-        
-        lambda_matrix_global: Tensor = torch.eye(self.number_variables).to(self.device)
         return {
-                "output": output,
-                "log_d": log_d_init,
-                "transformation_second_order_ridge_pen_global": 0.0,
-                "second_order_ridge_pen_global": 0.0,
-                "first_order_ridge_pen_global": 0.0,
-                "param_ridge_pen_global": 0.0,
-                "lambda_matrix_global": lambda_matrix_global,
-                "der_lambda_matrix_global": None,
-                "der2_lambda_matrix_global": None
+            "output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
+            "log_d": torch.zeros(
+                input.size() if input.dim() > 1 else input.unsqueeze(1).size()
+            ).to(self.device),
+            "transformation_second_order_ridge_pen_global": 0,
+            "second_order_ridge_pen_global": 0,
+            "first_order_ridge_pen_global": 0,
+            "param_ridge_pen_global": 0,
+            "lambda_matrix_global": torch.eye(self.number_variables).to(self.device),
+            "der_lambda_matrix_global": None,
+            "der2_lambda_matrix_global": None,
         }
         
         
