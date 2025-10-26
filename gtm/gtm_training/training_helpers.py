@@ -909,7 +909,7 @@ def train_bayes(
             ]
         patterns_exclude=[
             r"decor", r"rho_", r"optimizer", r"running_", r"num_batches_tracked"
-            ],
+            ]
     else:
         parameters_patterns = [
             r"^transformation\.params\.\d+$",
