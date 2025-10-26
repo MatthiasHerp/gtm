@@ -745,16 +745,22 @@ class GTM(nn.Module):
         min_delta: float = 1e-7,
         seperate_copula_training: bool = False,
         max_batches_per_iter: int | bool = False,
-        hyperparameters= None,
+        hyperparameters = None,
         mcmc_sample_train=4,
         mcmc_sample_val=16,
         mc_ramp_every=25,
         mc_ramp_max=32,
-        #patience_val=15,
         rho_lr_multiplier=1.5,
         sched_factor=0.5,
         sched_patience=6,
-        sched_threshold=1.e-4
+        sched_threshold=1.e-4,
+        #WARMING
+        warm_tau_epochs: int = 3,
+        warm_sigma_epochs: int = 10,  # try 5–10
+        
+        #Optimization method
+        beta_kl_start: float = 3.0,    # try 1.5–3.0
+        beta_kl_anneal_epochs: int = 20,  # how fast to decay to 1.0
     ) -> dict[str, Tensor]:
         
         """
@@ -875,7 +881,6 @@ class GTM(nn.Module):
             
         elif self.inference == 'bayesian':
             return_dict_model_training = train_bayes(
-                
                 model= self,
                 train_dataloader=train_dataloader,
                 validate_dataloader=validate_dataloader,
@@ -883,16 +888,22 @@ class GTM(nn.Module):
                 iterations=iterations,
                 verbose=verbose,
                 lr=learning_rate,
-                mcmc_sample_train=mcmc_sample_train,
-                mcmc_sample_val=mcmc_sample_val,
-                mc_ramp_every=mc_ramp_every,
-                mc_ramp_max=mc_ramp_max,
-                patience_val=patience,
-                min_delta=min_delta,
-                rho_lr_multiplier=rho_lr_multiplier,
-                sched_factor=sched_factor,
-                sched_patience=sched_patience,
+                mcmc_sample_train=mcmc_sample_train,#4,
+                mcmc_sample_val=mcmc_sample_val,#16,
+                mc_ramp_every=mc_ramp_every,#25,
+                mc_ramp_max=mc_ramp_max,#32,
+                patience_val=patience,#15,
+                min_delta=min_delta,#15,
+                rho_lr_multiplier=rho_lr_multiplier,#1.5,
+                sched_factor=sched_factor,#0.5,
+                sched_patience=sched_patience,#6,
                 sched_threshold=sched_threshold,
+                warm_tau_epochs=warm_tau_epochs,
+                warm_sigma_epochs= warm_sigma_epochs,  # try 5–10
+                
+                #Optimization method
+                beta_kl_start = beta_kl_start,    # try 1.5–3.0
+                beta_kl_anneal_epochs = beta_kl_anneal_epochs,  # how fast to decay to 1.0
                 )
         else:
             raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')

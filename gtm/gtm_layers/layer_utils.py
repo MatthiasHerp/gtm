@@ -18,18 +18,53 @@ def generate_diagonal_matrix(n):
     matrix = torch.eye(n, dtype=torch.float32)  # Create an identity matrix of size n
     return torch.flip(matrix, dims=[0])  # Flip the matrix along the vertical axis
 
-def get_transformation_param_matrix_live(model):
+import re
+import torch
+
+def get_param_matrix_live(model, layer_type: str = "transformation", layer_index: int | None = None):
+    """
+    Extracts the live parameter matrix [K, M] for either the transformation
+    or a specified decorrelation layer.
+    
+    Args:
+        model: GTM model.
+        layer_type: "transformation" or "decorrelation".
+        layer_index: which decorrelation layer to extract (ignored for transformation).
+        
+    Returns:
+        (param_matrix [K, M], M)
+    """
     name_to_param = dict(model.named_parameters())
     cols = []
-    for i in range(9999):  # or discover i’s via a regex on names
-        key = f"transformation.params.{i}"
-        if key not in name_to_param: break
-        cols.append(name_to_param[key].reshape(-1))   # 1-D view is fine
-    if not cols:
-        raise RuntimeError("No transformation.params.* found.")
-    varphi = torch.stack(cols, dim=1).contiguous()    # [K, M], contiguous
-    M = varphi.shape[1]
-    return varphi, M
+
+    if layer_type == "transformation":
+        # Example: transformation.params.0, transformation.params.1, ...
+        pattern = re.compile(r"^transformation\.params\.(\d+)$")
+        for key in sorted(name_to_param.keys()):
+            if pattern.match(key):
+                cols.append(name_to_param[key].reshape(-1))
+        if not cols:
+            raise RuntimeError("No transformation.params.* found.")
+        varphi = torch.stack(cols, dim=1).contiguous()  # [K, M]
+        M = varphi.shape[1]
+        return varphi, M
+
+    elif layer_type == "decorrelation":
+        if layer_index is None:
+            raise ValueError("Must provide layer_index when extracting decorrelation layer params.")
+        # Example: decorrelation_layers.0.params, decorrelation_layers.1.params, ...
+        key = f"decorrelation_layers.{layer_index}.params"
+        if key not in name_to_param:
+            raise RuntimeError(f"No parameter tensor found for key '{key}'.")
+        param_tensor = name_to_param[key]
+        if param_tensor.dim() == 1:
+            param_tensor = param_tensor.unsqueeze(1)
+        K, M = param_tensor.shape
+        return param_tensor.contiguous(), M
+
+    else:
+        raise ValueError(f"Unknown layer_type '{layer_type}'. Must be 'transformation' or 'decorrelation'.")
+
 
 class bayesian_splines:
     @staticmethod
@@ -167,14 +202,15 @@ class bayesian_splines:
             
             sigma_hat=1
             
-            for layer in sub_model:
+            for i, layer in enumerate(sub_model):
                 # K built once per layer; ensure it's on device
                 K_RW1 = layer.priors.K_prior_RW1.to(device=model.device, dtype=torch.float32)
                 K_RW2 = layer.priors.K_prior_RW2.to(device=model.device, dtype=torch.float32)
                 
-                theta_D = layer.params  # [Kdim, M]
+                #theta_D = layer.params  # [Kdim, M]
+                theta_Di, M_Di = get_param_matrix_live(model, "decorrelation", i)
                 
-                part = bayesian_splines.log_prior_gamma_ridge(theta_D, K_RW1, K_RW2, tau_1, tau_2, sigma_hat)
+                part = bayesian_splines.log_prior_gamma_ridge(theta_Di, K_RW1, K_RW2, tau_1, tau_2, sigma_hat)
                 
                 for k in total:
                     total[k] = total[k] + part[k]
@@ -192,7 +228,7 @@ class bayesian_splines:
             K_Prior_RW2 = 0.5*(K_Prior_RW2+ K_Prior_RW2.T)
             
             # Use the *restricted* (monotone) coefficients θ for the P-spline prior (paper §2.1). :contentReference[oaicite:2]{index=2}
-            varphi, M = get_transformation_param_matrix_live(model)  # [K, M], live params
+            varphi, M = get_param_matrix_live(model)  # [K, M], live params
             varphi = varphi.to(sub_model.device)
             
             # If you need to pad rows to match K_Prior_RW2 (rare):
