@@ -1026,7 +1026,7 @@ def train_bayes(
             q_tau1 = VariationalGamma(a_lambda_1,b_lambda_1, rank_total=rank_T_total_RW1)
             hyper_D["tau_1"] = q_tau1.mean
             
-            q_tau2 = VariationalGamma(a_lambda, b_lambda, rank_total=rank_T_total_RW2)
+            q_tau2 = VariationalGamma(a_lambda_2, b_lambda_2, rank_total=rank_T_total_RW2)
             hyper_D["tau_2"] = q_tau2.mean
     else:
         print("training only transformation layer!") 
@@ -1284,7 +1284,7 @@ def train_bayes(
                     dist_q1 = abs(residual_q1)
                     if dist_q1 > 5.0:
                         eta_q1_now = min(0.5, 4 * eta_base)   # accelerate if we're far off
-                    elif dist > 1.0:
+                    elif dist_q1 > 1.0:
                         eta_q1_now = min(0.25, 2 * eta_base)
                     else:
                         eta_q1_now = eta_base                 # fine damping near fixed point       
@@ -1292,7 +1292,7 @@ def train_bayes(
                     dist_q2 = abs(residual_q2)
                     if dist_q2 > 5.0:
                         eta_q2_now = min(0.5, 4 * eta_base)   # accelerate if we're far off
-                    elif dist > 1.0:
+                    elif dist_q2 > 1.0:
                         eta_q2_now = min(0.25, 2 * eta_base)
                     else:
                         eta_q2_now = eta_base                 # fine damping near fixed point

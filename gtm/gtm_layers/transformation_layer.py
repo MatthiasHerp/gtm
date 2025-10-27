@@ -250,10 +250,10 @@ class Transformation(nn.Module):
 
     def create_return_dict_transformation(self, input):
         return {
-            "output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
+            "output": (input.clone() if input.dim() > 1 else input.clone().unsqueeze(1)).to(self.device),
             "log_d": torch.zeros(
                 input.size() if input.dim() > 1 else input.clone().unsqueeze(1),
-                device=input.device,
+                device=self.device,
             ),
             "transformation_second_order_ridge_pen_sum": 0,
             "second_order_ridge_pen_sum": 0,
@@ -650,7 +650,7 @@ class Transformation(nn.Module):
 
             return_dict["log_d"][:, var_num] = return_dict["output_first_derivativ"][
                 :, var_num
-            ]
+            ].to(self.device)
 
             return_dict["second_order_ridge_pen_sum"] += second_order_ridge_pen
 

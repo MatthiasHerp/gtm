@@ -300,7 +300,7 @@ class GTM(nn.Module):
     def __create_return_dict_nf_mctm__(self, input: Tensor) -> dict[str, Tensor|float|None]:
         
         return {
-            "output": input.clone() if input.dim() > 1 else input.clone().unsqueeze(1),
+            "output": (input.clone() if input.dim() > 1 else input.clone().unsqueeze(1)).to(self.device),
             "log_d": torch.zeros(
                 input.size() if input.dim() > 1 else input.unsqueeze(1).size()
             ).to(self.device),
@@ -396,7 +396,8 @@ class GTM(nn.Module):
         return_scores_hessian = False
         train = True
         evaluate = True
-
+        
+        y.to(self.device)
         return_dict_nf_mctm = self.__create_return_dict_nf_mctm__(y)
 
         if self.subset_dimension is not None:
