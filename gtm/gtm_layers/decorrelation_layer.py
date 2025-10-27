@@ -228,7 +228,7 @@ class Decorrelation(nn.Module):
                 self.params[:, params_index].unsqueeze(1)
                 if multi == False
                 else self.params_multiplier[:, params_index].unsqueeze(1)
-            ),
+            ).to(self.device),
             input[:, covar_num].unsqueeze(1),
             self.knots,
             self.degree,
@@ -420,9 +420,9 @@ class Decorrelation(nn.Module):
 
                 # loop over all before variables
                 lambda_value_multiplier_total = torch.ones(
-                    input.size(0), device=input.device
+                    input.size(0), device=self.device
                 )
-                lambda_value_total = torch.zeros(input.size(0), device=input.device)
+                lambda_value_total = torch.zeros(input.size(0), device=self.device)
                 for covar_num in range(var_num):
 
                     (
@@ -548,7 +548,7 @@ class Decorrelation(nn.Module):
 
         if inverse == True or self.number_variables == 2 or self.vmap == False:
             return_dict = self.for_loop_forward(
-                input,
+                input.to(self.device),
                 log_d,
                 covariate,
                 inverse=inverse,
@@ -558,7 +558,7 @@ class Decorrelation(nn.Module):
         # elif self.vmap == True and self.number_variables > 2:
         else:
             return_dict = self.vmap_forward(
-                input, log_d, covariate, return_penalties=return_penalties
+                input.to(self.device), log_d, covariate, return_penalties=return_penalties
             )
 
         return return_dict
