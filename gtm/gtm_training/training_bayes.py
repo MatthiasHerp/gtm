@@ -304,13 +304,27 @@ class VI_Model(nn.Module):
 
 class VariationalGamma:
     """q(tau) = Gamma(a_hat, b_hat) (shape-rate) with analytics you need for ELBO."""
-    def __init__(self, a0: float, b0: float, rank_total: int):
+    def __init__(
+        self,
+        a0: float,
+        b0: float,
+        rank_total: int,
+        init_from_prior: bool = True
+        ):
+        
+        
         self.a0 = float(a0)
         self.b0 = float(b0)
         self.rank_total = int(rank_total)
-        # initialize with prior (or a mild update)
-        self.a_hat = self.a0 + 0.5 * self.rank_total
-        self.b_hat = self.b0 + 1e-6
+        
+        if init_from_prior:
+            # start exactly at the prior
+            self.a_hat = self.a0
+            self.b_hat = self.b0
+        else:
+            # previous behavior (more aggressive)
+            self.a_hat = self.a0 + 0.5 * self.rank_total
+            self.b_hat = self.b0 + 1e-6
 
     @property
     def mean(self) -> float:

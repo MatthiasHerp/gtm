@@ -397,7 +397,7 @@ class GTM(nn.Module):
         train = True
         evaluate = True
         
-        y.to(self.device)
+        y=y.to(self.device)
         return_dict_nf_mctm = self.__create_return_dict_nf_mctm__(y)
 
         if self.subset_dimension is not None:
