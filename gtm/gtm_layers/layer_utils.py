@@ -14,12 +14,24 @@ if TYPE_CHECKING:
 
 _TRANSFORM_PARAM_RE = re.compile(r"^transformation\.params\.(\d+)$")
 
+# --- small global cache ---
+_eig_cache = {}
+
 def generate_diagonal_matrix(n):
     matrix = torch.eye(n, dtype=torch.float32)  # Create an identity matrix of size n
     return torch.flip(matrix, dims=[0])  # Flip the matrix along the vertical axis
 
-import re
-import torch
+
+def _eigh_cached(K: torch.Tensor):
+    key = (K.device, K.dtype, int(K.numel()), id(K))
+    entry = _eig_cache.get(key)
+    if entry is None or entry["shape"] != tuple(K.shape):
+        evals, evecs = torch.linalg.eigh(0.5*(K+K.T))
+        mask = (evals > 1e-10)
+        Q = evecs[:, mask].contiguous()
+        Lsqrt = (evals[mask].sqrt()).unsqueeze(0)   # [1, r]
+        _eig_cache[key] = {"shape": tuple(K.shape), "Q": Q, "Lsqrt": Lsqrt}
+    return _eig_cache[key]["Q"], _eig_cache[key]["Lsqrt"]
 
 def get_param_matrix_live(model, layer_type: str = "transformation", layer_index: int | None = None):
     """
@@ -106,16 +118,8 @@ class bayesian_splines:
         beta_tail = torch.log(safe_dgamma)                       # [..., D-1]
         beta = torch.cat([beta1, beta_tail], dim=-1).contiguous()# [..., D]
         
-        # Eigenvalue Decomposition
-        evals, evecs = torch.linalg.eigh(K)
-        mask = evals > 1e-10
-        #SAFETY
-        if mask.sum() == 0:
-            raise RuntimeError("RW2 K has no positive eigenvalues with given tol.")
-        
-        Q = evecs[:, mask].contiguous()
-        Lsqrt = (Q * evals[mask].sqrt()).unsqueeze(0)      # shape [D, r]
-        Z=beta @ Lsqrt
+        Q, Lsqrt = _eigh_cached(K)             # Q:[D,r], Lsqrt:[1,r]
+        Z= (beta @ Q) * Lsqrt
         qf = torch.sum(Z*Z, dim=-1)          # [batch]
         
         # Jacobian term: -sum log(Δγ_k) per batch
