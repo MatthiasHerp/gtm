@@ -869,14 +869,15 @@ def _seed_q_from_eb(q, E_qf_total_mc: float):
     q.a_hat = float(q.a0 + 0.5 * q.rank_total)
     q.b_hat = float(q.b0 + 0.5 * float(E_qf_total_mc))
 
-def _clamp(v, lo, hi): 
-    return float(max(lo, min(hi, v)))
-
-def _damped_step(prev, target, eta, rmin=0.85, rmax=1.20):
+def _damped_step(prev, target, eta, band=0.20):
     """One-step EMA toward target with per-epoch change capped to [rmin, rmax]×."""
-    raw = (1.0 - eta) * float(prev) + eta * float(target)
-    return _clamp(raw, float(prev) * rmin, float(prev) * rmax)
-
+    target=float(target)
+    raw = (1.0 - float(eta)) * prev + float(eta) * target
+    lo = prev*(1.0-band)
+    hi= prev*(1.0-band)
+    
+    return float(max(lo, min(hi, raw)))
+    
 def train_bayes(
     model: "GTM",
     train_dataloader,
@@ -911,6 +912,8 @@ def train_bayes(
     beta_kl_anneal_epochs: int = 25,  # slower anneal
     use_empirical_bayes: bool = False,
     eb_warm_then_cavi: bool = True,   # EB for first warm_tau_epochs only
+    band_tau4 = 0.20,
+    band_decor = 0.15
 ):
     was_training = model.training
     nn.Module.train(model, False)
@@ -963,7 +966,7 @@ def train_bayes(
     # init τ4
     if use_empirical_bayes or eb_warm_then_cavi:
         tau_4 = torch.as_tensor(pen_term2_T.get("tau_init", _gamma_mean(a_lambda, b_lambda)),
-                                device=model.device)
+                                device=model.device,  dtype=torch.float32)
     else:
         q_tau4 = VariationalGamma(a_lambda, b_lambda, rank_T_total, init_from_prior=True)
         tau_4 = q_tau4.mean
@@ -985,8 +988,8 @@ def train_bayes(
         print(f"[DECOR] τ₁ a={a_lambda_1.item()} b={b_lambda_1.item()} | τ₂ a={a_lambda_2.item()} b={b_lambda_2.item()}")
 
         if use_empirical_bayes or eb_warm_then_cavi:
-            hyper_D["tau_1"] = torch.as_tensor(_gamma_mean(a_lambda_1, b_lambda_1), device=model.device)
-            hyper_D["tau_2"] = torch.as_tensor(_gamma_mean(a_lambda_2, b_lambda_2), device=model.device)
+            hyper_D["tau_1"] = torch.as_tensor(_gamma_mean(a_lambda_1, b_lambda_1), device=model.device, dtype=torch.float32)
+            hyper_D["tau_2"] = torch.as_tensor(_gamma_mean(a_lambda_2, b_lambda_2), device=model.device,  dtype=torch.float32)
         else:
             q_tau1 = VariationalGamma(a_lambda_1, b_lambda_1, rank_T_total_RW1, init_from_prior=True)
             q_tau2 = VariationalGamma(a_lambda_2, b_lambda_2, rank_T_total_RW2, init_from_prior=True)
@@ -1107,11 +1110,11 @@ def train_bayes(
 
             if use_eb_now(epoch):
                 # ----- EB step (damped) -----
-                tau_new = _damped_step(hyper_T["tau"], tau4_target, eta_tau4)
+                tau_new = _damped_step(hyper_T["tau"], tau4_target, eta_tau4, band_tau4)
 
                 if decor_present and not freeze_decor:
-                    tau_1_new = _damped_step(hyper_D["tau_1"], tau1_target, eta_tau1)
-                    tau_2_new = _damped_step(hyper_D["tau_2"], tau2_target, eta_tau2)
+                    tau_1_new = _damped_step(hyper_D["tau_1"], tau1_target, eta_tau1, band_decor)
+                    tau_2_new = _damped_step(hyper_D["tau_2"], tau2_target, eta_tau2, band_decor)
                 else:
                     # keep previous values while frozen or if no decor
                     tau_1_new = float(hyper_D.get("tau_1", 0.0))
@@ -1148,12 +1151,12 @@ def train_bayes(
                     tau_2_new = float(hyper_D.get("tau_2", 0.0))
 
             # ---- write-back (always write, but τ1/τ2 unchanged during freeze) ----
-            hyper_T["tau"] = tau_new
-            hyper_D["tau_1"] = tau_1_new
-            hyper_D["tau_2"] = tau_2_new
-            model.hyperparameter["transformation"]["tau"] = tau_new
-            model.hyperparameter["decorrelation"]["tau_1"] = tau_1_new
-            model.hyperparameter["decorrelation"]["tau_2"] = tau_2_new
+            hyper_T["tau"] = float(tau_new)
+            hyper_D["tau_1"] = float(tau_1_new)
+            hyper_D["tau_2"] = float(tau_2_new)
+            model.hyperparameter["transformation"]["tau"] = float(tau_new)
+            model.hyperparameter["decorrelation"]["tau_1"] = float(tau_1_new)
+            model.hyperparameter["decorrelation"]["tau_2"] = float(tau_2_new)
 
         # ------------------- verbose
         if verbose:
