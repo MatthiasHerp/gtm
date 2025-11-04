@@ -153,7 +153,9 @@ class VI_Model(nn.Module):
         mcmc_samples: int = 100,
         seed: int | None = None,
         beta_kl=1.0,
-        beta_logp=1.0
+        beta_logp=1.0,
+        tau_pack: 'TauPack'=None,
+        beta_tau_kl=1.0
     ):
         """
         One stochastic-ELBO step (no optimizer step).
@@ -164,7 +166,8 @@ class VI_Model(nn.Module):
         thetas = self.sample_theta(mcmc_samples, antithetic=True)  # [S, D]
         log_q_vals = self.log_q(thetas)         # [S]
 
-        log_p_tilde_vals = []  # log unnormalized posterior per sample
+        log_p_tilde_vals = []   # log unnormalized posterior per sample
+        tau_kl_terms = []       # per-sample KL(qτ||pτ) contributions
         neg_likelihood_list = []
         ll_list = []
         
@@ -182,7 +185,24 @@ class VI_Model(nn.Module):
         for s in range(mcmc_samples):
             theta_s = thetas[s]
             params_s = self._theta_to_state_dict(theta_s)  # tensors keep graph to (mu, rho)
-
+            
+            if tau_pack is not None:
+                hT_s, hD_s, tau_kl = tau_pack.sample_once(
+                    decor_present= not (model.number_decorrelation_layers ==0 or model.transform_only),
+                    generator=self._rng
+                )
+                tau_kl_terms.append(tau_kl.reshape(()))
+                hyper_T_s = hT_s.get('tau')#{"tau": hT_s.get("tau", hyperparameter_transformation)}
+                hyper_D_s = {
+                    "tau_1": hD_s.get("tau_1", hyperparameter_decorrelation.get("tau_1", 0.0)),
+                    "tau_2": hD_s.get("tau_2", hyperparameter_decorrelation.get("tau_2", 0.0)),
+                }
+                
+            else:
+                 # EB/CAVI path (exactly what you do today)
+                hyper_T_s = hyperparameter_transformation
+                hyper_D_s = hyperparameter_decorrelation
+                
             with _reparametrize_module(self.model, params_s):
                 # Pick one key from the schema that you know we optimize
                 name0, _ = self._schema[0]
@@ -191,11 +211,11 @@ class VI_Model(nn.Module):
                 if not torch.allclose(live, want, atol=1e-6, rtol=1e-6):
                     raise RuntimeError(f"Reparam not visible for {name0}")
                 
-            # Use your provided objective to compute: posterior = NLL + priors
+                # Use your provided objective to compute: posterior = NLL + priors
                 out = model.__bayesian_training_objective__(
                     samples=samples,
-                    hyperparameters_transformation=hyperparameter_transformation,
-                    hyperparameters_decorrelation=hyperparameter_decorrelation,
+                    hyperparameters_transformation=hyper_T_s,
+                    hyperparameters_decorrelation=hyper_D_s,
                     N_total=sample_size_total,
                     B=samples.shape[0]
                 )
@@ -211,13 +231,13 @@ class VI_Model(nn.Module):
             ll_list.append(-out['nll_batch'].reshape(()))
             
             
-            #Transformation Layer
+            #Transformation Layer stats
             prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
             qf_neg_prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_qf'].reshape(()))
             qf_sum_trans_list.append(out["negative_transformation_prior"]["qf_sum"].reshape(()))
             qf_mean_trans_list.append(out['negative_transformation_prior']['qf_mean'].reshape(()))
             
-            #Decorrelation Layer
+            #Decorrelation Layer stats
             prior_dec_list.append(out['negative_decorrelation_prior']['neg_log_prior_total'].reshape(()))
             qf1_sum_dec_list.append(out['negative_decorrelation_prior']['qf1'])
             qf2_sum_dec_list.append(out['negative_decorrelation_prior']['qf2'])
@@ -225,12 +245,20 @@ class VI_Model(nn.Module):
         log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
         # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
         # (Note: additive constant log p(y) cancels in optimization)
-        elbo_loss = torch.mean(beta_kl*log_q_vals - beta_logp*log_p_tilde_vals) #-ELBO (i.e., E_q[log q - log p̃])
+        elbo_core = torch.mean(beta_kl*log_q_vals - beta_logp*log_p_tilde_vals) #-ELBO (i.e., E_q[log q - log p̃])
 
+        
+        if tau_pack is not None:
+            tau_kl_terms = torch.stack(tau_kl_terms)    #[S]
+            elbo_loss = elbo_core + beta_tau_kl*torch.mean(tau_kl_terms)
+        else:
+            elbo_loss = elbo_core
+        
+        # Collate Monitors
         neg_likelihood_list= torch.stack(neg_likelihood_list)
         ll_list=torch.stack(ll_list)
         
-        # Decorrelation Layer
+        # Decorrelation Layer Stats
         prior_dec_list = torch.stack(prior_dec_list)
         qf1_sum_dec_list = torch.stack(qf1_sum_dec_list)
         qf2_sum_dec_list = torch.stack(qf2_sum_dec_list)
@@ -274,7 +302,9 @@ class VI_Model(nn.Module):
         sample_size: int,
         S: int = 8,
         batch_size=1,
-        seed: int | None = None
+        seed: int | None = None,
+        tau_nodes=None,
+        use_tau_vi_now: bool = False,
     ) -> float:
         """For Validation used the ELPD Approach."""
     
@@ -285,19 +315,40 @@ class VI_Model(nn.Module):
             theta_s = thetas[s]
             params_s = self._theta_to_state_dict(theta_s)
             
+            # --- NEW: per-θ τ draw (only when τ-VI is on now) ---
+            if use_tau_vi_now and (tau_nodes is not None):
+                # Draw 1 sample for each τ node (uses same generator self._rng)
+                tau4_s = float(tau_nodes.node4.sample_tau(1, generator=self._rng)[0][0]) if tau_nodes.node4 is not None else float(hyperparameter_transformation["tau"])
+                if (tau_nodes.node1 is not None) and (tau_nodes.node2 is not None):
+                    tau1_s = float(tau_nodes.node1.sample_tau(1, generator=self._rng)[0][0])
+                    tau2_s = float(tau_nodes.node2.sample_tau(1, generator=self._rng)[0][0])
+                else:
+                    tau1_s = float(hyperparameter_decorrelation.get("tau_1", 0.0))
+                    tau2_s = float(hyperparameter_decorrelation.get("tau_2", 0.0))
+                hyper_T_s = dict(hyperparameter_transformation)
+                hyper_T_s["tau"] = tau4_s
+                
+                hyper_D_s = dict(hyperparameter_decorrelation)
+                hyper_D_s["tau_1"] = tau1_s; hyper_D_s["tau_2"] = tau2_s
+            else:
+                # Fall back to EB/CAVI fixed τ’s
+                hyper_T_s = hyperparameter_transformation
+                hyper_D_s = hyperparameter_decorrelation
+            # --- END NEW ---
+            
             with _reparametrize_module(model, params_s):
                 
                 out = model.__bayesian_training_objective__(
                     samples=y_batch,
-                    hyperparameters_transformation=hyperparameter_transformation,
-                    hyperparameters_decorrelation=hyperparameter_decorrelation,
+                    hyperparameters_transformation=hyper_T_s["tau"],
+                    hyperparameters_decorrelation=hyper_D_s,
                     N_total=sample_size,
                     B=batch_size
                 )
                 
                 nll = out["negative_log_lik"].reshape(())
                 
-                ll_list.append(-nll)               # <<< THE MISSING MINUS
+                ll_list.append(-nll)               
         ll = torch.stack(ll_list)                  # [S], each is SUM log-lik for the batch
         return float(_logmeanexp(ll, dim=0))       # SUM log predictive for the batch
 
@@ -357,3 +408,111 @@ class VariationalGamma:
             + a_hat * (b0 / b_hat - 1.0)
         )
         return float(term)
+
+class TauNode(nn.Module):
+    """
+    Variational node for a single precision parameter τ with:
+      prior:  Gamma(a, b)  (shape a, rate b)
+      variational: z = log τ  ~ Normal(mu, sigma), τ = softplus(z) + eps_floor
+    """
+    def __init__(self, a: float, b: float, mu_init: float=-2.0, log_sigma_init: float=-2.0, eps_floor: float=1e-8, device="cpu"):
+        super().__init__()
+        self.register_buffer("a", torch.as_tensor(float(a), dtype=torch.float32, device=device))
+        self.register_buffer("b", torch.as_tensor(float(b), dtype=torch.float32, device=device))
+        self.eps_floor = float(eps_floor)
+
+        self.mu         = nn.Parameter(torch.tensor(float(mu_init), dtype=torch.float32, device=device))
+        self.log_sigma  = nn.Parameter(torch.tensor(float(log_sigma_init), dtype=torch.float32, device=device))
+
+    def sample_tau(self, n_samples: int, generator: torch.Generator | None = None):
+        """Reparameterized samples τ_i and all log-densities needed for ELBO."""
+        sigma = torch.exp(self.log_sigma) + 1e-9
+        normal = Normal(self.mu, sigma)
+        
+        try:
+            # Newer torch (>=2.2) supports generator argument
+            z = normal.rsample((n_samples,), generator=generator)   # [S]
+        except TypeError:
+            # Fallback for older torch (<2.2): ignore generator
+            if generator is not None:
+                # manually sample reproducibly if generator provided
+                eps = torch.randn((n_samples,), device=self.mu.device, generator=generator)
+            else:
+                eps = torch.randn((n_samples,), device=self.mu.device)
+            z = self.mu + sigma * eps
+        
+
+        tau = torch.nn.functional.softplus(z) + self.eps_floor  # [S]
+        # log q(τ) = log N(z;μ,σ²) - log dτ/dz ;  dτ/dz = sigmoid(z)  (for softplus)
+        logq_z = normal.log_prob(z)                             # [S]
+        log_dtau_dz = torch.log(torch.sigmoid(z) + 1e-12)       # [S]
+        logq_tau = logq_z - log_dtau_dz
+
+        # log p(τ) under Gamma(a, b):  a*log b - lgamma(a) + (a-1)log τ - b τ
+        logp_tau = (self.a * torch.log(self.b + 1e-12) - torch.lgamma(self.a)
+                    + (self.a - 1.0) * torch.log(tau + 1e-12) - self.b * tau)
+
+        # Return τ samples + MC estimates needed
+        return tau, logp_tau, logq_tau
+
+    def kl_mc(self, S: int = 8, generator: torch.Generator | None = None):
+        """Monte Carlo KL = E_q[log q - log p]."""
+        _, logp, logq = self.sample_tau(S, generator=generator)
+        return (logq - logp).mean()
+
+    def mean_tau_mc(self, S: int = 128, generator: torch.Generator | None = None):
+        tau, _, _ = self.sample_tau(S, generator=generator)
+        return tau.mean()
+
+    def clamp_sigma(self, min_val: float=1e-3, max_val: float=3.0):
+        with torch.no_grad():
+            self.log_sigma.clamp_(min=torch.log(torch.tensor(min_val)), max=torch.log(torch.tensor(max_val)))
+            
+
+class TauPack:
+    """
+    Holds up to three tau nodes (τ4 for transformation, τ1/τ2 for decor),
+    samples them on demand, and returns:
+      - hyper_T / hyper_D dictionaries for the model call
+      - (logq - logp) for the τ KL contribution (per-sample, to add to ELBO)
+    """
+    def __init__(self, node4: TauNode | None, node1: TauNode | None, node2: TauNode | None):
+        self.node4 = node4
+        self.node1 = node1
+        self.node2 = node2
+
+    def sample_once(self, decor_present: bool, generator=None):
+        logq_minus_logp = 0.0
+        # τ4
+        if self.node4 is not None:
+            tau4, logp4, logq4 = self.node4.sample_tau(1, generator=generator)
+            tau4 = tau4.squeeze(0)
+            logq_minus_logp = logq_minus_logp + (logq4 - logp4).squeeze(0)
+            hyper_T = {"tau": tau4}
+        else:
+            hyper_T = {}
+
+        # τ1, τ2
+        if decor_present and (self.node1 is not None) and (self.node2 is not None):
+            t1, p1, q1 = self.node1.sample_tau(1, generator=generator)
+            t2, p2, q2 = self.node2.sample_tau(1, generator=generator)
+            t1, t2 = t1.squeeze(0), t2.squeeze(0)
+            logq_minus_logp = logq_minus_logp + (q1 - p1).squeeze(0) + (q2 - p2).squeeze(0)
+            hyper_D = {"tau_1": t1, "tau_2": t2}
+        else:
+            hyper_D = {}
+        return hyper_T, hyper_D, logq_minus_logp
+    
+    @staticmethod
+    def _tau_parameters(pack: "TauPack"):
+        ps = []
+        if pack is None:
+            return ps
+        if pack.node4 is not None:
+            ps += [pack.node4.mu, pack.node4.log_sigma]
+        if pack.node1 is not None:
+            ps += [pack.node1.mu, pack.node1.log_sigma]
+        if pack.node2 is not None:
+            ps += [pack.node2.mu, pack.node2.log_sigma]
+        return ps
+
