@@ -757,6 +757,9 @@ class GTM(nn.Module):
         #Optimization method
         beta_kl_start: float = 3.0,    # try 1.5–3.0
         beta_kl_anneal_epochs: int = 20,  # how fast to decay to 1.0
+        tau_vi_mode = "after_warm", #"off" | "after_warm" | "always"
+        tau_kl_beta = 1.0,
+        tau_vi_sigma_init = 0.25
     ) -> dict[str, Tensor]:
         
         """
@@ -898,8 +901,12 @@ class GTM(nn.Module):
                 warm_sigma_epochs= warm_sigma_epochs,  # try 5–10
                 
                 #Optimization method
-                beta_kl_start = beta_kl_start,    # try 1.5–3.0
+                beta_kl_start=beta_kl_start,    # try 1.5–3.0
                 beta_kl_anneal_epochs = beta_kl_anneal_epochs,  # how fast to decay to 1.0
+                
+                tau_vi_mode=tau_vi_mode, #"off" | "after_warm" | "always"
+                tau_kl_beta=tau_kl_beta,
+                tau_vi_sigma_init=tau_vi_sigma_init
                 )
         else:
             raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')

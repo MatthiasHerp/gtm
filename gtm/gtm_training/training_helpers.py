@@ -8,7 +8,7 @@ import time
 import re
 from functools import reduce
 from typing import Literal, TYPE_CHECKING
-from math import pi, cos, isnan
+from math import pi, cos, isnan, log, expm1
 # import warnings
 # from torch import nn
 import numpy as np
@@ -23,7 +23,7 @@ from torch.optim import Optimizer, Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from gtm.gtm_training.training_bayes import VI_Model, VariationalGamma
+from gtm.gtm_training.training_bayes import VI_Model, VariationalGamma, TauNode, TauPack
 
 if TYPE_CHECKING:
     from ..gtm_model.gtm import GTM # type-only; no runtime import
@@ -815,7 +815,9 @@ def _evaluate_epoch(
     hyper_D,
     sample_size_total,
     S_val=8, 
-    seed=123
+    seed=123,
+    tau_nodes=None,
+    use_tau_vi_now: bool=False,
     ):
     nn.Module.train(model, False)
     total_loglik_sum, nobs = 0.0, 0
@@ -829,6 +831,8 @@ def _evaluate_epoch(
             S=S_val,
             sample_size=1,
             seed=seed,
+            tau_nodes=tau_nodes,
+            use_tau_vi_now=use_tau_vi_now,
         )
         total_loglik_sum += logsum
         nobs += y.shape[0]
@@ -847,37 +851,47 @@ def _make_key_filter(patterns_include=None, patterns_exclude=None):
     return _keep
 
 
-def _beta_kl_at(epoch: int, beta_kl_anneal_epochs, beta_kl_start) -> float:
+def _beta_kl_at(epoch: int, beta_kl_anneal_epochs, beta_kl_start, beta_min=1.1) -> float:
     t = min(1.0, epoch / max(1, beta_kl_anneal_epochs))
-    return beta_kl_start * (1.0 - t) + 1.0 * t
+    return beta_kl_start * (1.0 - t) + beta_min * t
 
-
-def _gamma_mean(a, b): 
-    return float(a) / max(float(b), 1e-12)
-
+def _gamma_mean(a, b): return float(a) / max(float(b), 1e-12)
 
 def _seed_q_from_mean(q, tau_current: float):
     # mean(q) = a_hat / b_hat -> fix a_hat, adjust b_hat to match current mean
-    a_hat = q.a0 + 0.5 * q.rank_total
-    b_hat = max(a_hat / float(tau_current), 1e-12)
-    q.a_hat = float(a_hat)
-    q.b_hat = float(b_hat)
+    a_hat=q.a0 + 0.5 * q.rank_total
+    b_hat=max(a_hat / float(tau_current), 1e-12)
+    q.a_hat=float(a_hat)
+    q.b_hat=float(b_hat)
 
+
+def _softplus_inv(x: float, eps: float = 1e-8) -> float:
+    # Numerically stable inverse softplus for positive x
+    x = max(x, eps)
+    return float(log(expm1(x)))
 
 def _seed_q_from_eb(q, E_qf_total_mc: float):
     # EB fixed point: a_hat=a0+rank/2, b_hat=b0+0.5*E[qf]
-    q.a_hat = float(q.a0 + 0.5 * q.rank_total)
-    q.b_hat = float(q.b0 + 0.5 * float(E_qf_total_mc))
+    q.a_hat=float(q.a0 + 0.5 * q.rank_total)
+    q.b_hat=float(q.b0 + 0.5 * float(E_qf_total_mc))
+    
+def _tau_times_qf_target(a, b, r_half, Eqf):
+    # r_half = rank/2
+    num = (a + r_half) * Eqf
+    den = (b + 0.5 * Eqf)
+    return float(num / max(den, 1e-12))
 
 def _damped_step(prev, target, eta, band=0.20):
-    """One-step EMA toward target with per-epoch change capped to [rmin, rmax]×."""
-    target=float(target)
+    """
+    One-step EMA toward target with per-epoch change capped to [1-band, 1+band]× of the previous value.
+    """
+    prev = float(prev)
+    target = float(target)
     raw = (1.0 - float(eta)) * prev + float(eta) * target
-    lo = prev*(1.0-band)
-    hi= prev*(1.0-band)
-    
+    lo = prev * (1.0 - band)
+    hi = prev * (1.0 + band)
     return float(max(lo, min(hi, raw)))
-    
+
 def train_bayes(
     model: "GTM",
     train_dataloader,
@@ -913,12 +927,26 @@ def train_bayes(
     use_empirical_bayes: bool = False,
     eb_warm_then_cavi: bool = True,   # EB for first warm_tau_epochs only
     band_tau4 = 0.20,
-    band_decor = 0.15
+    band_decor = 0.15,
+    
+    # --- τ VI toggles (keep EB as default behavior) ---
+    tau_vi_mode = "after_warm", #"off" | "after_warm" | "always"
+    tau_kl_beta = 1.0,
+    tau_vi_sigma_init = 0.25
+    
 ):
+    TAU4_FLOOR = 1e-3
+    TAU1_FLOOR = 1e-2
+    TAU2_FLOOR = 1e-2
+    S_tau_monitor = 128  
+    
     was_training = model.training
     nn.Module.train(model, False)
     N_total = len(train_dataloader.dataset)
-
+    
+    decor_present = not (model.number_decorrelation_layers == 0 or model.transform_only)
+    
+    
     # ------------------- key filter
     if model.number_decorrelation_layers == 0 or model.transform_only:
         parameters_patterns = [r"^transformation\.params\.\d+$"]
@@ -973,7 +1001,7 @@ def train_bayes(
     hyper_T["tau"] = tau_4
 
     # ------------------- Decorrelation (τ1, τ2)
-    if not (model.number_decorrelation_layers == 0 or model.transform_only):
+    if decor_present:
         K_RW1 = model.decorrelation_layers[0].priors.K_prior_RW1
         K_RW2 = model.decorrelation_layers[0].priors.K_prior_RW2
         rank_T_total_RW1 = (K_RW1.shape[0] - 1) * num_margins
@@ -999,6 +1027,32 @@ def train_bayes(
         hyper_D["tau_1"], hyper_D["tau_2"] = 0.0, 0.0
 
     q_tau4 = None; q_tau1 = None; q_tau2 = None
+    
+    # ------------------- Full Bayesian taus 
+    
+    use_tau_vi_anytime = (tau_vi_mode in ("after_warm", "always"))
+    tau_nodes = None
+    if use_tau_vi_anytime:
+        
+        mu4 = _softplus_inv(float(hyper_T["tau"]))
+        node4 = TauNode(a=float(a_lambda), b=float(b_lambda),
+                        mu_init=mu4, log_sigma_init=log(tau_vi_sigma_init), device=model.device)
+        
+        if decor_present:
+            mu1 = _softplus_inv(float(hyper_D["tau_1"]))
+            mu2 = _softplus_inv(float(hyper_D["tau_2"]))
+            
+            node1 = TauNode(a=float(a_lambda_1), b=float(b_lambda_1),
+                        mu_init=mu1, log_sigma_init=log(tau_vi_sigma_init), device=model.device)
+            
+            node2 = TauNode(a=float(a_lambda_2), b=float(b_lambda_2),
+                        mu_init=mu2, log_sigma_init=log(tau_vi_sigma_init), device=model.device)
+        else:
+            
+            node1 = node2 = None
+        
+        tau_nodes = TauPack(node4=node4, node2=node2, node1=node1)
+    
 
     # ------------------- optimizer & scheduler
     if rho_lr_multiplier != 1.0:
@@ -1008,7 +1062,17 @@ def train_bayes(
         ])
     else:
         opt = torch.optim.Adam([p for p in VI.parameters() if p.requires_grad], lr=lr)
-
+        
+    if use_tau_vi_anytime and tau_nodes is not None:
+        tau_params = TauPack._tau_parameters(tau_nodes)
+        if len(tau_params) > 0:
+            opt.add_param_group(
+                {
+                    "params": tau_params,
+                    "lr": lr
+                }
+            )
+        
     sched = ReduceLROnPlateau(opt, mode="min", factor=sched_factor, patience=sched_patience,
                               threshold=sched_threshold, cooldown=sched_cooldown,
                               min_lr=sched_min_lr, verbose=verbose)
@@ -1022,6 +1086,10 @@ def train_bayes(
 
     for epoch in tqdm(range(iterations)):
         beta_kl = _beta_kl_at(epoch, beta_kl_anneal_epochs, beta_kl_start)
+        use_tau_vi_now = (
+            (tau_vi_mode == "always") or 
+            (tau_vi_mode == "after_warm" and epoch >= warm_tau_epochs)
+        )
         if mc_ramp_every and epoch > 0 and (epoch % mc_ramp_every == 0):
             mcmc_sample_train = min(mc_ramp_max, max(mcmc_sample_train * 2, 1))
 
@@ -1046,7 +1114,10 @@ def train_bayes(
                           model=model,
                           mcmc_samples=mcmc_sample_train,
                           seed=global_seed + epoch * 10_000 + b,
-                          beta_kl=beta_kl)
+                          beta_kl=beta_kl,
+                          tau_pack=(tau_nodes if use_tau_vi_now else None),
+                          beta_tau_kl = tau_kl_beta
+                          )
 
             loss = out["elbo_loss"]
             if not torch.isfinite(loss):
@@ -1055,15 +1126,18 @@ def train_bayes(
             torch.nn.utils.clip_grad_norm_(VI.parameters(), 5.0)
             opt.step()
 
-            running += float(loss.item()); n_batches += 1; obs_seen_epoch += B
-            ndp += out['neg_prior_decorrelation'].cpu().numpy()
-            ntp += out['neg_prior_transformation'].cpu().numpy()
-            ll_batch += out['log_likelihhod_batch']
-            eb_E_qf_num += float(out['transformation_mean_qf'])
-            E_qf_sum_accum += float(out['transformation_sum_qf'])
-            qf_1_dec += float(out['qf1_decorrelation'])
-            qf_2_dec += float(out['qf2_decorrelation'])
-            eb_count += 1
+            with torch.no_grad():
+                VI.sigma.data.clamp_(min=0.03, max=0.10)   # narrow band; widen if needed
+            
+            running         += float(loss.item()); n_batches += 1; obs_seen_epoch += B
+            ndp             += out['neg_prior_decorrelation'].cpu().numpy()
+            ntp             += out['neg_prior_transformation'].cpu().numpy()
+            ll_batch        += out['log_likelihhod_batch']
+            eb_E_qf_num     += float(out['transformation_mean_qf'])
+            E_qf_sum_accum  += float(out['transformation_sum_qf'])
+            qf_1_dec        += float(out['qf1_decorrelation'])
+            qf_2_dec        += float(out['qf2_decorrelation'])
+            eb_count        += 1
 
         if n_batches == 0:
             raise RuntimeError("No batches processed. Check dataloader.")
@@ -1073,10 +1147,12 @@ def train_bayes(
 
         if validate_dataloader is not None:
             val_elpd = _evaluate_epoch(VI, model, validate_dataloader,
-                                       hyper_T['tau'], hyper_D,
+                                       hyper_T, hyper_D,
                                        S_val=mcmc_sample_val,
                                        sample_size_total=N_total,
-                                       seed=global_seed + 12345)
+                                       seed=global_seed + 12345,
+                                       tau_nodes=tau_nodes, use_tau_vi_now=use_tau_vi_now,
+                                       )
             val_history.append(val_elpd); metric = -val_elpd
         else:
             metric = train_loss
@@ -1093,14 +1169,13 @@ def train_bayes(
         # ------------------- τ updates (EB or CAVI) with per-τ damping
         freeze_decor = (epoch < warm_tau_epochs) 
                 # ------------------- τ updates (EB or CAVI) with per-τ damping + warm-up freeze for decor
+        # ---- τ updates (EB or CAVI) with per-τ damping + warm-up freeze for decor ----
         if eb_count > 0:
             E_qf_total_mc = E_qf_sum_accum / eb_count
             E_qf1_total_mc = qf_1_dec / eb_count
             E_qf2_total_mc = qf_2_dec / eb_count
 
-            decor_present = not (model.number_decorrelation_layers == 0 or model.transform_only)
-
-            # EB fixed-point targets (used both for EB and monitor)
+            # EB fixed-point targets (for EB/CAVI and monitoring)
             tau4_target = float((a_lambda + 0.5 * rank_T_total) / (b_lambda + 0.5 * E_qf_total_mc))
             if decor_present:
                 tau1_target = float((a_lambda_1 + 0.5 * rank_T_total_RW1) / (b_lambda_1 + 0.5 * E_qf1_total_mc))
@@ -1111,17 +1186,14 @@ def train_bayes(
             if use_eb_now(epoch):
                 # ----- EB step (damped) -----
                 tau_new = _damped_step(hyper_T["tau"], tau4_target, eta_tau4, band_tau4)
-
                 if decor_present and not freeze_decor:
                     tau_1_new = _damped_step(hyper_D["tau_1"], tau1_target, eta_tau1, band_decor)
                     tau_2_new = _damped_step(hyper_D["tau_2"], tau2_target, eta_tau2, band_decor)
                 else:
-                    # keep previous values while frozen or if no decor
                     tau_1_new = float(hyper_D.get("tau_1", 0.0))
                     tau_2_new = float(hyper_D.get("tau_2", 0.0))
-
             else:
-                # ----- CAVI step (variational gamma), but only create/update decor q's after freeze -----
+                # ----- CAVI (variational gamma) -----
                 if q_tau4 is None:
                     q_tau4 = VariationalGamma(a_lambda, b_lambda, rank_T_total, init_from_prior=True)
                     _seed_q_from_mean(q_tau4, tau_current=float(hyper_T["tau"]))
@@ -1136,38 +1208,48 @@ def train_bayes(
                     if q_tau2 is None:
                         q_tau2 = VariationalGamma(a_lambda_2, b_lambda_2, rank_T_total_RW2, init_from_prior=True)
                         _seed_q_from_mean(q_tau2, tau_current=float(hyper_D["tau_2"]))
-
                     q_tau1.update_from_E_qf_total(E_qf_total=E_qf1_total_mc)
                     q_tau2.update_from_E_qf_total(E_qf_total=E_qf2_total_mc)
-
                     tau1_mean = float(q_tau1.mean)
                     tau2_mean = float(q_tau2.mean)
-
                     tau_1_new = _damped_step(hyper_D["tau_1"], tau1_mean, eta_tau1)
                     tau_2_new = _damped_step(hyper_D["tau_2"], tau2_mean, eta_tau2)
                 else:
-                    # keep previous values while frozen or if no decor
                     tau_1_new = float(hyper_D.get("tau_1", 0.0))
                     tau_2_new = float(hyper_D.get("tau_2", 0.0))
 
-            # ---- write-back (always write, but τ1/τ2 unchanged during freeze) ----
-            hyper_T["tau"] = float(tau_new)
-            hyper_D["tau_1"] = float(tau_1_new)
-            hyper_D["tau_2"] = float(tau_2_new)
-            model.hyperparameter["transformation"]["tau"] = float(tau_new)
-            model.hyperparameter["decorrelation"]["tau_1"] = float(tau_1_new)
-            model.hyperparameter["decorrelation"]["tau_2"] = float(tau_2_new)
+            # ---- write-back only if NOT using τ-VI ----
+            if not use_tau_vi_now:
+                tau_new   = max(float(tau_new),  TAU4_FLOOR)
+                tau_1_new = max(float(tau_1_new), TAU1_FLOOR)
+                tau_2_new = max(float(tau_2_new), TAU2_FLOOR)
+                hyper_T["tau"]   = tau_new
+                hyper_D["tau_1"] = tau_1_new
+                hyper_D["tau_2"] = tau_2_new
+                model.hyperparameter["transformation"]["tau"]   = tau_new
+                model.hyperparameter["decorrelation"]["tau_1"]  = tau_1_new
+                model.hyperparameter["decorrelation"]["tau_2"]  = tau_2_new
+        # τ-VI active → skip write-back (τ sampled from variational nodes)
 
         # ------------------- verbose
         if verbose:
             lrs = [pg["lr"] for pg in opt.param_groups]
-            # compute “targets” for the monitor line (use last E_qf_* to avoid extra passes)
-            tgt4 = float(0.5 * rank_T_total)
-            if not (model.number_decorrelation_layers == 0 or model.transform_only):
-                tgt1 = float(0.5 * rank_T_total_RW1)
-                tgt2 = float(0.5 * rank_T_total_RW2)
+            tgt4 = _tau_times_qf_target(float(a_lambda),  float(b_lambda),  0.5*rank_T_total,      E_qf_total_mc)
+            tgt1 = _tau_times_qf_target(float(a_lambda_1),float(b_lambda_1),0.5*rank_T_total_RW1,  E_qf1_total_mc) if decor_present else 0.0
+            tgt2 = _tau_times_qf_target(float(a_lambda_2),float(b_lambda_2),0.5*rank_T_total_RW2,  E_qf2_total_mc) if decor_present else 0.0
+
+            # collect τ means (qτ) and targets (EB)
+            if use_tau_vi_now and (tau_nodes is not None):
+                with torch.no_grad():
+                    
+                    tau4_mean = float(tau_nodes.node4.mean_tau_mc(S_tau_monitor, generator=gen)) if tau_nodes.node4 else 0.0
+                    if decor_present and tau_nodes.node1 and tau_nodes.node2:
+                        tau1_mean = float(tau_nodes.node1.mean_tau_mc(S_tau_monitor, generator=gen))
+                        tau2_mean = float(tau_nodes.node2.mean_tau_mc(S_tau_monitor, generator=gen))
+                    else:
+                        tau1_mean = tau2_mean = 0.0
             else:
-                tgt1 = tgt2 = 0.0
+                tau4_mean = tau1_mean = tau2_mean = 0.0
 
             print(
                 f"\nIteration [{epoch+1}/{iterations}] "
@@ -1176,6 +1258,8 @@ def train_bayes(
                 f"σ̄={float(VI.sigma.mean()):.4f} σmin={float(VI.sigma.min()):.4f} σmax={float(VI.sigma.max()):.4f}  "
                 f"β_KL={beta_kl:.2f}\n"
                 f"τ₄={float(hyper_T['tau']):.5g}  τ₁={float(hyper_D['tau_1']):.5g}  τ₂={float(hyper_D['tau_2']):.5g}\n"
+                f"(qτ means) τ₄≈{tau4_mean:.5g}  τ₁≈{tau1_mean:.5g}  τ₂≈{tau2_mean:.5g}  "
+                f"|  (EB targets) τ₄*≈{tau4_target:.5g}  τ₁*≈{tau1_target:.5g}  τ₂*≈{tau2_target:.5g}\n"
                 f"E_qf_total≈{E_qf_total_mc:.4f}  E_qf1≈{E_qf1_total_mc:.4f}  E_qf2≈{E_qf2_total_mc:.4f}\n"
                 f"[monitor] τ₄·E_qf≈{float(hyper_T['tau']) * E_qf_total_mc:.2f}  target≈{tgt4:.2f} | "
                 f"τ₁·E_qf1≈{float(hyper_D['tau_1']) * E_qf1_total_mc:.2f}  target≈{tgt1:.2f} | "
