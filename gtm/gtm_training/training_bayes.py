@@ -192,7 +192,7 @@ class VI_Model(nn.Module):
                     generator=self._rng
                 )
                 tau_kl_terms.append(tau_kl.reshape(()))
-                hyper_T_s = hT_s.get('tau')#{"tau": hT_s.get("tau", hyperparameter_transformation)}
+                hyper_T_s = {"tau": hT_s.get("tau", hyperparameter_transformation)}
                 hyper_D_s = {
                     "tau_1": hD_s.get("tau_1", hyperparameter_decorrelation.get("tau_1", 0.0)),
                     "tau_2": hD_s.get("tau_2", hyperparameter_decorrelation.get("tau_2", 0.0)),
@@ -214,7 +214,7 @@ class VI_Model(nn.Module):
                 # Use your provided objective to compute: posterior = NLL + priors
                 out = model.__bayesian_training_objective__(
                     samples=samples,
-                    hyperparameters_transformation=hyper_T_s,
+                    hyperparameters_transformation=hyper_T_s["tau"],
                     hyperparameters_decorrelation=hyper_D_s,
                     N_total=sample_size_total,
                     B=samples.shape[0]

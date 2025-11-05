@@ -8,7 +8,7 @@ import time
 import re
 from functools import reduce
 from typing import Literal, TYPE_CHECKING
-from math import pi, cos, isnan, log, expm1
+from math import pi, cos, isnan, log, expm1, exp
 # import warnings
 # from torch import nn
 import numpy as np
@@ -1069,7 +1069,7 @@ def train_bayes(
             opt.add_param_group(
                 {
                     "params": tau_params,
-                    "lr": lr
+                    "lr": lr * 1.5
                 }
             )
         
@@ -1108,7 +1108,7 @@ def train_bayes(
                 VI.rho.requires_grad_(True)
 
             out = VI.step(samples=y,
-                          hyperparameter_transformation=hyper_T['tau'],
+                          hyperparameter_transformation=hyper_T,
                           hyperparameter_decorrelation=hyper_D,
                           sample_size_total=N_total,
                           model=model,
@@ -1127,7 +1127,9 @@ def train_bayes(
             opt.step()
 
             with torch.no_grad():
-                VI.sigma.data.clamp_(min=0.03, max=0.10)   # narrow band; widen if needed
+                rho_min = log(exp(0.02) - 1.0)  # softplus^-1(0.02)
+                rho_max = log(exp(0.02) - 1.0)
+                VI.sigma.data.clamp_(min=rho_min, max=rho_max)   # narrow band; widen if needed
             
             running         += float(loss.item()); n_batches += 1; obs_seen_epoch += B
             ndp             += out['neg_prior_decorrelation'].cpu().numpy()
@@ -1251,6 +1253,11 @@ def train_bayes(
             else:
                 tau4_mean = tau1_mean = tau2_mean = 0.0
 
+            # --- NEW: use qτ means in the monitor if τ-VI is on; otherwise fall back to fixed hyper τs
+            tau4_monitor = tau4_mean if use_tau_vi_now else float(hyper_T["tau"])
+            tau1_monitor = tau1_mean if use_tau_vi_now else float(hyper_D["tau_1"])
+            tau2_monitor = tau2_mean if use_tau_vi_now else float(hyper_D["tau_2"])
+            
             print(
                 f"\nIteration [{epoch+1}/{iterations}] "
                 f"train={train_loss:.4f}  val_ELPD={val_elpd:.4f}  "
@@ -1261,9 +1268,9 @@ def train_bayes(
                 f"(qτ means) τ₄≈{tau4_mean:.5g}  τ₁≈{tau1_mean:.5g}  τ₂≈{tau2_mean:.5g}  "
                 f"|  (EB targets) τ₄*≈{tau4_target:.5g}  τ₁*≈{tau1_target:.5g}  τ₂*≈{tau2_target:.5g}\n"
                 f"E_qf_total≈{E_qf_total_mc:.4f}  E_qf1≈{E_qf1_total_mc:.4f}  E_qf2≈{E_qf2_total_mc:.4f}\n"
-                f"[monitor] τ₄·E_qf≈{float(hyper_T['tau']) * E_qf_total_mc:.2f}  target≈{tgt4:.2f} | "
-                f"τ₁·E_qf1≈{float(hyper_D['tau_1']) * E_qf1_total_mc:.2f}  target≈{tgt1:.2f} | "
-                f"τ₂·E_qf2≈{float(hyper_D['tau_2']) * E_qf2_total_mc:.2f}  target≈{tgt2:.2f}\n"
+                f"[monitor] τ₄·E_qf≈{tau4_monitor * E_qf_total_mc:.2f}  target≈{tgt4:.2f} | "
+                f"τ₁·E_qf1≈{tau1_monitor * E_qf1_total_mc:.2f}  target≈{tgt1:.2f} | "
+                f"τ₂·E_qf2≈{tau2_monitor * E_qf2_total_mc:.2f}  target≈{tgt2:.2f}\n"
                 f"ELPD trend → {'IMPROVED! Congrats' if improved else 'NOT improved!'} ({no_improve}/{patience_val})"
             )
 
