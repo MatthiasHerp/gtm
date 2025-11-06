@@ -1127,8 +1127,9 @@ def train_bayes(
             opt.step()
 
             with torch.no_grad():
-                rho_min = log(exp(0.02) - 1.0)  # softplus^-1(0.02)
-                rho_max = log(exp(0.02) - 1.0)
+                def sp_inv(s): return log(exp(float(s)) - 1.0)
+                rho_min = sp_inv(0.02)  # softplus^-1(0.02)
+                rho_max = sp_inv(0.06)
                 VI.sigma.data.clamp_(min=rho_min, max=rho_max)   # narrow band; widen if needed
             
             running         += float(loss.item()); n_batches += 1; obs_seen_epoch += B
