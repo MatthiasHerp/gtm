@@ -199,7 +199,7 @@ class VI_Model(nn.Module):
                 }
                 
             else:
-                 # EB/CAVI path (exactly what you do today)
+                # EB/CAVI path (exactly what you do today)
                 hyper_T_s = hyperparameter_transformation
                 hyper_D_s = hyperparameter_decorrelation
                 
@@ -483,11 +483,12 @@ class TauPack:
 
     def sample_once(self, decor_present: bool, generator=None):
         logq_minus_logp = 0.0
+        
         # τ4
         if self.node4 is not None:
             tau4, logp4, logq4 = self.node4.sample_tau(1, generator=generator)
             tau4 = tau4.squeeze(0)
-            logq_minus_logp = logq_minus_logp + (logq4 - logp4).squeeze(0)
+            logq_minus_logp = logq_minus_logp + (logq4 - logp4).squeeze(0) #KL Divergenve for τ4
             hyper_T = {"tau": tau4}
         else:
             hyper_T = {}
@@ -497,7 +498,7 @@ class TauPack:
             t1, p1, q1 = self.node1.sample_tau(1, generator=generator)
             t2, p2, q2 = self.node2.sample_tau(1, generator=generator)
             t1, t2 = t1.squeeze(0), t2.squeeze(0)
-            logq_minus_logp = logq_minus_logp + (q1 - p1).squeeze(0) + (q2 - p2).squeeze(0)
+            logq_minus_logp = logq_minus_logp + (q1 - p1).squeeze(0) + (q2 - p2).squeeze(0) #KL Divergenve for τ1, τ2
             hyper_D = {"tau_1": t1, "tau_2": t2}
         else:
             hyper_D = {}
