@@ -612,6 +612,10 @@ class Transformation(nn.Module):
 
         return_dict = self.create_return_dict_transformation(input)
 
+        out_cols = []
+        first_cols = []
+        logd_cols = []  # if you still want to store explicitly; you can also derive from first_cols later
+        
         for var_num in range(self.number_variables):
 
             if self.number_covariates > 1:
@@ -624,36 +628,67 @@ class Transformation(nn.Module):
             else:
                 self.spline_prediction_current = self.spline_prediction
 
-            return_dict["output"][:, var_num], second_order_ridge_pen, _, _ = (
-                self.spline_prediction_current(
-                    input,
-                    var_num,
-                    covariate,
-                    derivativ=0,
-                    return_penalties=True,
-                    monotonically_increasing=True if inverse == False else False,
-                    inverse=inverse,
-                )
+            #return_dict["output"][:, var_num], second_order_ridge_pen, _, _ = (
+            #    self.spline_prediction_current(
+            #        input,
+            #        var_num,
+            #        covariate,
+            #        derivativ=0,
+            #        return_penalties=True,
+            #        monotonically_increasing=True if inverse == False else False,
+            #        inverse=inverse,
+            #    )
+            #)
+
+            #return_dict["output_first_derivativ"][:, var_num] = (
+            #    self.spline_prediction_current(
+            #        input,
+            #        var_num,
+            #        covariate,
+            #        derivativ=1,
+            #        return_penalties=False,
+            #        monotonically_increasing=True if inverse == False else False,
+            #        inverse=inverse,
+            #    )
+            #)
+
+            #return_dict["log_d"][:, var_num] = return_dict["output_first_derivativ"][
+            #    :, var_num
+            #].to(self.device)
+
+            #return_dict["second_order_ridge_pen_sum"] += second_order_ridge_pen
+            # pre-loop
+            
+
+            # inside the loop
+            out_col, second_order_ridge_pen, _, _ = self.spline_prediction_current(
+                input,
+                var_num,
+                covariate,
+                derivativ=0,
+                return_penalties=True,
+                monotonically_increasing=(not inverse),
+                inverse=inverse,
             )
+            out_cols.append(out_col)
 
-            return_dict["output_first_derivativ"][:, var_num] = (
-                self.spline_prediction_current(
-                    input,
-                    var_num,
-                    covariate,
-                    derivativ=1,
-                    return_penalties=False,
-                    monotonically_increasing=True if inverse == False else False,
-                    inverse=inverse,
-                )
+            first_col = self.spline_prediction_current(
+                input,
+                var_num,
+                covariate,
+                derivativ=1,
+                return_penalties=False,
+                monotonically_increasing=(not inverse),
+                inverse=inverse,
             )
+            first_cols.append(first_col.reshape(input.shape[0]))
+            logd_cols.append(first_col.reshape(input.shape[0]).to(self.device))  # if you want an explicit copy
 
-            return_dict["log_d"][:, var_num] = return_dict["output_first_derivativ"][
-                :, var_num
-            ].to(self.device)
-
-            return_dict["second_order_ridge_pen_sum"] += second_order_ridge_pen
-
+            # post-loop (assemble once; no in-place)
+            return_dict["output"] = torch.stack(out_cols, dim=1).contiguous()
+            return_dict["output_first_derivativ"] = torch.stack(first_cols, dim=1).contiguous()
+            return_dict["log_d"] = torch.stack(logd_cols, dim=1).contiguous()
+        
         return_dict["log_d"] = torch.log(return_dict["log_d"])
 
         return return_dict

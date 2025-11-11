@@ -1,9 +1,20 @@
 ### BAYESIAN APPROACH
 import torch
 import math
+import os
 from torch.distributions import Normal
 from torch.special import digamma as ψ
 from torch import nn, Tensor
+from torch.amp import autocast
+
+
+os.environ["CUDA_DEVICE_MAX_CONNECTIONS"]="1"  # sometimes helps kernels queueing
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+torch.backends.cudnn.benchmark = True
+try: torch.set_float32_matmul_precision("high")
+except: pass
+
 from typing import TYPE_CHECKING
 
 from gtm.gtm_layers.layer_utils import bayesian_splines
@@ -87,6 +98,12 @@ class VI_Model(nn.Module):
             torch.zeros(D, device=self.device),
             torch.ones(D, device=self.device),
         )
+        
+        try:
+            self._single_objective_terms = torch.compile(self._single_objective_terms, mode="max-autotune")
+        except Exception:
+            pass
+
     
     def set_rng(self, gen: torch.Generator | None):
         self._rng = gen
@@ -143,6 +160,48 @@ class VI_Model(nn.Module):
             full_sd[k] = v
         self.model.load_state_dict(full_sd, strict=False)
         
+    def _single_objective_terms(
+        self,
+        theta_1d: Tensor,
+        samples: Tensor,
+        model: "GTM",
+        tau4_s: Tensor,   # scalar tensor on device
+        tau1_s: Tensor,   # scalar tensor on device (can be 0.0 if no decor)
+        tau2_s: Tensor,   # scalar tensor on device (can be 0.0 if no decor)
+        sample_size_total: int,
+    ):
+        # Reparametrize model with θ_s (pure functional call)
+        params_s = self._theta_to_state_dict(theta_1d)
+
+        with _reparametrize_module(model, params_s):
+            with autocast(device_type=str(self.device), dtype=torch.float16):
+                out = model.__bayesian_training_objective__(
+                    samples=samples,
+                    hyperparameters_transformation=tau4_s,
+                    hyperparameters_decorrelation={"tau_1": tau1_s, "tau_2": tau2_s},
+                    N_total=sample_size_total,
+                    B=samples.shape[0],
+                )
+
+        # Extract tensors needed by ELBO/monitors (all scalars)
+        neg_post   = out["neg_posterior"]
+        neg_lik    = out["negative_log_lik"]
+        nll_batch  = out["nll_batch"]
+
+        ndp_total  = out["negative_decorrelation_prior"]["neg_log_prior_total"]
+        qf1_sum    = out["negative_decorrelation_prior"]["qf1"]
+        qf2_sum    = out["negative_decorrelation_prior"]["qf2"]
+
+        ntp_total  = out["negative_transformation_prior"]["neg_log_prior_total"]
+        ntp_qf     = out["negative_transformation_prior"]["neg_log_prior_qf"]
+        qf_sum_T   = out["negative_transformation_prior"]["qf_sum"]
+        qf_mean_T  = out["negative_transformation_prior"]["qf_mean"]
+
+        # Return a flat tuple of tensors so vmap can stack to [S, ...]
+        return (neg_post, neg_lik, nll_batch,
+                ndp_total, qf1_sum, qf2_sum,
+                ntp_total, ntp_qf, qf_sum_T, qf_mean_T)
+
     def step(
         self,
         samples: Tensor,
@@ -182,115 +241,83 @@ class VI_Model(nn.Module):
         qf_sum_trans_list=[]
         qf_mean_trans_list=[]
         
-        for s in range(mcmc_samples):
-            theta_s = thetas[s]
-            params_s = self._theta_to_state_dict(theta_s)  # tensors keep graph to (mu, rho)
-            
-            if tau_pack is not None:
-                hT_s, hD_s, tau_kl = tau_pack.sample_once(
-                    decor_present= not (model.number_decorrelation_layers ==0 or model.transform_only),
-                    generator=self._rng
-                )
-                tau_kl_terms.append(tau_kl.reshape(()))
-                hyper_T_s = {"tau": hT_s.get("tau", hyperparameter_transformation)}
-                hyper_D_s = {
-                    "tau_1": hD_s.get("tau_1", hyperparameter_decorrelation.get("tau_1", 0.0)),
-                    "tau_2": hD_s.get("tau_2", hyperparameter_decorrelation.get("tau_2", 0.0)),
-                }
-                
-            else:
-                # EB/CAVI path (exactly what you do today)
-                hyper_T_s = hyperparameter_transformation
-                hyper_D_s = hyperparameter_decorrelation
-                
-            with _reparametrize_module(self.model, params_s):
-                # Pick one key from the schema that you know we optimize
-                name0, _ = self._schema[0]
-                live = dict(self.model.named_parameters())[name0]
-                want = self._theta_to_state_dict(theta_s)[name0]
-                if not torch.allclose(live, want, atol=1e-6, rtol=1e-6):
-                    raise RuntimeError(f"Reparam not visible for {name0}")
-                
-                # Use your provided objective to compute: posterior = NLL + priors
-                out = model.__bayesian_training_objective__(
-                    samples=samples,
-                    hyperparameters_transformation=hyper_T_s["tau"],
-                    hyperparameters_decorrelation=hyper_D_s,
-                    N_total=sample_size_total,
-                    B=samples.shape[0]
-                )
-            
-            # Your function returns a POSITIVE objective (NLL + priors).
-            # log \tilde p(θ, y) = - (NLL + priors)
-            neglogpost = out['neg_posterior']
-            log_p_tilde = -neglogpost
-            log_p_tilde_vals.append(log_p_tilde.reshape(()))
-            
-            #Likelihood
-            neg_likelihood_list.append(out['negative_log_lik'].reshape(()))
-            ll_list.append(-out['nll_batch'].reshape(()))
-            
-            
-            #Transformation Layer stats
-            prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_total'].reshape(()))
-            qf_neg_prior_trans_list.append(out['negative_transformation_prior']['neg_log_prior_qf'].reshape(()))
-            qf_sum_trans_list.append(out["negative_transformation_prior"]["qf_sum"].reshape(()))
-            qf_mean_trans_list.append(out['negative_transformation_prior']['qf_mean'].reshape(()))
-            
-            #Decorrelation Layer stats
-            prior_dec_list.append(out['negative_decorrelation_prior']['neg_log_prior_total'].reshape(()))
-            qf1_sum_dec_list.append(out['negative_decorrelation_prior']['qf1'])
-            qf2_sum_dec_list.append(out['negative_decorrelation_prior']['qf2'])
+        # --- prepare τ vectors (size S) and τ-KL per-sample ---
+        decor_present_flag = not (model.number_decorrelation_layers == 0 or model.transform_only)
 
-        log_p_tilde_vals = torch.stack(log_p_tilde_vals)  # [S]
-        # Monte-Carlo KL(q || p) estimate: E_q[log q - log p̃]
-        # (Note: additive constant log p(y) cancels in optimization)
-        elbo_core = torch.mean(beta_kl*log_q_vals - beta_logp*log_p_tilde_vals) #-ELBO (i.e., E_q[log q - log p̃])
-
-        
         if tau_pack is not None:
-            tau_kl_terms = torch.stack(tau_kl_terms)    #[S]
-            elbo_loss = elbo_core + beta_tau_kl*torch.mean(tau_kl_terms)
+            tau4_vec, tau1_vec, tau2_vec, kl_vec = tau_pack.sample_many(
+                S=mcmc_samples, decor_present=decor_present_flag, generator=self._rng
+            )
+            # Fallback to fixed τ if a node is None
+            if tau4_vec is None:
+                tau4_vec = torch.full((mcmc_samples,), float(hyperparameter_transformation["tau"]),
+                                      device=self.device, dtype=torch.float32)
+            if decor_present_flag:
+                if tau1_vec is None:
+                    tau1_vec = torch.full((mcmc_samples,), float(hyperparameter_decorrelation.get("tau_1", 0.0)),
+                                          device=self.device, dtype=torch.float32)
+                if tau2_vec is None:
+                    tau2_vec = torch.full((mcmc_samples,), float(hyperparameter_decorrelation.get("tau_2", 0.0)),
+                                          device=self.device, dtype=torch.float32)
+            else:
+                tau1_vec = torch.zeros((mcmc_samples,), device=self.device, dtype=torch.float32)
+                tau2_vec = torch.zeros((mcmc_samples,), device=self.device, dtype=torch.float32)
+        else:
+            # EB/CAVI fixed τ’s broadcasted to S
+            tau4_vec = torch.full((mcmc_samples,), float(hyperparameter_transformation["tau"]),
+                                  device=self.device, dtype=torch.float32)
+            if decor_present_flag:
+                tau1_vec = torch.full((mcmc_samples,), float(hyperparameter_decorrelation.get("tau_1", 0.0)),
+                                      device=self.device, dtype=torch.float32)
+                tau2_vec = torch.full((mcmc_samples,), float(hyperparameter_decorrelation.get("tau_2", 0.0)),
+                                      device=self.device, dtype=torch.float32)
+            else:
+                tau1_vec = torch.zeros((mcmc_samples,), device=self.device, dtype=torch.float32)
+                tau2_vec = torch.zeros((mcmc_samples,), device=self.device, dtype=torch.float32)
+            kl_vec = None  # no τ KL term
+
+        # --- vectorized objective over S samples ---
+        # thetas: [S, D]; tau*_vec: [S]
+        results = torch.vmap(
+            lambda θ, t4, t1, t2: self._single_objective_terms(
+                θ, samples, model, t4, t1, t2, sample_size_total
+            )
+        )(thetas, tau4_vec, tau1_vec, tau2_vec)
+
+        # Unpack stacked results, each is [S]
+        (neg_post_vec, neg_lik_vec, nll_batch_vec,
+         ndp_vec, qf1_vec, qf2_vec,
+         ntp_vec, ntp_qf_vec, qf_sum_T_vec, qf_mean_T_vec) = results
+
+        log_p_tilde_vals = -neg_post_vec  # [S]
+        elbo_core = torch.mean(beta_kl * log_q_vals - beta_logp * log_p_tilde_vals)
+
+        if kl_vec is not None:
+            elbo_loss = elbo_core + beta_tau_kl * torch.mean(kl_vec)
         else:
             elbo_loss = elbo_core
-        
-        # Collate Monitors
-        neg_likelihood_list= torch.stack(neg_likelihood_list)
-        ll_list=torch.stack(ll_list)
-        
-        # Decorrelation Layer Stats
-        prior_dec_list = torch.stack(prior_dec_list)
-        qf1_sum_dec_list = torch.stack(qf1_sum_dec_list)
-        qf2_sum_dec_list = torch.stack(qf2_sum_dec_list)
-        
-        # Transformation Layer
-        prior_trans_list = torch.stack(prior_trans_list)
-        qf_neg_prior_trans_list = torch.stack(qf_neg_prior_trans_list)
-        qf_sum_trans_list= torch.stack(qf_sum_trans_list)
-        qf_mean_trans_list = torch.stack(qf_mean_trans_list)
-        
+
+        # Monitors (means over S)
         return {
             "elbo_loss": elbo_loss,
             "mean_log_q": torch.mean(log_q_vals).detach(),
             "mean_log_p_tilde": torch.mean(log_p_tilde_vals).detach(),
-            "log_likelihhod_batch": float(_logmeanexp(ll_list, dim=0).detach()),
-            
-            # Variance Tracking
+            "log_likelihhod_batch": float(_logmeanexp(-nll_batch_vec, dim=0).detach()),
+
             "sigma_mean": self.sigma.mean().detach(),
             "sigma_max": self.sigma.max().detach(),
             "sigma_min": self.sigma.min().detach(),
-            
-            #Decorrelation Layer
-            "neg_prior_decorrelation": torch.mean(prior_dec_list).detach(),
-            "qf1_decorrelation": torch.mean(qf1_sum_dec_list).detach(),
-            "qf2_decorrelation": torch.mean(qf2_sum_dec_list).detach(),
-            
-            #Transformation Layer
-            "neg_prior_transformation": torch.mean(prior_trans_list).detach(),
-            "transformation_neg_log_prior_df": torch.mean(qf_neg_prior_trans_list).detach(),  #= E[0.5 τ qf]
-            "transformation_sum_qf": torch.mean(qf_sum_trans_list).detach(), #qf sum
-            "transformation_mean_qf": torch.mean(qf_mean_trans_list).detach()
+
+            "neg_prior_decorrelation": torch.mean(ndp_vec).detach(),
+            "qf1_decorrelation": torch.mean(qf1_vec).detach(),
+            "qf2_decorrelation": torch.mean(qf2_vec).detach(),
+
+            "neg_prior_transformation": torch.mean(ntp_vec).detach(),
+            "transformation_neg_log_prior_df": torch.mean(ntp_qf_vec).detach(),
+            "transformation_sum_qf": torch.mean(qf_sum_T_vec).detach(),
+            "transformation_mean_qf": torch.mean(qf_mean_T_vec).detach(),
         }
+
         
     @torch.no_grad()
     def predictive_loglik_sum_batch(
@@ -303,54 +330,61 @@ class VI_Model(nn.Module):
         S: int = 8,
         batch_size=1,
         seed: int | None = None,
-        tau_nodes=None,
+        tau_nodes: "TauPack"=None,
         use_tau_vi_now: bool = False,
     ) -> float:
         """For Validation used the ELPD Approach."""
     
         thetas = self.sample_theta(S, antithetic=True)  # [S, D]
-        ll_list = []
-        for s in range(S):
-            
-            theta_s = thetas[s]
-            params_s = self._theta_to_state_dict(theta_s)
-            
-            # --- NEW: per-θ τ draw (only when τ-VI is on now) ---
-            if use_tau_vi_now and (tau_nodes is not None):
-                # Draw 1 sample for each τ node (uses same generator self._rng)
-                tau4_s = float(tau_nodes.node4.sample_tau(1, generator=self._rng)[0][0]) if tau_nodes.node4 is not None else float(hyperparameter_transformation["tau"])
-                if (tau_nodes.node1 is not None) and (tau_nodes.node2 is not None):
-                    tau1_s = float(tau_nodes.node1.sample_tau(1, generator=self._rng)[0][0])
-                    tau2_s = float(tau_nodes.node2.sample_tau(1, generator=self._rng)[0][0])
-                else:
-                    tau1_s = float(hyperparameter_decorrelation.get("tau_1", 0.0))
-                    tau2_s = float(hyperparameter_decorrelation.get("tau_2", 0.0))
-                hyper_T_s = dict(hyperparameter_transformation)
-                hyper_T_s["tau"] = tau4_s
-                
-                hyper_D_s = dict(hyperparameter_decorrelation)
-                hyper_D_s["tau_1"] = tau1_s; hyper_D_s["tau_2"] = tau2_s
+
+        decor_present_flag = not (model.number_decorrelation_layers == 0 or model.transform_only)
+
+        if use_tau_vi_now and (tau_nodes is not None):
+            tau4_vec, tau1_vec, tau2_vec, _kl = tau_nodes.sample_many(
+                S=S, decor_present=decor_present_flag, generator=self._rng
+            )
+            if tau4_vec is None:
+                tau4_vec = torch.full((S,), float(hyperparameter_transformation["tau"]),
+                                      device=self.device, dtype=torch.float32)
+            if decor_present_flag:
+                if tau1_vec is None:
+                    tau1_vec = torch.full((S,), float(hyperparameter_decorrelation.get("tau_1", 0.0)),
+                                          device=self.device, dtype=torch.float32)
+                if tau2_vec is None:
+                    tau2_vec = torch.full((S,), float(hyperparameter_decorrelation.get("tau_2", 0.0)),
+                                          device=self.device, dtype=torch.float32)
             else:
-                # Fall back to EB/CAVI fixed τ’s
-                hyper_T_s = hyperparameter_transformation
-                hyper_D_s = hyperparameter_decorrelation
-            # --- END NEW ---
-            
+                tau1_vec = torch.zeros((S,), device=self.device, dtype=torch.float32)
+                tau2_vec = torch.zeros((S,), device=self.device, dtype=torch.float32)
+        else:
+            tau4_vec = torch.full((S,), float(hyperparameter_transformation["tau"]),
+                                  device=self.device, dtype=torch.float32)
+            if decor_present_flag:
+                tau1_vec = torch.full((S,), float(hyperparameter_decorrelation.get("tau_1", 0.0)),
+                                      device=self.device, dtype=torch.float32)
+                tau2_vec = torch.full((S,), float(hyperparameter_decorrelation.get("tau_2", 0.0)),
+                                      device=self.device, dtype=torch.float32)
+            else:
+                tau1_vec = torch.zeros((S,), device=self.device, dtype=torch.float32)
+                tau2_vec = torch.zeros((S,), device=self.device, dtype=torch.float32)
+
+        # vmap a function that returns the batch NLL for each θ_s
+        def _single_nll(theta_1d, t4, t1, t2):
+            params_s = self._theta_to_state_dict(theta_1d)
             with _reparametrize_module(model, params_s):
-                
-                out = model.__bayesian_training_objective__(
-                    samples=y_batch,
-                    hyperparameters_transformation=hyper_T_s["tau"],
-                    hyperparameters_decorrelation=hyper_D_s,
-                    N_total=sample_size,
-                    B=batch_size
-                )
-                
-                nll = out["negative_log_lik"].reshape(())
-                
-                ll_list.append(-nll)               
-        ll = torch.stack(ll_list)                  # [S], each is SUM log-lik for the batch
-        return float(_logmeanexp(ll, dim=0))       # SUM log predictive for the batch
+                with autocast(str(self.device), dtype=torch.float16):
+                    out = model.__bayesian_training_objective__(
+                        samples=y_batch,
+                        hyperparameters_transformation=t4,
+                        hyperparameters_decorrelation={"tau_1": t1, "tau_2": t2},
+                        N_total=sample_size,
+                        B=batch_size,
+                    )
+            return out["negative_log_lik"].reshape(())
+
+        nll_vec = torch.vmap(_single_nll)(thetas, tau4_vec, tau1_vec, tau2_vec)  # [S]
+        ll_vec = -nll_vec
+        return float(_logmeanexp(ll_vec, dim=0))
 
 
 class VariationalGamma:
@@ -424,9 +458,17 @@ class TauNode(nn.Module):
         self.mu         = nn.Parameter(torch.tensor(float(mu_init), dtype=torch.float32, device=device))
         self.log_sigma  = nn.Parameter(torch.tensor(float(log_sigma_init), dtype=torch.float32, device=device))
 
+    # small additive to avoid softplus near-zero stickiness
+    def _sigma(self): return torch.exp(self.log_sigma).clamp_min(1e-9)
+    
     def sample_tau(self, n_samples: int, generator: torch.Generator | None = None):
-        """Reparameterized samples τ_i and all log-densities needed for ELBO."""
-        sigma = torch.exp(self.log_sigma) + 1e-9
+        """
+        Returns (tau[S], logp_tau[S], logq_tau[S])
+        log q(τ) uses change-of-variables: z ~ N(μ,σ²), τ = softplus(z) + floor
+        """
+        
+        sigma = self._sigma()
+        #sigma = torch.exp(self.log_sigma) + 1e-9
         normal = Normal(self.mu, sigma)
         
         try:
@@ -504,16 +546,46 @@ class TauPack:
             hyper_D = {}
         return hyper_T, hyper_D, logq_minus_logp
     
-    @staticmethod
-    def _tau_parameters(pack: "TauPack"):
-        ps = []
-        if pack is None:
-            return ps
-        if pack.node4 is not None:
-            ps += [pack.node4.mu, pack.node4.log_sigma]
-        if pack.node1 is not None:
-            ps += [pack.node1.mu, pack.node1.log_sigma]
-        if pack.node2 is not None:
-            ps += [pack.node2.mu, pack.node2.log_sigma]
-        return ps
+    def tau_param_group(self, lr: float, **extras):
+        """Convenience param-group for optimizer; keeps your naming."""
+        params = []
+        if self.node4 is not None:
+            params += [self.node4.mu, self.node4.log_sigma]
+        if self.node1 is not None:
+            params += [self.node1.mu, self.node1.log_sigma]
+        if self.node2 is not None:
+            params += [self.node2.mu, self.node2.log_sigma]
+        return {"params": params, "lr": lr, "name": "tau_nodes", **extras}
+    
+    def sample_many(self, S: int, decor_present: bool, generator=None):
+        """
+        Vectorized τ sampling for S MC samples.
+
+        Returns:
+            tau4_vec: [S] (or None)
+            tau1_vec: [S] (or None)
+            tau2_vec: [S] (or None)
+            kl_vec:   [S]  (per-sample KL = (log q - log p) sum over present τ's)
+        """
+        device = (self.node4.mu.device if self.node4 is not None
+                  else (self.node1.mu.device if self.node1 is not None else "cpu"))
+        kl = torch.zeros((S,), device=device)
+
+        tau4_vec = None
+        tau1_vec = None
+        tau2_vec = None
+
+        if self.node4 is not None:
+            t4, p4, q4 = self.node4.sample_tau(S, generator=generator)  # [S]
+            tau4_vec = t4
+            kl = kl + (q4 - p4)
+
+        if decor_present and (self.node1 is not None) and (self.node2 is not None):
+            t1, p1, q1 = self.node1.sample_tau(S, generator=generator)
+            t2, p2, q2 = self.node2.sample_tau(S, generator=generator)
+            tau1_vec, tau2_vec = t1, t2
+            kl = kl + (q1 - p1) + (q2 - p2)
+
+        return tau4_vec, tau1_vec, tau2_vec, kl
+
 

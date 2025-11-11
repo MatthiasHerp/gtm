@@ -22,6 +22,7 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.optim import Optimizer, Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
+from torch.amp import autocast
 from tqdm import tqdm
 from gtm.gtm_training.training_bayes import VI_Model, VariationalGamma, TauNode, TauPack
 
@@ -712,7 +713,7 @@ def train_freq(
 
         if validate_dataloader is not False:
             y_validate: Tensor = next(iter(validate_dataloader))
-            y_validate = y_validate.to(model.device)
+            y_validate = y_validate.to(model.device, non_blocking=True)
             model_val.load_state_dict(model.state_dict())
 
             if objective_type == "negloglik":
@@ -822,18 +823,19 @@ def _evaluate_epoch(
     nn.Module.train(model, False)
     total_loglik_sum, nobs = 0.0, 0
     for y in val_loader:
-        y = y.to(model.device)
-        logsum = VI.predictive_loglik_sum_batch(
-            y_batch=y,
-            model=model,
-            hyperparameter_transformation=hyper_T,
-            hyperparameter_decorrelation=hyper_D,
-            S=S_val,
-            sample_size=1,
-            seed=seed,
-            tau_nodes=tau_nodes,
-            use_tau_vi_now=use_tau_vi_now,
-        )
+        y = y.to(model.device, non_blocking = True)
+        with autocast(str(model.device), dtype=torch.float16):
+            logsum = VI.predictive_loglik_sum_batch(
+                y_batch=y,
+                model=model,
+                hyperparameter_transformation=hyper_T,
+                hyperparameter_decorrelation=hyper_D,
+                S=S_val,
+                sample_size=1,
+                seed=seed,
+                tau_nodes=tau_nodes,
+                use_tau_vi_now=use_tau_vi_now,
+            )
         total_loglik_sum += logsum
         nobs += y.shape[0]
     return total_loglik_sum / nobs  # per-observation ELPD (higher is better)
@@ -1055,23 +1057,44 @@ def train_bayes(
     
 
     # ------------------- optimizer & scheduler
+    import inspect
+    def _make_adam(param_groups, lr: float):
+        # Detect supported kwargs on this PyTorch build
+        sig = inspect.signature(torch.optim.Adam.__init__).parameters
+        supports_fused   = ("fused"   in sig)
+        supports_foreach = ("foreach" in sig)
+
+        # Try fused Adam first (fastest on Ampere+), then foreach, then vanilla
+        if supports_fused:
+            try:
+                return torch.optim.Adam(param_groups, lr=lr, fused=True)
+            except Exception:
+                pass
+        if supports_foreach:
+            try:
+                return torch.optim.Adam(param_groups, lr=lr, foreach=True)
+            except Exception:
+                pass
+        return torch.optim.Adam(param_groups, lr=lr)
+
+    # ------------------- optimizer & scheduler
     if rho_lr_multiplier != 1.0:
-        opt = torch.optim.Adam([
-            {"params": [VI.mu], "lr": lr},
+        param_groups = [
+            {"params": [VI.mu],  "lr": lr},
             {"params": [VI.rho], "lr": lr * rho_lr_multiplier},
-        ])
+        ]
+        opt = _make_adam(param_groups, lr=lr)
     else:
-        opt = torch.optim.Adam([p for p in VI.parameters() if p.requires_grad], lr=lr)
+        param_groups = [{"params": [p for p in VI.parameters() if p.requires_grad]}]
+        opt = _make_adam(param_groups, lr=lr)
         
+
+    # τ nodes (keeps same opt; adds a new param group)
     if use_tau_vi_anytime and tau_nodes is not None:
-        tau_params = TauPack._tau_parameters(tau_nodes)
-        if len(tau_params) > 0:
-            opt.add_param_group(
-                {
-                    "params": tau_params,
-                    "lr": lr * 1.5
-                }
-            )
+        pg = tau_nodes.tau_param_group(lr=lr * 1.5, betas=(0.9, 0.999))
+        if len(pg["params"]) > 0:
+            opt.add_param_group(pg)
+
         
     sched = ReduceLROnPlateau(opt, mode="min", factor=sched_factor, patience=sched_patience,
                               threshold=sched_threshold, cooldown=sched_cooldown,
@@ -1130,12 +1153,12 @@ def train_bayes(
                 def sp_inv(s): return log(exp(float(s)) - 1.0)
                 rho_min = sp_inv(0.02)  # softplus^-1(0.02)
                 rho_max = sp_inv(0.06)
-                VI.sigma.data.clamp_(min=rho_min, max=rho_max)   # narrow band; widen if needed
+                VI.rho.data.clamp_(min=rho_min, max=rho_max)   # narrow band; widen if needed
             
             running         += float(loss.item()); n_batches += 1; obs_seen_epoch += B
-            ndp             += out['neg_prior_decorrelation'].cpu().numpy()
-            ntp             += out['neg_prior_transformation'].cpu().numpy()
-            ll_batch        += out['log_likelihhod_batch']
+            ndp             += float(out['neg_prior_decorrelation'])
+            ntp             += float(out['neg_prior_transformation'])
+            ll_batch        += float(out['log_likelihhod_batch'])
             eb_E_qf_num     += float(out['transformation_mean_qf'])
             E_qf_sum_accum  += float(out['transformation_sum_qf'])
             qf_1_dec        += float(out['qf1_decorrelation'])
@@ -1148,18 +1171,30 @@ def train_bayes(
         train_loss = running / obs_seen_epoch
         loss_history.append(train_loss)
 
-        if validate_dataloader is not None:
-            val_elpd = _evaluate_epoch(VI, model, validate_dataloader,
+        #if validate_dataloader is not None:
+        #    val_elpd = _evaluate_epoch(VI, model, validate_dataloader,
+        #                               hyper_T, hyper_D,
+        #                               S_val=mcmc_sample_val,
+        #                               sample_size_total=N_total,
+        #                               seed=global_seed + 12345,
+        #                               tau_nodes=tau_nodes, use_tau_vi_now=use_tau_vi_now,
+        #                               )
+        #    val_history.append(val_elpd); metric = -val_elpd
+        #else:
+        #    metric = train_loss
+        #    val_elpd = None
+            
+        val_dat = train_dataloader if not validate_dataloader else validate_dataloader
+        
+        val_elpd = _evaluate_epoch(VI, model, val_dat,
                                        hyper_T, hyper_D,
                                        S_val=mcmc_sample_val,
                                        sample_size_total=N_total,
                                        seed=global_seed + 12345,
                                        tau_nodes=tau_nodes, use_tau_vi_now=use_tau_vi_now,
                                        )
-            val_history.append(val_elpd); metric = -val_elpd
-        else:
-            metric = train_loss
-
+        val_history.append(val_elpd); metric = -val_elpd
+        
         sched.step(metric)
         improved = (metric < best_val - min_delta)
         if improved:
@@ -1235,7 +1270,7 @@ def train_bayes(
         # τ-VI active → skip write-back (τ sampled from variational nodes)
 
         # ------------------- verbose
-        if verbose:
+        if verbose and ((epoch+1) % 5 == 0 or improved):
             lrs = [pg["lr"] for pg in opt.param_groups]
             tgt4 = _tau_times_qf_target(float(a_lambda),  float(b_lambda),  0.5*rank_T_total,      E_qf_total_mc)
             tgt1 = _tau_times_qf_target(float(a_lambda_1),float(b_lambda_1),0.5*rank_T_total_RW1,  E_qf1_total_mc) if decor_present else 0.0
@@ -1259,9 +1294,11 @@ def train_bayes(
             tau1_monitor = tau1_mean if use_tau_vi_now else float(hyper_D["tau_1"])
             tau2_monitor = tau2_mean if use_tau_vi_now else float(hyper_D["tau_2"])
             
+            val_str = f"  val_ELPD={val_elpd:.4f}" if val_elpd is not None else ""
+            
             print(
                 f"\nIteration [{epoch+1}/{iterations}] "
-                f"train={train_loss:.4f}  val_ELPD={val_elpd:.4f}  "
+                f"train={train_loss:.4f}  {val_str}  "
                 f"S_train={mcmc_sample_train} S_val={mcmc_sample_val}  lr={lrs}  "
                 f"σ̄={float(VI.sigma.mean()):.4f} σmin={float(VI.sigma.min()):.4f} σmax={float(VI.sigma.max()):.4f}  "
                 f"β_KL={beta_kl:.2f}\n"
@@ -1276,8 +1313,12 @@ def train_bayes(
             )
 
         eb_E_qf_num, eb_count = 0.0, 0
-        if validate_dataloader is not None and no_improve >= patience_val:
-            print(f"Early stop @ epoch {epoch+1}: no val improvement for {patience_val} epochs.")
+        if no_improve >= patience_val:
+            
+            if validate_dataloader is not None:
+                print(f"Early stop @ epoch {epoch+1}: no val improvement for {patience_val} epochs.")
+            else:
+                print(f"Early stop @ epoch {epoch+1}: no train-loglikelihood improvement for {patience_val} epochs.")
             break
 
     with torch.no_grad():
