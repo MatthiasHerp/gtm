@@ -4,6 +4,7 @@ import numpy as np
 # from functorch import vmap  # Requires PyTorch 1.10+
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from gtm.gtm_layers.layer_utils import BayesianInitializer, BayesianPriors
 from gtm.gtm_splines.bernstein_prediction_vectorized import (
@@ -160,7 +161,7 @@ class Decorrelation(nn.Module):
         lambda_matrix_general = (
             torch.eye(self.number_variables, device=input.device)
             .expand(input.size()[0], self.number_variables, self.number_variables)
-            .requires_grad_(True)
+            #.requires_grad_(True)
         )
         return {
             "output": input.clone(),  # .requires_grad_(True),
@@ -359,179 +360,116 @@ class Decorrelation(nn.Module):
         return_penalties=True,
         return_scores_hessian=False,
     ):
-
         return_dict = self.create_return_dict_decorrelation(input)
 
         params_index = 0
+        B, V = input.size(0), self.number_variables
+        device = input.device
+
+        def add_lambda_ij(lm, i, j, val_b):  # lm: [B,V,V], val_b: [B]
+            e_i = F.one_hot(torch.tensor(i, device=device), V).float().view(1, V, 1)
+            e_j = F.one_hot(torch.tensor(j, device=device), V).float().view(1, 1, V)
+            update = val_b.view(B, 1, 1) * (e_i * e_j)          # [B,V,V]
+            return lm + update                                   # out-of-place
+
+        def replace_col(mat, j, newcol_b):  # mat: [B,V], newcol_b: [B]
+            e_j = F.one_hot(torch.tensor(j, device=device), V).float().view(1, V)
+            delta = (newcol_b - mat[:, j]).view(B, 1)            # [B,1]
+            return mat + delta * e_j                              # out-of-place
 
         if inverse:
+            for var_num in range(V):
+                lambda_mult_tot = torch.ones(B, device=device)
+                lambda_add_tot  = torch.zeros(B, device=device)
 
-            for var_num in range(self.number_variables):
-
-                # loop over all before variables
-                lambda_value_multiplier_total = torch.ones(
-                    input.size(0), device=input.device
-                )
-                lambda_value_total = torch.zeros(input.size(0), device=input.device)
                 for covar_num in range(var_num):
-
-                    lambda_value = self.spline_prediction(
-                        input,
-                        params_index,
-                        covariate,
-                        covar_num,
-                        derivativ=0,
-                        return_penalties=False,
-                        monotonically_increasing=False,
+                    lambda_val = self.spline_prediction(
+                        input, params_index, covariate, covar_num,
+                        derivativ=0, return_penalties=False, monotonically_increasing=False,
                     )
+                    if lambda_val.ndim == 2 and lambda_val.size(1) == V:
+                        lambda_val = lambda_val[:, covar_num]
 
                     if self.params_multiplier is not False:
-                        lambda_value_multiplier = self.spline_prediction(
-                            input,
-                            params_index,
-                            covariate,
-                            covar_num,
-                            derivativ=0,
-                            return_penalties=False,
-                            monotonically_increasing=False,
-                            multi=True,
+                        lambda_mult = self.spline_prediction(
+                            input, params_index, covariate, covar_num,
+                            derivativ=0, return_penalties=False, monotonically_increasing=False, multi=True,
                         )
+                        if lambda_mult.ndim == 2 and lambda_mult.size(1) == V:
+                            lambda_mult = lambda_mult[:, covar_num]
+                        lambda_mult_tot = lambda_mult_tot * lambda_mult  # out-of-place ok
 
-                    if self.params_multiplier is not False:
-                        lambda_value_multiplier_total = (
-                            lambda_value_multiplier_total * lambda_value_multiplier
-                        )
-                    lambda_value_total += lambda_value * input[:, covar_num]
-
+                    lambda_add_tot = lambda_add_tot + lambda_val * input[:, covar_num]
                     params_index += 1
 
-                    # filling the lambda matrix with the computed entries
-                    return_dict["lambda_matrix"][:, var_num, covar_num] = lambda_value
+                    # return_dict["lambda_matrix"][:, var_num, covar_num] = lambda_val
+                    return_dict["lambda_matrix"] = add_lambda_ij(return_dict["lambda_matrix"], var_num, covar_num, lambda_val)
 
-                # update
-                input[:, var_num] = (
-                    input[:, var_num] - lambda_value_total
-                ) / lambda_value_multiplier_total
+                # input[:, var_num] = (input[:, var_num] - lambda_add_tot) / lambda_mult_tot
+                newcol = (input[:, var_num] - lambda_add_tot) / lambda_mult_tot
+                input = replace_col(input, var_num, newcol)
 
-            # needs to be done at the end as we need to update input vector as well as it is the input to the subsequent computations (inverse iteratively)
             return_dict["output"] = input
-        else:
-            for var_num in range(self.number_variables):
+            return return_dict
 
-                # loop over all before variables
-                lambda_value_multiplier_total = torch.ones(
-                    input.size(0), device=self.device
+        # ----- forward (not inverse) -----
+        for var_num in range(V):
+            lambda_mult_tot = torch.ones(B, device=device)
+            lambda_add_tot  = torch.zeros(B, device=device)
+
+            for covar_num in range(var_num):
+                (lambda_val,
+                pen2, pen1, pen0) = self.spline_prediction(
+                    input, params_index, covariate, covar_num,
+                    derivativ=0, return_penalties=True, monotonically_increasing=False,
                 )
-                lambda_value_total = torch.zeros(input.size(0), device=self.device)
-                for covar_num in range(var_num):
+                if lambda_val.ndim == 2 and lambda_val.size(1) == V:
+                    lambda_val = lambda_val[:, covar_num]
 
-                    (
-                        lambda_value,
-                        second_order_ridge_pen_current,
-                        first_order_ridge_pen_current,
-                        param_ridge_pen_current,
-                    ) = self.spline_prediction(
-                        input,
-                        params_index,
-                        covariate,
-                        covar_num,
-                        derivativ=0,
-                        return_penalties=True,
-                        monotonically_increasing=False,
+                return_dict["second_order_ridge_pen_sum"] += pen2
+                return_dict["first_order_ridge_pen_sum"]  += pen1
+                return_dict["param_ridge_pen_sum"]        += pen0
+
+                if self.params_multiplier is not False:
+                    (lambda_mult,
+                    pen2m, pen1m, pen0m) = self.spline_prediction(
+                        input, params_index, covariate, covar_num,
+                        derivativ=0, return_penalties=True, monotonically_increasing=False, multi=True,
                     )
+                    if lambda_mult.ndim == 2 and lambda_mult.size(1) == V:
+                        lambda_mult = lambda_mult[:, covar_num]
+                    return_dict["second_order_ridge_pen_sum"] += pen2m
+                    return_dict["first_order_ridge_pen_sum"]  += pen1m
+                    return_dict["param_ridge_pen_sum"]        += pen0m
+                    lambda_mult_tot = lambda_mult_tot * lambda_mult  # out-of-place ok
 
-                    return_dict[
-                        "second_order_ridge_pen_sum"
-                    ] += second_order_ridge_pen_current
-                    return_dict[
-                        "first_order_ridge_pen_sum"
-                    ] += first_order_ridge_pen_current
-                    return_dict["param_ridge_pen_sum"] += param_ridge_pen_current
+                if return_scores_hessian is True and self.params_multiplier is not False:
+                    warnings.warn(
+                        "Warning: return_scores_hessian not implemented for multiplicative effect. "
+                        "The der_lambda_matrix and der2_lambda_matrix will be wrong."
+                    )
+                if return_scores_hessian is True:
+                    _ = self.spline_prediction(input, params_index, covariate, covar_num,
+                                            derivativ=1, return_penalties=True, monotonically_increasing=False, multi=False)
+                    _ = self.spline_prediction(input, params_index, covariate, covar_num,
+                                            derivativ=2, return_penalties=True, monotonically_increasing=False, multi=False)
 
-                    if self.params_multiplier is not False:
-                        (
-                            lambda_value_multiplier,
-                            second_order_ridge_pen_current,
-                            first_order_ridge_pen_current,
-                            param_ridge_pen_current,
-                        ) = self.spline_prediction(
-                            input,
-                            params_index,
-                            covariate,
-                            covar_num,
-                            derivativ=0,
-                            return_penalties=True,
-                            monotonically_increasing=False,
-                            multi=True,
-                        )
+                lambda_add_tot = lambda_add_tot + lambda_val * input[:, covar_num]
+                params_index += 1
 
-                        return_dict[
-                            "second_order_ridge_pen_sum"
-                        ] += second_order_ridge_pen_current
-                        return_dict[
-                            "first_order_ridge_pen_sum"
-                        ] += first_order_ridge_pen_current
-                        return_dict["param_ridge_pen_sum"] += param_ridge_pen_current
+                # return_dict["lambda_matrix"][:, var_num, covar_num] = lambda_val
+                return_dict["lambda_matrix"] = add_lambda_ij(return_dict["lambda_matrix"], var_num, covar_num, lambda_val)
 
-                    if return_scores_hessian == True:
-                        if self.params_multiplier is not False:
-                            warnings.warn(
-                                "Warning: return_scores_hessian not implemented for multiplicative effect. The der_lambda_matrix and der2_lambda_matrix will be wrong."
-                            )
+            # diag multiplier
+            return_dict["lambda_matrix"] = add_lambda_ij(return_dict["lambda_matrix"], var_num, var_num, lambda_mult_tot)
 
-                        der_lambda_value = self.spline_prediction(
-                            input,
-                            params_index,
-                            covariate,
-                            covar_num,
-                            derivativ=1,  ######### <---------------------------- #########
-                            return_penalties=True,
-                            monotonically_increasing=False,
-                            multi=False,
-                        )
+            # output col update
+            newcol = lambda_mult_tot * input[:, var_num] + lambda_add_tot
+            return_dict["output"] = replace_col(return_dict["output"], var_num, newcol)
 
-                        der2_lambda_value = self.spline_prediction(
-                            input,
-                            params_index,
-                            covariate,
-                            covar_num,
-                            derivativ=2,  ######### <---------------------------- #########
-                            return_penalties=True,
-                            monotonically_increasing=False,
-                            multi=False,
-                        )
-                    else:
-                        der_lambda_value = 0
-                        der2_lambda_value = 0
-
-                    if self.params_multiplier is not False:
-                        lambda_value_multiplier_total = (
-                            lambda_value_multiplier_total * lambda_value_multiplier
-                        )
-                    lambda_value_total += lambda_value * input[:, covar_num]
-
-                    params_index += 1
-
-                    # filling the lambda matrix with the computed entries
-                    return_dict["lambda_matrix"][:, var_num, covar_num] = lambda_value
-
-                    # filling the derivative lambda matrix with the derivative values ,see obsidean
-                    # return_dict["der_lambda_matrix"][:, var_num, covar_num] = der_lambda_value * input[:, covar_num] + lambda_value
-                    # return_dict["der2_lambda_matrix"][:, var_num, covar_num] = der_lambda_value + der2_lambda_value * input[:, covar_num] + der_lambda_value
-
-                # filling in the multiplicative effect into the lambda matrix
-                return_dict["lambda_matrix"][
-                    :, var_num, var_num
-                ] = lambda_value_multiplier_total
-
-                return_dict["output"][:, var_num] = (
-                    lambda_value_multiplier_total * input[:, var_num]
-                    + lambda_value_total
-                )
-
-                return_dict["log_d"][:, var_num] += torch.log(
-                    torch.abs(lambda_value_multiplier_total)
-                )
+            # log|multiplier| col update
+            incr = torch.log(torch.abs(lambda_mult_tot))
+            return_dict["log_d"] = replace_col(return_dict["log_d"], var_num, return_dict["log_d"][:, var_num] + incr)
 
         return return_dict
 
