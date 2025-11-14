@@ -482,9 +482,9 @@ class TauNode(nn.Module):
         _, logp, logq = self.sample_tau(S, generator=generator)
         return (logq - logp).mean()
 
-    def mean_tau_mc(self, S: int = 128, generator: torch.Generator | None = None):
+    def mean_and_var_tau_mc(self, S: int = 128, generator: torch.Generator | None = None):
         tau, _, _ = self.sample_tau(S, generator=generator)
-        return tau.mean()
+        return (float(tau.mean()), float(tau.var(unbiased=False)))
 
     def clamp_sigma(self, min_val: float=1e-3, max_val: float=3.0):
         with torch.no_grad():
