@@ -8,21 +8,15 @@ from torch import nn, Tensor
 from torch.amp import autocast
 
 
-os.environ["CUDA_DEVICE_MAX_CONNECTIONS"]="1"  # sometimes helps kernels queueing
-torch.backends.cuda.matmul.allow_tf32 = True
-torch.backends.cudnn.allow_tf32 = True
-torch.backends.cudnn.benchmark = True
 try: torch.set_float32_matmul_precision("high")
 except: pass
 
 from typing import TYPE_CHECKING
 
-from gtm.gtm_layers.layer_utils import bayesian_splines
 from torch.nn.utils.stateless import _reparametrize_module
-from gtm.gtm_model import gtm
 
 if TYPE_CHECKING:
-    from ..gtm_model.gtm import GTM # type-only; no runtime import
+    from gtm_model.gtm import GTM # type-only; no runtime import
 
 def _logmeanexp(x: torch.Tensor, dim: int = 0) -> torch.Tensor:
     """Stable log-mean-exp along dim."""
@@ -226,21 +220,7 @@ class VI_Model(nn.Module):
         log_q_vals = self.log_q(thetas)         # [S]
 
         log_p_tilde_vals = []   # log unnormalized posterior per sample
-        tau_kl_terms = []       # per-sample KL(qτ||pτ) contributions
-        neg_likelihood_list = []
-        ll_list = []
-        
-        #Decorrelation
-        prior_dec_list = []
-        qf1_sum_dec_list = []
-        qf2_sum_dec_list = []
-        
-        #Transformation
-        prior_trans_list = []
-        qf_neg_prior_trans_list = []
-        qf_sum_trans_list=[]
-        qf_mean_trans_list=[]
-        
+
         # --- prepare τ vectors (size S) and τ-KL per-sample ---
         decor_present_flag = not (model.number_decorrelation_layers == 0 or model.transform_only)
 
@@ -449,7 +429,7 @@ class TauNode(nn.Module):
       prior:  Gamma(a, b)  (shape a, rate b)
       variational: z = log τ  ~ Normal(mu, sigma), τ = softplus(z) + eps_floor
     """
-    def __init__(self, a: float, b: float, mu_init: float=-2.0, log_sigma_init: float=-2.0, eps_floor: float=1e-8, device="cpu"):
+    def __init__(self, a: float, b: float, mu_init: float=-2.0, log_sigma_init: float=-2.0, eps_floor: float=1e-5, device="cpu"):
         super().__init__()
         self.register_buffer("a", torch.as_tensor(float(a), dtype=torch.float32, device=device))
         self.register_buffer("b", torch.as_tensor(float(b), dtype=torch.float32, device=device))

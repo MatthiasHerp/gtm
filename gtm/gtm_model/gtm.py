@@ -26,8 +26,10 @@ from gtm.gtm_plots_analysis.plot_marginals import plot_marginals
 from gtm.gtm_plots_analysis.plot_metric_hist import plot_metric_hist
 from gtm.gtm_plots_analysis.plot_metric_scatter import plot_metric_scatter
 from gtm.gtm_plots_analysis.plot_splines import plot_splines
-from gtm.gtm_training.objective_functions import log_likelihood, training_objective, bayesian_training_objective
-from gtm.gtm_training.training_helpers import (if_float_create_lambda_penalisation_matrix, train_freq, train_bayes)
+from gtm.gtm_training.objective_functions import log_likelihood, training_objective
+from gtm.gtm_training.training_helpers import (if_float_create_lambda_penalisation_matrix, train_freq)
+from gtm.gtm_training.training_bayes.training_helpers import train_bayes
+from gtm.gtm_training.training_bayes.objective_functions import bayesian_training_objective
 
 # from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
 
@@ -397,7 +399,7 @@ class GTM(nn.Module):
         train = True
         evaluate = True
         
-        y=y.to(self.device)
+        #y=y.to(self.device)
         return_dict_nf_mctm = self.__create_return_dict_nf_mctm__(y)
 
         if self.subset_dimension is not None:
@@ -759,7 +761,14 @@ class GTM(nn.Module):
         beta_kl_anneal_epochs: int = 20,  # how fast to decay to 1.0
         tau_vi_mode = "after_warm", #"off" | "after_warm" | "always"
         tau_kl_beta = 1.0,
-        tau_vi_sigma_init = 0.25
+        tau_vi_sigma_init = 0.25,
+        # --- VI convergence (no-val) ---
+        conv_use_ema: bool = True,
+        conv_window_size: int = 5,   # used if conv_use_ema=False
+        conv_tol: float = 1e-5,      # absolute ELBO change per-obs
+        conv_min_epochs: int = 10,   # don't stop too early
+        conv_ema_beta: float = 0.9,  # if conv_use_ema=True
+
     ) -> dict[str, Tensor]:
         
         """
@@ -906,7 +915,14 @@ class GTM(nn.Module):
                 
                 tau_vi_mode=tau_vi_mode, #"off" | "after_warm" | "always"
                 tau_kl_beta=tau_kl_beta,
-                tau_vi_sigma_init=tau_vi_sigma_init
+                tau_vi_sigma_init=tau_vi_sigma_init,
+                        # --- VI convergence (no-val) ---
+                conv_use_ema = conv_use_ema,#: bool = True,
+                conv_window_size = conv_window_size,#: int = 5,   # used if conv_use_ema=False
+                conv_tol=conv_tol,#: float = 1e-5,      # absolute ELBO change per-obs
+                conv_min_epochs=conv_min_epochs,#: int = 10,   # don't stop too early
+                conv_ema_beta= conv_ema_beta,#: float = 0.9,  # if conv_use_ema=True
+
                 )
         else:
             raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')
