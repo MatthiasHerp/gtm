@@ -2,32 +2,34 @@ from collections import deque
 
 class Trackers:
     # ------------------- monitoring containers
-    
-    monitor = {
-        "epoch": [],
+    @staticmethod
+    def new_monitour():
+        return{
+            "epoch": [],
 
-        # taus (hyper + VI means + EB targets)
-        "tau4": [], "tau1": [], "tau2": [],
-        "tau4_mean": [], "tau1_mean": [], "tau2_mean": [],
-        "tau4_target": [], "tau1_target": [], "tau2_target": [],
+            # taus (hyper + VI means + VI Variance + EB targets)
+            "tau4": [], "tau1": [], "tau2": [],
+            "tau4_mean": [], "tau1_mean": [], "tau2_mean": [],
+            "tau4_var": [], "tau1_var": [], "tau2_var": [],
+            "tau4_target": [], "tau1_target": [], "tau2_target": [],
 
-        # τ·E[qf] monitors
-        "tau4_Eqf": [], "tau1_Eqf1": [], "tau2_Eqf2": [],
-        "tau4_target_Eqf": [], "tau1_target_Eqf1": [], "tau2_target_Eqf2": [],
+            # τ·E[qf] monitors
+            "tau4_Eqf": [], "tau1_Eqf1": [], "tau2_Eqf2": [],
+            "tau4_target_Eqf": [], "tau1_target_Eqf1": [], "tau2_target_Eqf2": [],
 
-        # θ statistics (μ and σ)
-        "mu_norm": [],          # ||μ||₂
-        "mu_mean": [],          # mean(μ)
-        "mu_std": [],           # std(μ)
-        "sigma_mean": [],       # mean(σ)
-        "sigma_min": [],        # min(σ)
-        "sigma_max": [],        # max(σ)
+            # θ statistics (μ and σ)
+            "mu_norm": [],          # ||μ||₂
+            "mu_mean": [],          # mean(μ)
+            "mu_std": [],           # std(μ)
+            "sigma_mean": [],       # mean(σ)
+            "sigma_min": [],        # min(σ)
+            "sigma_max": [],        # max(σ)
 
-        # ELBO / likelihood
-        "train_loss": [],       # per-obs loss = -ELBO/obs
-        "elbo_per_obs": [],     # ELBO/obs
-        "val_ELPD": [],         # None if no val
-    }
+            # ELBO / likelihood
+            "train_loss": [],       # per-obs loss = -ELBO/obs
+            "elbo_per_obs": [],     # ELBO/obs
+            "val_ELPD": [],         # None if no val
+        }
 
 
 class _ELBOConvergence:

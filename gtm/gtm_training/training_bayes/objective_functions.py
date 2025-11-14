@@ -28,10 +28,11 @@ def unnormalized_posterior_computation(
     
     #Prior Decorrelation
     if model.transform_only or model.number_decorrelation_layers == 0:
-        ndp={}
-        ndp['neg_log_prior_total'] = torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype)
-        ndp['qf1'] = torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype)
-        ndp['qf2'] = torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype)
+        ndp={
+            "neg_log_prior_total": torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype),
+            "qf1": torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype),
+            "qf2": torch.tensor(0.0, device=model.device, dtype=nll_batch.dtype)
+        }
         
     else:
         ndp = bayesian_splines.defining_prior(

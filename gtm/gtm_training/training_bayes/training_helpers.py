@@ -14,7 +14,7 @@ from gtm.gtm_training.training_bayes.utils import _ELBOConvergence, Trackers
 from gtm.gtm_training.training_bayes.variational_model_estimator import VI_Model, VariationalGamma, TauNode, TauPack
 
 if TYPE_CHECKING:
-    from gtm_model.gtm import GTM # type-only; no runtime import
+    from ...gtm_model.gtm import GTM # type-only; no runtime import
 
 
 def _make_key_filter(patterns_include=None, patterns_exclude=None):
@@ -331,7 +331,7 @@ def train_bayes(
     eb_E_qf_num, eb_count = 0.0, 0
     no_improve = 0
     
-    monitors = Trackers.monitor
+    monitors = Trackers.new_monitour()
     
     loss_history, val_history = [], []
     start = time.time()
@@ -390,8 +390,8 @@ def train_bayes(
 
             with torch.no_grad():
                 def sp_inv(s): return log(exp(float(s)) - 1.0)
-                rho_min = sp_inv(0.02)  # softplus^-1(0.02)
-                rho_max = sp_inv(0.06)
+                rho_min = sp_inv(0.015)  # softplus^-1(0.02)
+                rho_max = sp_inv(0.12)
                 VI.rho.data.clamp_(min=rho_min, max=rho_max)   # narrow band; widen if needed
             
             running         += float(loss.item()); n_batches += 1; obs_seen_epoch += B
@@ -431,7 +431,18 @@ def train_bayes(
             improved = (metric < best_val - min_delta)
             if improved:
                 best_val = metric; no_improve = 0
-                best_state = {"mu": VI.mu.detach().clone(), "rho": VI.rho.detach().clone()}
+                best_state = {
+                    "mu": VI.mu.detach().clone(),
+                    "rho": VI.rho.detach().clone(),
+                    "tau_nodes": {
+                        "node4_mu": tau_nodes.node4.mu.detach().clone()                 if (tau_nodes and tau_nodes.node4) else None,
+                        "node4_log_sigma": tau_nodes.node4.log_sigma.detach().clone()   if (tau_nodes and tau_nodes.node4) else None,
+                        "node1_mu": tau_nodes.node1.mu.detach().clone()                 if (tau_nodes and tau_nodes.node1) else None,
+                        "node1_log_sigma": tau_nodes.node1.log_sigma.detach().clone()   if (tau_nodes and tau_nodes.node1) else None,
+                        "node2_mu": tau_nodes.node2.mu.detach().clone()                 if (tau_nodes and tau_nodes.node2) else None,
+                        "node2_log_sigma": tau_nodes.node2.log_sigma.detach().clone()   if (tau_nodes and tau_nodes.node2) else None,
+                    }
+                    }
             else:
                 no_improve += 1
                 if verbose: print(f"NOT IMPROVED! Nr. {no_improve}")
@@ -521,8 +532,6 @@ def train_bayes(
                 model.hyperparameter["decorrelation"]["tau_2"]  = tau_2_new
         # τ-VI active → skip write-back (τ sampled from variational nodes)
 
-        # ------------------- verbose
-        if verbose and ((epoch+1) % 5 == 0 or (validate_dataloader is not None and improved)):
             lrs = [pg["lr"] for pg in opt.param_groups]
             tgt4 = _tau_times_qf_target(float(a_lambda),  float(b_lambda),  0.5*rank_T_total,      E_qf_total_mc)
             tgt1 = _tau_times_qf_target(float(a_lambda_1),float(b_lambda_1),0.5*rank_T_total_RW1,  E_qf1_total_mc) if decor_present else 0.0
@@ -532,20 +541,78 @@ def train_bayes(
             if use_tau_vi_now and (tau_nodes is not None):
                 with torch.no_grad():
                     
-                    tau4_mean = float(tau_nodes.node4.mean_tau_mc(S_tau_monitor, generator=gen)) if tau_nodes.node4 else 0.0
-                    if decor_present and tau_nodes.node1 and tau_nodes.node2:
-                        tau1_mean = float(tau_nodes.node1.mean_tau_mc(S_tau_monitor, generator=gen))
-                        tau2_mean = float(tau_nodes.node2.mean_tau_mc(S_tau_monitor, generator=gen))
+                    if tau_nodes.node4 is not None:
+                        tau4_mean, tau4_var = tau_nodes.node4.mean_and_var_tau_mc(S_tau_monitor, generator=gen)
                     else:
-                        tau1_mean = tau2_mean = 0.0
+                        tau4_mean, tau4_var = 0.0, 0.0
+                    
+                    if decor_present and tau_nodes.node1 and tau_nodes.node2:
+                        (tau1_mean, tau1_var) = tau_nodes.node1.mean_and_var_tau_mc(S_tau_monitor, generator=gen)
+                        (tau2_mean, tau2_var) = tau_nodes.node2.mean_and_var_tau_mc(S_tau_monitor, generator=gen)
+                    else:
+                        tau1_mean = tau1_var = tau2_mean= tau2_var = 0.0
             else:
-                tau4_mean = tau1_mean = tau2_mean = 0.0
+                tau4_mean = tau1_mean = tau2_mean = tau4_var = tau1_var = tau2_var =0.0
 
             # --- NEW: use qτ means in the monitor if τ-VI is on; otherwise fall back to fixed hyper τs
             tau4_monitor = tau4_mean if use_tau_vi_now else float(hyper_T["tau"])
             tau1_monitor = tau1_mean if use_tau_vi_now else float(hyper_D["tau_1"])
             tau2_monitor = tau2_mean if use_tau_vi_now else float(hyper_D["tau_2"])
             
+            with torch.no_grad():
+                mu_vec = VI.mu.detach()
+                sigma_vec = VI.sigma.detach()
+                mu_norm = float(mu_vec.norm())
+                mu_mean = float(mu_vec.mean())
+                mu_std  = float(mu_vec.std())
+                sigma_mean = float(sigma_vec.mean())
+                sigma_min  = float(sigma_vec.min())
+                sigma_max  = float(sigma_vec.max())
+            
+             # --- ELBO stats ---
+            monitors["epoch"].append(epoch + 1)
+            monitors["train_loss"].append(train_loss)
+            monitors["elbo_per_obs"].append(elbo_per_obs)
+            monitors["val_ELPD"].append(val_elpd if val_elpd is not None else None)
+
+            # taus: hyperparameters
+            monitors["tau4"].append(float(hyper_T["tau"]))
+            monitors["tau1"].append(float(hyper_D["tau_1"]))
+            monitors["tau2"].append(float(hyper_D["tau_2"]))
+
+            # taus: VI means (or equal to hyper τ if VI off)
+            monitors["tau4_mean"].append(float(tau4_mean))
+            monitors["tau1_mean"].append(float(tau1_mean))
+            monitors["tau2_mean"].append(float(tau2_mean))
+            
+            # taus: VI vars (or equal to hyper τ if VI off)
+            monitors["tau4_var"].append(float(tau4_var))
+            monitors["tau1_var"].append(float(tau1_var))
+            monitors["tau2_var"].append(float(tau2_var))
+
+            # taus: EB targets (only meaningful if eb_count>0; else just reuse previous or 0)
+            monitors["tau4_target"].append(float(tau4_target if eb_count > 0 else 0.0))
+            monitors["tau1_target"].append(float(tau1_target if eb_count > 0 else 0.0))
+            monitors["tau2_target"].append(float(tau2_target if eb_count > 0 else 0.0))
+
+            monitors["tau4_Eqf"].append(float(tau4_monitor * E_qf_total_mc))
+            monitors["tau1_Eqf1"].append(float(tau1_monitor * E_qf1_total_mc))
+            monitors["tau2_Eqf2"].append(float(tau2_monitor * E_qf2_total_mc))
+            monitors["tau4_target_Eqf"].append(float(tgt4))
+            monitors["tau1_target_Eqf1"].append(float(tgt1))
+            monitors["tau2_target_Eqf2"].append(float(tgt2))
+
+            # θ stats
+            monitors["mu_norm"].append(mu_norm)
+            monitors["mu_mean"].append(mu_mean)
+            monitors["mu_std"].append(mu_std)
+            monitors["sigma_mean"].append(sigma_mean)
+            monitors["sigma_min"].append(sigma_min)
+            monitors["sigma_max"].append(sigma_max)
+        
+        # ------------------- verbose
+        if verbose and ((epoch+1) % 5 == 0 or (validate_dataloader is not None and improved)):
+                
             val_str = f"  val_ELPD={val_elpd:.4f}" if val_elpd is not None else ""
             if validate_dataloader is None: 
                 track = f"[ELBO] per-obs={elbo_per_obs:.6f}" 
@@ -574,6 +641,18 @@ def train_bayes(
 
     with torch.no_grad():
         VI.mu.copy_(best_state["mu"]); VI.rho.copy_(best_state["rho"])
+        if tau_nodes is not None:
+            if tau_nodes.node4 and best_state["tau_nodes"]["node4_mu"] is not None:
+                tau_nodes.node4.mu.copy_(best_state["tau_nodes"]["node4_mu"])
+                tau_nodes.node4.log_sigma.copy_(best_state["tau_nodes"]["node4_log_sigma"])
+            if tau_nodes.node2 and best_state["tau_nodes"]["node2_mu"] is not None:
+                tau_nodes.node2.mu.copy_(best_state["tau_nodes"]["node2_mu"])
+                tau_nodes.node2.log_sigma.copy_(best_state["tau_nodes"]["node2_log_sigma"])
+            if tau_nodes.node1 and best_state["tau_nodes"]["node1_mu"] is not None:
+                tau_nodes.node1.mu.copy_(best_state["tau_nodes"]["node1_mu"])
+                tau_nodes.node1.log_sigma.copy_(best_state["tau_nodes"]["node1_log_sigma"])
+            
+            
     VI.set_model_params(VI.mu.detach())
     if was_training: nn.Module.train(model, True)
 
@@ -586,6 +665,7 @@ def train_bayes(
         "mu": VI.mu.detach(),
         "rho": VI.rho.detach(),
         "vi_model": VI,
+        "monitor": monitors
     }
 
 

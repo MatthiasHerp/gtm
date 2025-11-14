@@ -12,7 +12,6 @@ from torch.nn.functional import softplus
 if TYPE_CHECKING:
     from gtm_model.gtm import GTM 
 
-_TRANSFORM_PARAM_RE = re.compile(r"^transformation\.params\.(\d+)$")
 
 # --- small global cache ---
 _eig_cache = {}
