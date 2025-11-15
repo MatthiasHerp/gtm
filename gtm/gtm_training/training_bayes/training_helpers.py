@@ -11,7 +11,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.amp import autocast
 from tqdm import tqdm
 from gtm.gtm_training.training_bayes.utils import _ELBOConvergence, Trackers
-from gtm.gtm_training.training_bayes.variational_model_estimator import VI_Model, VariationalGamma, TauNode, TauPack
+from gtm.gtm_training.training_bayes.variational_model_estimator import VI_Model, VariationalGamma, GammaTauNode, TauPack
 
 if TYPE_CHECKING:
     from ...gtm_model.gtm import GTM # type-only; no runtime import
@@ -253,19 +253,29 @@ def train_bayes(
     tau_nodes = None
     if use_tau_vi_anytime:
         
-        mu4 = _softplus_inv(float(hyper_T["tau"]))
-        node4 = TauNode(a=float(a_lambda), b=float(b_lambda),
-                        mu_init=mu4, log_sigma_init=log(tau_vi_sigma_init), device=model.device)
+        node4 = GammaTauNode(
+            a=float(a_lambda),
+            b=float(b_lambda),
+            mean_init=float(hyper_T["tau"]),
+            cv_init=float(tau_vi_sigma_init),
+            device=model.device,
+        )
         
         if decor_present:
-            mu1 = _softplus_inv(float(hyper_D["tau_1"]))
-            mu2 = _softplus_inv(float(hyper_D["tau_2"]))
-            
-            node1 = TauNode(a=float(a_lambda_1), b=float(b_lambda_1),
-                        mu_init=mu1, log_sigma_init=log(tau_vi_sigma_init), device=model.device)
-            
-            node2 = TauNode(a=float(a_lambda_2), b=float(b_lambda_2),
-                        mu_init=mu2, log_sigma_init=log(tau_vi_sigma_init), device=model.device)
+            node1 = GammaTauNode(
+                a=float(a_lambda_1),
+                b=float(b_lambda_1),
+                mean_init=float(hyper_D["tau_1"]),
+                cv_init=float(tau_vi_sigma_init),
+                device=model.device,
+                )
+            node2 = GammaTauNode(
+                a=float(a_lambda_2),
+                b=float(b_lambda_2),
+                mean_init=float(hyper_D["tau_2"]),
+                cv_init=float(tau_vi_sigma_init),
+                device=model.device,
+                )
         else:
             
             node1 = node2 = None
@@ -464,7 +474,16 @@ def train_bayes(
                 print(f"Converged (ELBO plateau) at epoch {epoch+1} "
                       f"with Δ<tol={conv_tracker.tol:g}.")
                 # snapshot current best (since there is no 'val', we keep last)
-                best_state = {"mu": VI.mu.detach().clone(), "rho": VI.rho.detach().clone()}
+                best_state = {
+                    "mu": VI.mu.detach().clone(), "rho": VI.rho.detach().clone(),
+                    "tau_nodes": {
+                        "node4_mu": tau_nodes.node4.mu.detach().clone()                 if (tau_nodes and tau_nodes.node4) else None,
+                        "node4_log_sigma": tau_nodes.node4.log_sigma.detach().clone()   if (tau_nodes and tau_nodes.node4) else None,
+                        "node1_mu": tau_nodes.node1.mu.detach().clone()                 if (tau_nodes and tau_nodes.node1) else None,
+                        "node1_log_sigma": tau_nodes.node1.log_sigma.detach().clone()   if (tau_nodes and tau_nodes.node1) else None,
+                        "node2_mu": tau_nodes.node2.mu.detach().clone()                 if (tau_nodes and tau_nodes.node2) else None,
+                        "node2_log_sigma": tau_nodes.node2.log_sigma.detach().clone()   if (tau_nodes and tau_nodes.node2) else None,
+                    }}
                 break
 
         # ------------------- τ updates (EB or CAVI) with per-τ damping

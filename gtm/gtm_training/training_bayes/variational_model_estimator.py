@@ -423,58 +423,92 @@ class VariationalGamma:
         )
         return float(term)
 
-class TauNode(nn.Module):
+class GammaTauNode(nn.Module):
     """
     Variational node for a single precision parameter τ with:
-      prior:  Gamma(a, b)  (shape a, rate b)
-      variational: z = log τ  ~ Normal(mu, sigma), τ = softplus(z) + eps_floor
+      prior:        Gamma(a, b)  (shape a, rate b)
+      variational:  Gamma(a_hat, b_hat) reparameterized
+
+    a_hat = exp(mu)        (shape)
+    b_hat = exp(log_sigma) (rate)
+
+    Initialisation ensures:
+       E_q[τ] = mean_init
+       CV     = cv_init
     """
-    def __init__(self, a: float, b: float, mu_init: float=-2.0, log_sigma_init: float=-2.0, eps_floor: float=1e-5, device="cpu"):
+    def __init__(
+        self,
+        a: float,
+        b: float,
+        mean_init: float,
+        cv_init: float=0.5,
+        eps_floor: float=1e-5,
+        device="cpu"
+        ):
+        
         super().__init__()
+        
+        # prior hyper-parameters (buffers, not learmed)
         self.register_buffer("a", torch.as_tensor(float(a), dtype=torch.float32, device=device))
         self.register_buffer("b", torch.as_tensor(float(b), dtype=torch.float32, device=device))
+        
         self.eps_floor = float(eps_floor)
+        
+        # choose initial (a_hat, b_hat) such that:
+        #   E_q[τ] = mean_init
+        #   CV(τ)  = sqrt(Var)/E ≈ cv_init
+        #
+        # For Gamma(a_hat, b_hat): mean = a_hat / b_hat, var = a_hat / b_hat^2
+        # => CV^2 = 1 / a_hat  => a_hat = 1 / cv^2,    b_hat = a_hat / mean
+        
+        mean_init = max(float(mean_init), 1e-6)
+        cv_init = max(float(cv_init), 1e-6)
+        
+        a_hat0 = 1.0/(cv_init **2)
+        b_hat0 = a_hat0/mean_init
 
-        self.mu         = nn.Parameter(torch.tensor(float(mu_init), dtype=torch.float32, device=device))
-        self.log_sigma  = nn.Parameter(torch.tensor(float(log_sigma_init), dtype=torch.float32, device=device))
+        self.mu         = nn.Parameter(torch.log(torch.as_tensor(a_hat0, dtype=torch.float32, device=device)))
+        self.log_sigma  = nn.Parameter(torch.log(torch.as_tensor(b_hat0, dtype=torch.float32, device=device)))
 
-    # small additive to avoid softplus near-zero stickiness
-    def _sigma(self): return torch.exp(self.log_sigma).clamp_min(1e-9)
+    
+    @property # shape parameter of q(τ)
+    def a_hat(self): return torch.exp(self.mu).clamp_min(1e-8)
+    
+    
+    @property # rate parameters of q(τ)
+    def b_hat(self): return torch.exp(self.log_sigma).clamp_min(1e-8)
+    
+    def _q_dist(self): return torch.distributions.Gamma(self.a_hat, self.b_hat)
+    
+    def _p_dist(self): return torch.distributions.Gamma(self.a, self.b)
+    
     
     def sample_tau(self, n_samples: int, generator: torch.Generator | None = None):
         """
-        Returns (tau[S], logp_tau[S], logq_tau[S])
-        log q(τ) uses change-of-variables: z ~ N(μ,σ²), τ = softplus(z) + floor
+        Returns (tau[S], logp_tau[S], logq_tau[S]) with:
+          q(τ) = Gamma(a_hat, b_hat)
+          p(τ) = Gamma(a, b)
         """
         
-        sigma = self._sigma()
-        #sigma = torch.exp(self.log_sigma) + 1e-9
-        normal = Normal(self.mu, sigma)
         
+        q = self._q_dist()
+        p = self._p_dist()
+
         try:
-            # Newer torch (>=2.2) supports generator argument
-            z = normal.rsample((n_samples,), generator=generator)   # [S]
+            tau = q.rsample((n_samples,), generator=generator)      # [S]
         except TypeError:
-            # Fallback for older torch (<2.2): ignore generator
+            # older torch Gamma.rsample has no generator arg
             if generator is not None:
-                # manually sample reproducibly if generator provided
-                eps = torch.randn((n_samples,), device=self.mu.device, generator=generator)
+                # draw base noise via generator, then inverse-CDF
+                # (fallback: just ignore generator)
+                tau = q.rsample((n_samples,))
             else:
-                eps = torch.randn((n_samples,), device=self.mu.device)
-            z = self.mu + sigma * eps
-        
+                tau = q.rsample((n_samples,))
 
-        tau = torch.nn.functional.softplus(z) + self.eps_floor  # [S]
-        # log q(τ) = log N(z;μ,σ²) - log dτ/dz ;  dτ/dz = sigmoid(z)  (for softplus)
-        logq_z = normal.log_prob(z)                             # [S]
-        log_dtau_dz = torch.log(torch.sigmoid(z) + 1e-12)       # [S]
-        logq_tau = logq_z - log_dtau_dz
+        tau = tau + self.eps_floor
+        logq_tau = q.log_prob(tau)          # [S]
+        logp_tau = p.log_prob(tau)          # [S]
 
-        # log p(τ) under Gamma(a, b):  a*log b - lgamma(a) + (a-1)log τ - b τ
-        logp_tau = (self.a * torch.log(self.b + 1e-12) - torch.lgamma(self.a)
-                    + (self.a - 1.0) * torch.log(tau + 1e-12) - self.b * tau)
-
-        # Return τ samples + MC estimates needed
         return tau, logp_tau, logq_tau
 
     def kl_mc(self, S: int = 8, generator: torch.Generator | None = None):
@@ -483,12 +517,23 @@ class TauNode(nn.Module):
         return (logq - logp).mean()
 
     def mean_and_var_tau_mc(self, S: int = 128, generator: torch.Generator | None = None):
-        tau, _, _ = self.sample_tau(S, generator=generator)
-        return (float(tau.mean()), float(tau.var(unbiased=False)))
+        """
+        We actually have closed form, so we don't need MC:
+            mean = a_hat / b_hat
+            var  = a_hat / b_hat^2
+        Kept the name *_mc for API compatibility.
+        """
+        a_hat = self.a_hat
+        b_hat = self.b_hat
+        mean = a_hat / b_hat
+        var = a_hat / (b_hat ** 2)
+        return float(mean), float(var)
 
     def clamp_sigma(self, min_val: float=1e-3, max_val: float=3.0):
         with torch.no_grad():
-            self.log_sigma.clamp_(min=torch.log(torch.tensor(min_val)), max=torch.log(torch.tensor(max_val)))
+            lo = torch.log(torch.tensor(min_val))
+            hi = torch.log(torch.tensor(max_val))
+            self.log_sigma.clamp_(min=lo, max=hi)
             
 
 class TauPack:
@@ -498,7 +543,7 @@ class TauPack:
       - hyper_T / hyper_D dictionaries for the model call
       - (logq - logp) for the τ KL contribution (per-sample, to add to ELBO)
     """
-    def __init__(self, node4: TauNode | None, node1: TauNode | None, node2: TauNode | None):
+    def __init__(self, node4: GammaTauNode | None, node1: GammaTauNode | None, node2: GammaTauNode | None):
         self.node4 = node4
         self.node1 = node1
         self.node2 = node2
