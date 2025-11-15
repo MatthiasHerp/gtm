@@ -29,7 +29,7 @@ def _make_key_filter(patterns_include=None, patterns_exclude=None):
     return _keep
 
 
-def _beta_kl_at(epoch: int, beta_kl_anneal_epochs, beta_kl_start, beta_min=1.1) -> float:
+def _beta_kl_at(epoch: int, beta_kl_anneal_epochs, beta_kl_start, beta_min=1.0) -> float:
     t = min(1.0, epoch / max(1, beta_kl_anneal_epochs))
     return beta_kl_start * (1.0 - t) + beta_min * t
 
