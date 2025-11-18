@@ -1,0 +1,46 @@
+[
+    {
+        "copula_name": "Gaussian_rho_0.7",
+        "KL_train_BGTM": 0.01002196978961062,
+        "KL_train_GTM": 0.01149121421013903,
+        "KL_train_Gaussian": -0.0015390283521549753,
+        "KL_train_Copula": -0.0018048507173506656,
+        "KL_test_BGTM": 0.013916205347531997,
+        "KL_test_GTM": 0.014625160504335127,
+        "KL_test_Gaussian": 0.002127103562110625,
+        "KL_test_Copula": 0.0022532204608699757
+    },
+    {
+        "copula_name": "t_rho_0.7_nu_4",
+        "KL_train_BGTM": 0.02841083128193395,
+        "KL_train_GTM": -0.00018412302991374218,
+        "KL_train_Gaussian": 0.039163721272740516,
+        "KL_train_Copula": -0.00048115565801322093,
+        "KL_test_BGTM": 0.038094435025238,
+        "KL_test_GTM": 0.016954343802713358,
+        "KL_test_Gaussian": 0.0372758096466293,
+        "KL_test_Copula": 0.0008810522510735871
+    },
+    {
+        "copula_name": "Clayton_theta_2",
+        "KL_train_BGTM": 0.032828929262457805,
+        "KL_train_GTM": -0.00201131056040673,
+        "KL_train_Gaussian": 0.10123022319584936,
+        "KL_train_Copula": -0.000838003200293495,
+        "KL_test_BGTM": 0.05046885641262083,
+        "KL_test_GTM": 0.01788320437714606,
+        "KL_test_Gaussian": 0.11760617941066771,
+        "KL_test_Copula": 0.0008077945577214163
+    },
+    {
+        "copula_name": "Joe_theta_2.5_rot90",
+        "KL_train_BGTM": 0.02927448858549014,
+        "KL_train_GTM": 0.027594314890402708,
+        "KL_train_Gaussian": 0.11257937522460834,
+        "KL_train_Copula": -0.001777024958777099,
+        "KL_test_BGTM": 0.029059869243494775,
+        "KL_test_GTM": 0.031694618763319755,
+        "KL_test_Gaussian": 0.10744456835567166,
+        "KL_test_Copula": 0.0018062126793705272
+    }
+]
