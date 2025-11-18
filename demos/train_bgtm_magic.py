@@ -77,32 +77,12 @@ if __name__ == "__main__":
                 spline_transformation="bspline",
                 spline_decorrelation="bspline",
                 transformation_spline_range=(-15, 15),
-                device="cpu",
+                device="cuda",
                 ## NEW ARGUMENTS ##
                 inference = 'bayesian',
                 hyperparameter=hyperparameters
-            )
+            )           
 
-            model.to(device)
-            
-            adaptive_lasso_weights_matrix = False
-            penalty_lasso_conditional_independence = False
-
-            # train the joint model
-            """_: dict[str, torch.Tensor] = model.train(
-                train_dataloader=dataloader_train,
-                validate_dataloader=dataloader_validate,
-                iterations=200,
-                optimizer="Adam",
-                adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
-                penalty_lasso_conditional_independence=penalty_lasso_conditional_independence,
-                max_batches_per_iter=False,
-                mcmc_sample=2,
-                learning_rate=0.000001
-                
-            )"""
-            
-            
             
             output = model.train(
                 train_dataloader=dataloader_train,

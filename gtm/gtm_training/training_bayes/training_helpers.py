@@ -360,8 +360,8 @@ def train_bayes(
         qf_1_dec, qf_2_dec, E_qf_sum_accum = 0.0, 0.0, 0.0
 
         for b, y in enumerate(train_dataloader):
-            B = y.shape[0]
             y = y.to(model.device)
+            B = y.shape[0]
             opt.zero_grad(set_to_none=True)
 
             if epoch < warm_sigma_epochs:
