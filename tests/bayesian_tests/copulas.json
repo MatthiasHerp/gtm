@@ -1,0 +1,48 @@
+[
+    {
+        "name": "Gaussian_rho_0.7",
+        "family": "gaussian",
+        "params": [0.7],
+        "rotation": 0
+    },
+    {
+        "name": "Student_rho_0.7_nu_4",
+        "family": "student",
+        "params": [0.7, 4.0],
+        "rotation": 0
+    },
+    {
+        "name": "Clayton_theta_2",
+        "family": "clayton",
+        "params": [2.0],
+        "rotation": 0
+    },
+    {
+        "name": "Gumbel_2.5",
+        "family": "gumbel",
+        "params": [2.5],
+        "rotation": 0
+    },
+    {
+        "name": "Joe_theta_2.5_rot90",
+        "family": "joe",
+        "params": [2.5],
+        "rotation": 90
+    },
+    {
+        "name": "Gumbel_rot90_2",
+        "family": "gumbel",
+        "params": [2.0],
+        "rotation": 90
+    },
+    {
+        "name": "BB1_2_3",
+        "family": "bb1",
+        "params": [2.0, 3.0]
+    },
+    {
+        "name": "BB7_1.2_2.0",
+        "family": "bb7",
+        "params": [1.2, 2.0]
+    }
+]

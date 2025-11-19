@@ -1,15 +1,135 @@
 import json
+import os 
+import math
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
 
 import pyvinecopulib as pv
 
 from gtm import GTM   # and your Bayesian GTM class if it's also in gtm.py
 from dataset_helpers import Generic_Dataset
+from tests.bayesian_tests.utils import load_copula_configs_from_json
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# ---------------------------------------------------------------------
+# 0) Helper: generate and save contour plots
+# ---------------------------------------------------------------------
+def save_density_plots_for_copula(
+    model_bgtm,
+    model_gtm,
+    x_train,
+    cfg_name,
+    n_samples_inverse=10_000,
+    out_root="tests/bayesian_tests/output",
+):
+    """
+    For a given copula, save:
+      - BGTM inverse-sampling density   -> bgtm_inverse_sampling.pdf
+      - GTM inverse-sampling density    -> gtm_inverse_sampling.pdf
+      - BGTM density on train data      -> bgtm_train_data.pdf
+    """
+
+    out_dir = os.path.join(out_root, cfg_name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    # --- 1) BGTM inverse-sampling ---
+    with torch.no_grad():
+        synthetic_bgtm = model_bgtm.sample(n_samples_inverse).cpu()
+
+    plt.figure()
+    model_bgtm.plot_densities(
+        synthetic_bgtm, x_lim=[-4, 4], y_lim=[-4, 4]
+    )
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "bgtm_inverse_sampling.pdf"))
+    plt.close()
+
+    # --- 2) GTM inverse-sampling ---
+    with torch.no_grad():
+        synthetic_gtm = model_gtm.sample(n_samples_inverse).cpu()
+
+    plt.figure()
+    model_gtm.plot_densities(
+        synthetic_gtm, x_lim=[-4, 4], y_lim=[-4, 4]
+    )
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "gtm_inverse_sampling.pdf"))
+    plt.close()
+
+    # --- 3) BGTM density evaluated on the *true train data* ---
+    plt.figure()
+    model_bgtm.plot_densities(
+        x_train.cpu(), x_lim=[-4, 4], y_lim=[-4, 4]
+    )
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "bgtm_train_data.pdf"))
+    plt.close()
+    
+    
+    
+def save_bgtm_training_diagnostics(output, cfg_name, out_root="tests/bayesian_tests"):
+    """
+    Save **all** training diagnostics from output['monitor'] into a single PDF
+    arranged in a subplot grid.
+
+    Output file:
+        tests/bayesian_tests/<copula_name>/bgtm_training_diagnostics.pdf
+    """
+
+    # Create output directory
+    out_dir = os.path.join(out_root, cfg_name)
+    os.makedirs(out_dir, exist_ok=True)
+
+    # Extract monitor dict
+    if "monitor" not in output:
+        print(f"[WARN] No 'monitor' found in BGTM output for {cfg_name}")
+        return
+
+    monitor = output["monitor"]
+
+    # Filter keys that are plottable (1D sequences)
+    plot_keys = [
+        k for k, v in monitor.items()
+        if hasattr(v, "__len__")          # must be iterable
+        and not isinstance(v, (str, bytes))
+        and len(v) > 1                    # avoid scalars / trivial
+    ]
+
+    if len(plot_keys) == 0:
+        print(f"[WARN] No plottable diagnostics for {cfg_name}")
+        return
+
+    # Layout
+    n = len(plot_keys)
+    cols = 3
+    rows = math.ceil(n / cols)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 4 * rows))
+    axes = axes.flatten()
+
+    # Create plots
+    for ax, key in zip(axes, plot_keys):
+        v = monitor[key]
+        ax.plot(v)
+        ax.set_title(key)
+        ax.set_xlabel("Iteration / Epoch")
+        ax.grid(True)
+
+    # Hide unused axes
+    for i in range(len(plot_keys), len(axes)):
+        axes[i].axis("off")
+
+    plt.tight_layout()
+
+    # Save to file
+    outfile = os.path.join(out_dir, "bgtm_training_diagnostics.pdf")
+    plt.savefig(outfile)
+    plt.close()
+
+    print(f"[INFO] Saved BGTM diagnostics → {outfile}")
 
 # ---------------------------------------------------------------------
 # 1) Helper: build true copula from a config
@@ -197,7 +317,9 @@ def fit_gtm(x_train, x_val, x_test):
     log_train = model_freq.log_likelihood(x_train).detach().cpu()
     log_val = model_freq.log_likelihood(x_val).detach().cpu()
     log_test = model_freq.log_likelihood(x_test).detach().cpu()
-
+    
+    model_freq.approximate_transformation_inverse()
+    
     return log_train, log_val, log_test, model_freq
 
 
@@ -307,8 +429,10 @@ def fit_bgtm(x_train, x_val, x_test):
     log_train = model_bayes.log_likelihood(x_train).detach().cpu()
     log_val = model_bayes.log_likelihood(x_val).detach().cpu()
     log_test = model_bayes.log_likelihood(x_test).detach().cpu()
+    
+    model_bayes.approximate_transformation_inverse()
 
-    return log_train, log_val, log_test, model_bayes
+    return log_train, log_val, log_test, model_bayes, output
 
 
 # ---------------------------------------------------------------------
@@ -351,7 +475,7 @@ def run_experiment_for_copula(cfg, n_train=2000, n_val=2000, n_test=20000):
     )
 
     # --- BGTM (full Bayes VI) ---
-    log_bgtm_train, log_bgtm_val, log_bgtm_test, model_bgtm = fit_bgtm(
+    log_bgtm_train, log_bgtm_val, log_bgtm_test, model_bgtm, bgtm_output = fit_bgtm(
         x_train, x_val, x_test
     )
 
@@ -386,7 +510,20 @@ def run_experiment_for_copula(cfg, n_train=2000, n_val=2000, n_test=20000):
         f"  Gaussian : {results['KL_test_Gaussian']:.4f}\n"
         f"  Copula   : {results['KL_test_Copula']:.4f}"
     )
-
+    
+    save_density_plots_for_copula(
+        model_bgtm=model_bgtm,
+        model_gtm=model_gtm,
+        x_train=x_train,
+        cfg_name=cfg["name"],
+    )
+    
+    
+    save_bgtm_training_diagnostics(
+        output=bgtm_output,
+        cfg_name=cfg["name"]
+    )
+    
     return results
 
 
@@ -395,58 +532,9 @@ def run_experiment_for_copula(cfg, n_train=2000, n_val=2000, n_test=20000):
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
     # You can add as many as you like here
-    copula_configs = [
-        # Elliptical
-        {
-            "name": "Gaussian_rho_0.7",
-            "family": pv.BicopFamily.gaussian,
-            "params": lambda: np.array([[0.7]]),
-            "rotation": 0,
-        },
-        {
-            "name": "t_rho_0.7_nu_4",
-            "family": pv.BicopFamily.student,
-            "params": lambda: np.array([[0.7],[4.0]]),  # (ρ, ν)
-            "rotation": 0,
-        },
-        # Archimedean
-        {
-            "name": "Clayton_theta_2",
-            "family": pv.BicopFamily.clayton,
-            "params": lambda: np.array([[2.0]]),
-            "rotation": 0,
-        },
-        {
-            "name": "Gumbel_2.5",
-            "family": pv.BicopFamily.gumbel,
-            "params": lambda: np.array([[2.5]])
-        },
-        
-        # Rotated
-        {
-             "name": "Joe_theta_2.5_rot90",
-             "family": pv.BicopFamily.joe,
-             "params": lambda: np.array([[2.5]]),
-             "rotation": 90,
-        },
-        {
-            "name": "Gumbel_rot90_2",
-            "family": pv.BicopFamily.gumbel,
-            "params": lambda: np.array([[2.0]]),
-            "rotation": 90
-        },
-        # BB families (complex)
-        {
-            "name": "BB1_2_3", 
-            "family": pv.BicopFamily.bb1,
-            "params": lambda: np.array([[2.0],[3.0]])
-        },
-        {
-            "name": "BB7_1.2_2.0",
-            "family": pv.BicopFamily.bb7,
-            "params": lambda: np.array([[1.2],[2.0]])
-            },
-    ]
+    copula_configs = load_copula_configs_from_json(
+        "tests/bayesian_tests/copulas.json"
+    )
 
     all_results = []
     for cfg in copula_configs:
@@ -471,7 +559,7 @@ if __name__ == "__main__":
             f"{r['KL_test_Copula']:.4f}"
         )
     
-    with open("tests/bayesian_tests/results_summary.json", "w") as f:
+    with open("tests/bayesian_tests/output/results_summary.json", "w") as f:
         json.dump(all_results, f, indent=4)
 
     print("\nSaved summary to results_summary.json")
