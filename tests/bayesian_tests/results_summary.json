@@ -1,46 +1,90 @@
 [
     {
         "copula_name": "Gaussian_rho_0.7",
-        "KL_train_BGTM": 0.01002196978961062,
-        "KL_train_GTM": 0.01149121421013903,
-        "KL_train_Gaussian": -0.0015390283521549753,
-        "KL_train_Copula": -0.0018048507173506656,
-        "KL_test_BGTM": 0.013916205347531997,
-        "KL_test_GTM": 0.014625160504335127,
-        "KL_test_Gaussian": 0.002127103562110625,
-        "KL_test_Copula": 0.0022532204608699757
+        "KL_train_BGTM": 0.008467623797296472,
+        "KL_train_GTM": 0.010008642819761226,
+        "KL_train_Gaussian": -0.001358633908392005,
+        "KL_train_Copula": -0.0016434427002595844,
+        "KL_test_BGTM": 0.01194401590984637,
+        "KL_test_GTM": 0.009612040986235684,
+        "KL_test_Gaussian": 0.0009630654768305487,
+        "KL_test_Copula": 0.0013018701050947034
     },
     {
         "copula_name": "t_rho_0.7_nu_4",
-        "KL_train_BGTM": 0.02841083128193395,
-        "KL_train_GTM": -0.00018412302991374218,
-        "KL_train_Gaussian": 0.039163721272740516,
-        "KL_train_Copula": -0.00048115565801322093,
-        "KL_test_BGTM": 0.038094435025238,
-        "KL_test_GTM": 0.016954343802713358,
-        "KL_test_Gaussian": 0.0372758096466293,
-        "KL_test_Copula": 0.0008810522510735871
+        "KL_train_BGTM": 0.029930210762993854,
+        "KL_train_GTM": 0.007251746946351096,
+        "KL_train_Gaussian": 0.023234531038777397,
+        "KL_train_Copula": -0.0018677382245901068,
+        "KL_test_BGTM": 0.03661170501658417,
+        "KL_test_GTM": 0.02023530305573441,
+        "KL_test_Gaussian": 0.03480523504564262,
+        "KL_test_Copula": 0.0012696456342984358
     },
     {
         "copula_name": "Clayton_theta_2",
-        "KL_train_BGTM": 0.032828929262457805,
-        "KL_train_GTM": -0.00201131056040673,
-        "KL_train_Gaussian": 0.10123022319584936,
-        "KL_train_Copula": -0.000838003200293495,
-        "KL_test_BGTM": 0.05046885641262083,
-        "KL_test_GTM": 0.01788320437714606,
-        "KL_test_Gaussian": 0.11760617941066771,
-        "KL_test_Copula": 0.0008077945577214163
+        "KL_train_BGTM": 0.049275657427058875,
+        "KL_train_GTM": 0.009064347636447607,
+        "KL_train_Gaussian": 0.11739215881799285,
+        "KL_train_Copula": -0.00043235235219355405,
+        "KL_test_BGTM": 0.04588177920822514,
+        "KL_test_GTM": 0.012539628812116507,
+        "KL_test_Gaussian": 0.11893574955109965,
+        "KL_test_Copula": 0.0008309519696486292
+    },
+    {
+        "copula_name": "Gumbel_2.5",
+        "KL_train_BGTM": 0.023960294370838114,
+        "KL_train_GTM": 0.025765931015201516,
+        "KL_train_Gaussian": 0.05667654717464061,
+        "KL_train_Copula": -0.0016705519876156006,
+        "KL_test_BGTM": 0.03206349091221258,
+        "KL_test_GTM": 0.03167951987077162,
+        "KL_test_Gaussian": 0.051785145166410654,
+        "KL_test_Copula": 0.0014468338987122852
     },
     {
         "copula_name": "Joe_theta_2.5_rot90",
-        "KL_train_BGTM": 0.02927448858549014,
-        "KL_train_GTM": 0.027594314890402708,
-        "KL_train_Gaussian": 0.11257937522460834,
-        "KL_train_Copula": -0.001777024958777099,
-        "KL_test_BGTM": 0.029059869243494775,
-        "KL_test_GTM": 0.031694618763319755,
-        "KL_test_Gaussian": 0.10744456835567166,
-        "KL_test_Copula": 0.0018062126793705272
+        "KL_train_BGTM": 0.023780671241256497,
+        "KL_train_GTM": 0.0032988501214711854,
+        "KL_train_Gaussian": 0.09988709521529367,
+        "KL_train_Copula": -0.0014133916719510442,
+        "KL_test_BGTM": 0.032709365846351375,
+        "KL_test_GTM": 0.01451409323377966,
+        "KL_test_Gaussian": 0.11788232817812322,
+        "KL_test_Copula": 0.0020456288237779043
+    },
+    {
+        "copula_name": "Gumbel_rot90_2",
+        "KL_train_BGTM": 0.017777500972891082,
+        "KL_train_GTM": 0.019956088290357818,
+        "KL_train_Gaussian": 0.03857583789601349,
+        "KL_train_Copula": -0.0018700841350332874,
+        "KL_test_BGTM": 0.020075330644395695,
+        "KL_test_GTM": 0.025604002236869684,
+        "KL_test_Gaussian": 0.03987498516395365,
+        "KL_test_Copula": 0.0018064533684349566
+    },
+    {
+        "copula_name": "BB1_2_3",
+        "KL_train_BGTM": 0.19850980812112834,
+        "KL_train_GTM": 0.02472453722159413,
+        "KL_train_Gaussian": 0.07894665652315168,
+        "KL_train_Copula": -0.00012617882563970446,
+        "KL_test_BGTM": 0.20217848350442894,
+        "KL_test_GTM": 0.03169321021176823,
+        "KL_test_Gaussian": 0.07715050534047135,
+        "KL_test_Copula": 0.0002678958899145427
+    },
+    {
+        "copula_name": "BB7_1.2_2.0",
+        "KL_train_BGTM": 0.04765201769804146,
+        "KL_train_GTM": 0.002350237951032185,
+        "KL_train_Gaussian": 0.08705334632133631,
+        "KL_train_Copula": -0.0005168362624226551,
+        "KL_test_BGTM": 0.05029039643037007,
+        "KL_test_GTM": 0.010332571598169056,
+        "KL_test_Gaussian": 0.08439275169002697,
+        "KL_test_Copula": 0.0010184326421196158
     }
 ]
