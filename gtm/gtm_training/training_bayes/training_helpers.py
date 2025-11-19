@@ -168,12 +168,28 @@ def train_bayes(
     
     # ------------------- key filter
     if model.number_decorrelation_layers == 0 or model.transform_only:
-        parameters_patterns = [r"^transformation\.params\.\d+$"]
-        patterns_exclude = [r"decor", r"rho_", r"optimizer", r"running_", r"num_batches_tracked"]
+        parameters_patterns = [
+            r"^transformation\.params\.\d+$"
+            ]
+        patterns_exclude = [
+            r"decor",
+            r"rho_",
+            r"optimizer",
+            r"running_",
+            r"num_batches_tracked"
+            ]
     else:
-        parameters_patterns = [r"^transformation\.params\.\d+$",
-                               r"^decorrelation_layers\.\d+\.params$"]
-        patterns_exclude = [r"rho_", r"optimizer", r"running_", r"num_batches_tracked"]
+        parameters_patterns = [
+            r"^transformation\.params\.\d+$",
+            r"^decorrelation_layers\.\d+\.params$"
+            ]
+        patterns_exclude = [
+            r"rho_",
+            r"optimizer",
+            r"running_",
+            r"num_batches_tracked"
+            ]
+        
     key_filter = _make_key_filter(patterns_include=parameters_patterns,
                                   patterns_exclude=patterns_exclude)
 
@@ -322,7 +338,6 @@ def train_bayes(
         if len(pg["params"]) > 0:
             opt.add_param_group(pg)
 
-        
     sched = ReduceLROnPlateau(opt, mode="min", factor=sched_factor, patience=sched_patience,
                               threshold=sched_threshold, cooldown=sched_cooldown,
                               min_lr=sched_min_lr, verbose=verbose)
@@ -337,7 +352,12 @@ def train_bayes(
         )
 
     best_val = float("inf")
-    best_state = {"mu": VI.mu.detach().clone(), "rho": VI.rho.detach().clone()}
+    
+    best_state = {
+        "mu":   VI.mu.detach().clone(),
+        "rho":  VI.rho.detach().clone()
+        }
+    
     eb_E_qf_num, eb_count = 0.0, 0
     no_improve = 0
     
@@ -400,8 +420,8 @@ def train_bayes(
 
             with torch.no_grad():
                 def sp_inv(s): return log(exp(float(s)) - 1.0)
-                rho_min = sp_inv(0.015)  # softplus^-1(0.02)
-                rho_max = sp_inv(0.12)
+                rho_min = sp_inv(0.005)  # softplus^-1(0.02)
+                rho_max = sp_inv(0.5)
                 VI.rho.data.clamp_(min=rho_min, max=rho_max)   # narrow band; widen if needed
             
             running         += float(loss.item()); n_batches += 1; obs_seen_epoch += B
@@ -475,7 +495,8 @@ def train_bayes(
                       f"with Δ<tol={conv_tracker.tol:g}.")
                 # snapshot current best (since there is no 'val', we keep last)
                 best_state = {
-                    "mu": VI.mu.detach().clone(), "rho": VI.rho.detach().clone(),
+                    "mu": VI.mu.detach().clone(), 
+                    "rho": VI.rho.detach().clone(),
                     "tau_nodes": {
                         "node4_mu": tau_nodes.node4.mu.detach().clone()                 if (tau_nodes and tau_nodes.node4) else None,
                         "node4_log_sigma": tau_nodes.node4.log_sigma.detach().clone()   if (tau_nodes and tau_nodes.node4) else None,

@@ -70,7 +70,7 @@ def save_density_plots_for_copula(
     
     
     
-def save_bgtm_training_diagnostics(output, cfg_name, out_root="tests/bayesian_tests"):
+def save_bgtm_training_diagnostics(output, cfg_name, out_root="tests/bayesian_tests/output"):
     """
     Save **all** training diagnostics from output['monitor'] into a single PDF
     arranged in a subplot grid.
