@@ -1,6 +1,7 @@
 import json
 import os 
 import math
+import random
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -14,14 +15,27 @@ from tests.bayesian_tests.utils import load_copula_configs_from_json
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def set_global_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    # deterministic PyTorch
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+    print(f"[INFO] Global seed set to {seed}")
+
 # ---------------------------------------------------------------------
 # 0) Helper: generate and save contour plots
 # ---------------------------------------------------------------------
 def save_density_plots_for_copula(
-    model_bgtm,
-    model_gtm,
+    model_bgtm: "GTM",
+    model_gtm: "GTM",
     x_train,
     cfg_name,
+    seed,
     n_samples_inverse=10_000,
     out_root="tests/bayesian_tests/output",
 ):
@@ -32,7 +46,7 @@ def save_density_plots_for_copula(
       - BGTM density on train data      -> bgtm_train_data.pdf
     """
 
-    out_dir = os.path.join(out_root, cfg_name)
+    out_dir = os.path.join(out_root, cfg_name, f"seed_{seed}")
     os.makedirs(out_dir, exist_ok=True)
 
     # --- 1) BGTM inverse-sampling ---
@@ -70,7 +84,11 @@ def save_density_plots_for_copula(
     
     
     
-def save_bgtm_training_diagnostics(output, cfg_name, out_root="tests/bayesian_tests/output"):
+def save_bgtm_training_diagnostics(
+    output,
+    cfg_name,
+    seed,
+    out_root="tests/bayesian_tests/output"):
     """
     Save **all** training diagnostics from output['monitor'] into a single PDF
     arranged in a subplot grid.
@@ -80,7 +98,7 @@ def save_bgtm_training_diagnostics(output, cfg_name, out_root="tests/bayesian_te
     """
 
     # Create output directory
-    out_dir = os.path.join(out_root, cfg_name)
+    out_dir = os.path.join(out_root, cfg_name, f"seed_{seed}")
     os.makedirs(out_dir, exist_ok=True)
 
     # Extract monitor dict
@@ -387,7 +405,7 @@ def fit_bgtm(x_train, x_val, x_test):
     # ---- VI / training config (copy from your notebook) ----
     output = model_bayes.train(
         train_dataloader=dl_train,
-        validate_dataloader=dl_val,
+        validate_dataloader=None,
         iterations=800,
         #verbose=True,
         learning_rate=0.0015,
@@ -438,8 +456,9 @@ def fit_bgtm(x_train, x_val, x_test):
 # ---------------------------------------------------------------------
 # 7) Run one full experiment for a given copula
 # ---------------------------------------------------------------------
-def run_experiment_for_copula(cfg, n_train=2000, n_val=2000, n_test=20000):
-    print(f"\n=== Running experiment for copula: {cfg['name']} ===")
+def run_experiment_for_copula(cfg, seed, n_train=2000, n_val=2000, n_test=20000):
+    set_global_seed(seed)
+    print(f"\n=== Running experiment for copula: {cfg['name']} (seed={seed}) ===")
 
     copula_true = build_true_copula(cfg)
 
@@ -485,6 +504,7 @@ def run_experiment_for_copula(cfg, n_train=2000, n_val=2000, n_test=20000):
 
     results = {
         "copula_name": cfg["name"],
+        "seed": seed,
         "KL_train_BGTM": approx_kl(log_true_train, log_bgtm_train),
         "KL_train_GTM": approx_kl(log_true_train, log_gtm_train),
         "KL_train_Gaussian": approx_kl(log_true_train, log_gauss_train),
@@ -516,12 +536,14 @@ def run_experiment_for_copula(cfg, n_train=2000, n_val=2000, n_test=20000):
         model_gtm=model_gtm,
         x_train=x_train,
         cfg_name=cfg["name"],
+        seed = seed
     )
     
     
     save_bgtm_training_diagnostics(
         output=bgtm_output,
-        cfg_name=cfg["name"]
+        cfg_name=cfg["name"],
+        seed = seed
     )
     
     return results
@@ -531,6 +553,8 @@ def run_experiment_for_copula(cfg, n_train=2000, n_val=2000, n_test=20000):
 # 8) Main: list of copulas to compare
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
+    
+    seeds = [1998]
     # You can add as many as you like here
     copula_configs = load_copula_configs_from_json(
         "tests/bayesian_tests/copulas.json"
@@ -538,8 +562,9 @@ if __name__ == "__main__":
 
     all_results = []
     for cfg in copula_configs:
-        res = run_experiment_for_copula(cfg)
-        all_results.append(res)
+        for seed in seeds:
+            res = run_experiment_for_copula(cfg, seed=seed)
+            all_results.append(res)
 
     print("\n=== Summary table ===")
     header = [

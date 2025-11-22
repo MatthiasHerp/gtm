@@ -416,11 +416,11 @@ def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
 
     # batch_size, num_x = x.shape
 
-    offsets = torch.arange(0, p + 1, device=k.device).view(
-        1, 1, p + 1
-    )  # shape (1, 1, 4)
+    offsets = torch.arange(0, p + 1, device=k.device).view(1, 1, p + 1)  # shape (1, 1, 4)
     ctrl_idx = k.unsqueeze(-1) - p + offsets  # shape (B, N, 4)
-    # ctrl_idx = ctrl_idx.clamp(0, c.shape[1] - 1)  # prevent indexing out of bounds
+    
+    max_idx = c.shape[1] - 1
+    ctrl_idx = ctrl_idx.clamp(0, max_idx)  # prevent indexing out of bounds
 
     # Expand `c` to gather control points for each (B, N, 4)
     d = torch.gather(
@@ -477,6 +477,11 @@ def compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3):
 
     right = j + 1 + k - r
     left = j + k - (p - 1)
+    
+    max_t_idx = t.shape[0] - 1
+    right = right.clamp(0, max_t_idx)
+    left = left.clamp(0, max_t_idx)
+    
     alpha = (x - t[left]) / (t[right] - t[left])
     q[:, j] = (1.0 - alpha) * q[:, j - 1] + alpha * q[:, j]
     return q
@@ -495,8 +500,9 @@ def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p=3):
     idx_2 = idx_1 + 1  # shape (B, N, 3)
 
     # Clamp to valid range for control point indexing
-    # idx_1 = idx_1.clamp(0, c.shape[1] - 1)
-    # idx_2 = idx_2.clamp(0, c.shape[1] - 1)
+    max_c_idx = c.shape[1] - 1
+    idx_1 = idx_1.clamp(0, max_c_idx)
+    idx_2 = idx_2.clamp(0, max_c_idx)
 
     # Step 3: Gather control point differences
     c_expanded = c.unsqueeze(1).expand(-1, N, -1)  # shape (B, N, M)
@@ -507,8 +513,9 @@ def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p=3):
     t_idx_2 = k.unsqueeze(-1) - p + j_offsets + 1  # shape (B, N, 3)
 
     # Clamp to valid range for knot indexing
-    # t_idx_1 = t_idx_1.clamp(0, t.shape[0] - 1)
-    # t_idx_2 = t_idx_2.clamp(0, t.shape[0] - 1)
+    max_t_idx = t.shape[0] - 1
+    t_idx_1 = t_idx_1.clamp(0, max_t_idx)
+    t_idx_2 = t_idx_2.clamp(0, max_t_idx)
 
     # Step 5: Get knot differences
     t_diff = t[t_idx_1] - t[t_idx_2]  # shape (B, N, 3)
