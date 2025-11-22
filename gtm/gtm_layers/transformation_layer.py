@@ -916,12 +916,22 @@ class Transformation(nn.Module):
         input_space = torch.zeros(
             (num_samples, self.number_variables), dtype=torch.float32, device=device
         )
+        
         for var_number in range(self.number_variables):
+            knots = self.knots_list[var_number]
+            inner_knots = knots[self.spline_order : -self.spline_order]
+
+            lo = inner_knots[0].item()
+            hi = inner_knots[-1].item()
+
+            eps = 1e-6
+            lo += eps
+            hi -= eps
+
+            print(f"[FIX] var {var_number}: valid interval = [{lo}, {hi}]")
+
             input_space[:, var_number] = torch.linspace(
-                self.spline_range[0, var_number].item(),
-                self.spline_range[1, var_number].max().item(),
-                num_samples,
-                device=device,
+                lo, hi, num_samples, device=device
             )
 
         return_dict = self.forward(input=input_space, covariate=covariate_space)
