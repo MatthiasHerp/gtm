@@ -368,6 +368,10 @@ def compute_k_fixed_degrees(x, t):  # , n
         k: (batch, num_x) - Indices of knot intervals
     """
     k = torch.searchsorted(t, x.contiguous()) - 1
+    
+    max_k = t.shape[-1] - 1
+    k = k.clamp(0, max_k)
+    
     return k
 
 
@@ -403,10 +407,17 @@ def compute_k_fixed_degrees(x, t):  # , n
 
 
 def compute_update_alpha(x, t, k, r, d, j, p=3):
+    
+    left = j + k - p        # (B, N)
+    right = j + 1 + k - r   # (B, N)
 
-    alpha = (x - t[j + k - p]) / (
-        t[j + 1 + k - r] - t[j + k - p] + 1e-9
-    )  # Avoid div by zero
+    max_t_idx = t.shape[0] - 1
+    left = left.clamp(0, max_t_idx)
+    right = right.clamp(0, max_t_idx)
+    
+    # Advanced indexing into t: t[left] and t[right] have shape (B, N)
+    alpha = (x - t[left]) / (t[right] - t[left] + 1e-9)
+    
     new_d = d.clone()
     new_d[:, j] = (1 - alpha) * d[:, j - 1] + alpha * d[:, j]
     return new_d
@@ -590,6 +601,11 @@ def bspline_prediction_vectorized(
         input_a_clone = reluler.forward(input_a_clone)
     else:
         pass
+    
+    x_min = knots.min()
+    x_max = knots.max()
+    
+    input_a_clone = torch.clamp(input_a_clone, min=x_min + 1e-6, max=x_max - 1e-6)
 
     if calc_method == "deBoor":
 
