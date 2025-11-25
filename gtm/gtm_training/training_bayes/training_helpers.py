@@ -211,67 +211,10 @@ def train_bayes(
     # --------------------------------------------------------------------
     # 1. Key filter & VI construction
     # --------------------------------------------------------------------
-    if decor_present:
-        parameters_patterns = [
-            r"^transformation\.params\.\d+$",
-            r"^decorrelation_layers\.\d+\.params$",
-        ]
-        patterns_exclude = [
-            r"rho_",
-            r"optimizer",
-            r"running_",
-            r"num_batches_tracked",
-        ]
-    else:
-        parameters_patterns = [
-            r"^transformation\.params\.\d+$",
-        ]
-        patterns_exclude = [
-            r"decor",
-            r"rho_",
-            r"optimizer",
-            r"running_",
-            r"num_batches_tracked",
-        ]
-
-    key_filter = _make_key_filter(
-        patterns_include=parameters_patterns,
-        patterns_exclude=patterns_exclude,
-    )
-
     K = model.transformation.priors.K_prior_RW2.to(model.device)
     num_margins = int(model.number_variables)
-
-    VI = VI_Model(
-        model=model,
-        device=model.device,
-        key_filter=key_filter,
-        mv_block_keys=None,#[
-            #"transformation.params",
-            #"decorrelation_layers.",
-        #],
-        full_mvn = True,
-    ).to(model.device)
-
-    gen = torch.Generator(device=model.device)
-    gen.manual_seed(global_seed)
-    VI.set_rng(gen)
-
-    # Debug prints (can be turned off if too noisy)
-    print("Parameters to be affected by the bayesian approach:", [k for k, _ in VI._schema][:50])
-    print("MV blocks:")
-    for idx, size in zip(VI.block_indices, VI.block_sizes):
-        print("  block size =", size, "indices =", idx[:5], "...")
-
-    with torch.no_grad():
-        test_theta = VI.sample_theta(3, antithetic=True)
-        print("sample_theta OK, shape =", test_theta.shape)
-        print(
-            "sigma summary:",
-            VI.sigma.mean().item(),
-            VI.sigma.min().item(),
-            VI.sigma.max().item(),
-        )
+    
+    VI, gen = initialize_vi_model(model, global_seed, decor_present)
 
     # --------------------------------------------------------------------
     # 2. Hyperparameters & τ initialisation
@@ -293,8 +236,8 @@ def train_bayes(
     b_lambda = torch.as_tensor(pen_term2_T.get("tau_b", 1e-6), device=model.device, dtype=torch.float32)
     print(f"[TRANSFORMATION] λ_a={a_lambda.item()} λ_b={b_lambda.item()}")
 
-    def use_eb_now(epoch: int) -> bool:
-        return eb_warm_then_cavi and (epoch < warm_tau_epochs)
+    def use_eb_now(epoch: int) -> bool: return eb_warm_then_cavi and (epoch < warm_tau_epochs)
+
 
     # separate damping etas
     eta_tau4 = float(hyper_T.get("tau_4_update_eta", 0.25))
@@ -518,19 +461,7 @@ def train_bayes(
             if improved:
                 best_val = metric
                 no_improve = 0
-                best_state = {
-                    "mu": VI.mu.detach().clone(),
-                    "rho": VI.rho.detach().clone(),
-                    "L_unconstrained": VI.L_unconstrained.detach().clone(),
-                    "tau_nodes": {
-                        "node4_mu": tau_nodes.node4.mu.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
-                        "node4_log_sigma": tau_nodes.node4.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
-                        "node1_mu": tau_nodes.node1.mu.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
-                        "node1_log_sigma": tau_nodes.node1.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
-                        "node2_mu": tau_nodes.node2.mu.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
-                        "node2_log_sigma": tau_nodes.node2.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
-                    },
-                }
+                best_state = retrieve_model_state(VI, tau_nodes)
             else:
                 improved = False
                 no_improve += 1
@@ -556,19 +487,7 @@ def train_bayes(
                     f"Converged (ELBO plateau) at epoch {epoch + 1} "
                     f"with Δ<tol={conv_tracker.tol:g}."
                 )
-                best_state = {
-                    "mu": VI.mu.detach().clone(),
-                    "rho": VI.rho.detach().clone(),
-                    "L_unconstrained": VI.L_unconstrained.detach().clone(),
-                    "tau_nodes": {
-                        "node4_mu": tau_nodes.node4.mu.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
-                        "node4_log_sigma": tau_nodes.node4.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
-                        "node1_mu": tau_nodes.node1.mu.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
-                        "node1_log_sigma": tau_nodes.node1.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
-                        "node2_mu": tau_nodes.node2.mu.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
-                        "node2_log_sigma": tau_nodes.node2.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
-                    },
-                }
+                best_state = retrieve_model_state(VI, tau_nodes)
                 # break out of main loop
                 epoch += 1
                 break
@@ -858,6 +777,88 @@ def train_bayes(
         "tau_nodes": tau_nodes,
         "monitor": monitors,
     }
+
+def initialize_vi_model(model, global_seed, decor_present):
+    key_filter = initialized_param_filter(decor_present)
+    VI = VI_Model(
+        model=model,
+        device=model.device,
+        key_filter=key_filter,
+        mv_block_keys=None,#[
+            #"transformation.params",
+            #"decorrelation_layers.",
+        #],
+        full_mvn = True,
+    ).to(model.device)
+
+    gen = torch.Generator(device=model.device)
+    gen.manual_seed(global_seed)
+    VI.set_rng(gen)
+
+    # Debug prints (can be turned off if too noisy)
+    print("Parameters to be affected by the bayesian approach:", [k for k, _ in VI._schema][:50])
+    print("MV blocks:")
+    for idx, size in zip(VI.block_indices, VI.block_sizes):
+        print("  block size =", size, "indices =", idx[:5], "...")
+
+    with torch.no_grad():
+        test_theta = VI.sample_theta(3, antithetic=True)
+        print("sample_theta OK, shape =", test_theta.shape)
+        print(
+            "sigma summary:",
+            VI.sigma.mean().item(),
+            VI.sigma.min().item(),
+            VI.sigma.max().item(),
+        )
+    # Debug prints (can be turned off if too noisy)
+        
+    return  VI,gen
+
+def initialized_param_filter(decor_present):
+    if decor_present:
+        parameters_patterns = [
+            r"^transformation\.params\.\d+$",
+            r"^decorrelation_layers\.\d+\.params$",
+        ]
+        patterns_exclude = [
+            r"rho_",
+            r"optimizer",
+            r"running_",
+            r"num_batches_tracked",
+        ]
+    else:
+        parameters_patterns = [
+            r"^transformation\.params\.\d+$",
+        ]
+        patterns_exclude = [
+            r"decor",
+            r"rho_",
+            r"optimizer",
+            r"running_",
+            r"num_batches_tracked",
+        ]
+
+    key_filter = _make_key_filter(
+        patterns_include=parameters_patterns,
+        patterns_exclude=patterns_exclude,
+    )
+    
+    return key_filter
+
+def retrieve_model_state(VI, tau_nodes):
+    return {
+                    "mu": VI.mu.detach().clone(),
+                    "rho": VI.rho.detach().clone(),
+                    "L_unconstrained": VI.L_unconstrained.detach().clone(),
+                    "tau_nodes": {
+                        "node4_mu": tau_nodes.node4.mu.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
+                        "node4_log_sigma": tau_nodes.node4.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
+                        "node1_mu": tau_nodes.node1.mu.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
+                        "node1_log_sigma": tau_nodes.node1.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
+                        "node2_mu": tau_nodes.node2.mu.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
+                        "node2_log_sigma": tau_nodes.node2.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
+                    },
+                }
 
 def _init_bookkeping_and_monitors(VI, tau_nodes):
     best_val = float("inf")
