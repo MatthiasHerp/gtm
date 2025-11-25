@@ -124,32 +124,6 @@ def _evaluate_epoch(
 
     return total_loglik_sum / nobs  # per-observation ELPD (higher is better)
 
-
-def _make_adam(param_groups, lr: float):
-    """
-    Create Adam optimizer, trying fused / foreach variants when available.
-    """
-    import inspect
-
-    sig = inspect.signature(torch.optim.Adam.__init__).parameters
-    supports_fused = "fused" in sig
-    supports_foreach = "foreach" in sig
-
-    if supports_fused:
-        try:
-            return torch.optim.Adam(param_groups, lr=lr, fused=True)
-        except Exception:
-            pass
-
-    if supports_foreach:
-        try:
-            return torch.optim.Adam(param_groups, lr=lr, foreach=True)
-        except Exception:
-            pass
-
-    return torch.optim.Adam(param_groups, lr=lr)
-
-
 # ------------------------------------------------------------------------
 # Main training function
 # ------------------------------------------------------------------------
@@ -159,7 +133,6 @@ def train_bayes(
     train_dataloader,
     validate_dataloader=None,
     iterations: int = 100,
-    lr: float = 1e-3,
     hyperparameters: dict | None = None,
     verbose: bool = True,
     max_batches_per_iter: int | bool = False,
@@ -178,7 +151,11 @@ def train_bayes(
     min_delta: float = 1e-4,
 
     # --- optimizer / scheduler -----------------------------------------
-    rho_lr_multiplier: float = 1.0,
+    lr_mu: float = 1e-3,
+    lr_cholesky: float = 1e-4,
+    lr_rho: float = 3e-4,
+    lr_tau: float = 1.5e-3,
+    
     sched_factor: float = 0.5,
     sched_patience: int = 5,
     sched_threshold: float = 1e-4,
@@ -380,55 +357,27 @@ def train_bayes(
     # 3. τ VI nodes (GammaTauNode) if enabled
     # --------------------------------------------------------------------
     use_tau_vi_anytime = (tau_vi_mode in ("after_warm", "always"))
-    tau_nodes = None
-    if use_tau_vi_anytime:
-        node4 = GammaTauNode(
-            a=float(a_lambda),
-            b=float(b_lambda),
-            mean_init=float(hyper_T["tau"]),
-            cv_init=float(tau_vi_sigma_init),
-            device=model.device,
+    tau_nodes = _defining_tau_nodes(
+        model,
+        tau_vi_sigma_init,
+        decor_present,
+        hyper_T,hyper_D,
+        a_lambda, b_lambda, a_lambda_1, b_lambda_1, a_lambda_2, b_lambda_2,
+        use_tau_vi_anytime
         )
-
-        if decor_present:
-            node1 = GammaTauNode(
-                a=float(a_lambda_1),
-                b=float(b_lambda_1),
-                mean_init=float(hyper_D["tau_1"]),
-                cv_init=float(tau_vi_sigma_init),
-                device=model.device,
-            )
-            node2 = GammaTauNode(
-                a=float(a_lambda_2),
-                b=float(b_lambda_2),
-                mean_init=float(hyper_D["tau_2"]),
-                cv_init=float(tau_vi_sigma_init),
-                device=model.device,
-            )
-        else:
-            node1 = node2 = None
-
-        tau_nodes = TauPack(node4=node4, node2=node2, node1=node1)
 
     # --------------------------------------------------------------------
     # 4. Optimizer & scheduler
     # --------------------------------------------------------------------
-    if rho_lr_multiplier != 1.0:
-        param_groups = [
-            {"params": [VI.mu], "lr": lr},
-            {"params": [VI.rho], "lr": lr * rho_lr_multiplier},
-            {"params": [VI.L_unconstrained], "lr": lr * 0.1},
-        ]
-        opt = _make_adam(param_groups, lr=lr)
-    else:
-        param_groups = [{"params": [p for p in VI.parameters() if p.requires_grad]}]
-        opt = _make_adam(param_groups, lr=lr)
-
-    # τ nodes param group
-    if use_tau_vi_anytime and tau_nodes is not None:
-        pg = tau_nodes.tau_param_group(lr=lr * 1.5, betas=(0.9, 0.999))
-        if len(pg["params"]) > 0:
-            opt.add_param_group(pg)
+    opt = defined_adam_opt(
+        lr_mu,
+        lr_cholesky,
+        lr_rho,
+        lr_tau,
+        VI,
+        use_tau_vi_anytime,
+        tau_nodes
+        )
 
     sched = ReduceLROnPlateau(
         opt,
@@ -456,26 +405,8 @@ def train_bayes(
     # --------------------------------------------------------------------
     # 5. Book-keeping & monitors
     # --------------------------------------------------------------------
-    best_val = float("inf")
-    best_state = {
-        "mu": VI.mu.detach().clone(),
-        "rho": VI.rho.detach().clone(),
-        "L_unconstrained": VI.L_unconstrained.detach().clone(),
-        "tau_nodes": {
-            "node4_mu": tau_nodes.node4.mu.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
-            "node4_log_sigma": tau_nodes.node4.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
-            "node1_mu": tau_nodes.node1.mu.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
-            "node1_log_sigma": tau_nodes.node1.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
-            "node2_mu": tau_nodes.node2.mu.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
-            "node2_log_sigma": tau_nodes.node2.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
-        },
-    }
-
-    no_improve = 0
-    monitors = Trackers.new_monitour()  # keep your existing tracker layout
-    loss_history, val_history = [], []
+    best_val, monitors, loss_history, val_history = _init_bookkeping_and_monitors(VI, tau_nodes)
     start = time.time()
-
     # --------------------------------------------------------------------
     # 6. Training loop
     # --------------------------------------------------------------------
@@ -927,3 +858,88 @@ def train_bayes(
         "tau_nodes": tau_nodes,
         "monitor": monitors,
     }
+
+def _init_bookkeping_and_monitors(VI, tau_nodes):
+    best_val = float("inf")
+    best_state = {
+        "mu": VI.mu.detach().clone(),
+        "rho": VI.rho.detach().clone(),
+        "L_unconstrained": VI.L_unconstrained.detach().clone(),
+        "tau_nodes": {
+            "node4_mu": tau_nodes.node4.mu.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
+            "node4_log_sigma": tau_nodes.node4.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node4) else None,
+            "node1_mu": tau_nodes.node1.mu.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
+            "node1_log_sigma": tau_nodes.node1.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node1) else None,
+            "node2_mu": tau_nodes.node2.mu.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
+            "node2_log_sigma": tau_nodes.node2.log_sigma.detach().clone() if (tau_nodes and tau_nodes.node2) else None,
+        },
+    }
+
+    no_improve = 0
+    monitors = Trackers.new_monitour()  # keep your existing tracker layout
+    loss_history, val_history = [], []
+    return best_val,monitors,loss_history,val_history
+
+def _defining_tau_nodes(model, tau_vi_sigma_init, decor_present, hyper_T, hyper_D, a_lambda, b_lambda, a_lambda_1, b_lambda_1, a_lambda_2, b_lambda_2, use_tau_vi_anytime):
+    tau_nodes = None
+    if use_tau_vi_anytime:
+        node4 = GammaTauNode(
+            a=float(a_lambda),
+            b=float(b_lambda),
+            mean_init=float(hyper_T["tau"]),
+            cv_init=float(tau_vi_sigma_init),
+            device=model.device,
+        )
+
+        if decor_present:
+            node1 = GammaTauNode(
+                a=float(a_lambda_1),
+                b=float(b_lambda_1),
+                mean_init=float(hyper_D["tau_1"]),
+                cv_init=float(tau_vi_sigma_init),
+                device=model.device,
+            )
+            node2 = GammaTauNode(
+                a=float(a_lambda_2),
+                b=float(b_lambda_2),
+                mean_init=float(hyper_D["tau_2"]),
+                cv_init=float(tau_vi_sigma_init),
+                device=model.device,
+            )
+        else:
+            node1 = node2 = None
+
+        tau_nodes = TauPack(node4=node4, node2=node2, node1=node1)
+    return tau_nodes
+
+def defined_adam_opt(lr_mu, lr_cholesky, lr_rho, lr_tau, VI, use_tau_vi_anytime, tau_nodes):
+    pgs = []
+
+    # 1) Mean vector (all θ)
+    pgs.append({
+        "params": [VI.mu],
+        "lr": lr_mu,
+        "betas": (0.9, 0.999),
+    })
+
+    # 2) Covariance (Cholesky) – smaller lr
+    pgs.append({
+        "params": [VI.L_unconstrained],
+        "lr": lr_cholesky,
+        "betas": (0.9, 0.999),
+    })
+
+    # 3) Diagonal scales (if not full_mvn)
+    if VI.rho.numel() > 0:
+        pgs.append({
+            "params": [VI.rho],
+            "lr": lr_rho,
+            "betas": (0.9, 0.999),
+        })
+
+    # 4) Tau nodes (hyperparameters)
+    if use_tau_vi_anytime and tau_nodes is not None:
+        pgs.append(tau_nodes.tau_param_group(lr=lr_tau, betas=(0.9, 0.999)))
+
+    opt = torch.optim.Adam(pgs, fused=True)
+    return opt

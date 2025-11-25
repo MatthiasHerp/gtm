@@ -731,8 +731,6 @@ class GTM(nn.Module):
         self,
         train_dataloader: DataLoader,
         validate_dataloader: DataLoader | bool = False,
-        # train_covariates: Tensor | bool = False,
-        # validate_covariates: Tensor | bool = False,
         penalty_splines_params: FloatTensor = None,
         penalty_lasso_conditional_independence: float | bool = False,
         adaptive_lasso_weights_matrix: Tensor | bool = False,
@@ -743,34 +741,40 @@ class GTM(nn.Module):
         min_delta: float = 1e-7,
         seperate_copula_training: bool = False,
         max_batches_per_iter: int | bool = False,
-        hyperparameters = None,
+        
+        #BAYES VI
+        hyperparameters=None,
         mcmc_sample_train=4,
         mcmc_sample_val=16,
         mc_ramp_every=25,
         mc_ramp_max=32,
-        rho_lr_multiplier=1.5,
         sched_factor=0.5,
         sched_patience=6,
         sched_threshold=1.e-4,
-        #WARMING
         warm_tau_epochs: int = 3,
-        warm_sigma_epochs: int = 10,  # try 5–10
-        
-        #Optimization method
-        beta_kl_start: float = 3.0,    # try 1.5–3.0
-        beta_kl_anneal_epochs: int = 20,  # how fast to decay to 1.0
-        tau_vi_mode = "after_warm", #"off" | "after_warm" | "always"
-        tau_kl_beta = 1.0,
-        tau_vi_sigma_init = 0.25,
-        # --- VI convergence (no-val) ---
+        warm_sigma_epochs: int = 10,
+        beta_kl_start: float = 3.0,
+        beta_kl_anneal_epochs: int = 20,
+        tau_vi_mode="after_warm",
+        tau_kl_beta=1.0,
+        tau_vi_sigma_init=0.25,
         conv_use_ema: bool = True,
-        conv_window_size: int = 5,   # used if conv_use_ema=False
-        conv_tol: float = 1e-5,      # absolute ELBO change per-obs
-        conv_min_epochs: int = 10,   # don't stop too early
-        conv_ema_beta: float = 0.9,  # if conv_use_ema=True
-
+        conv_window_size: int = 5,
+        conv_tol: float = 1e-5,
+        conv_min_epochs: int = 10,
+        conv_ema_beta: float = 0.9,
+        use_empirical_bayes: bool = False,
+        eb_warm_then_cavi: bool = True,
+        band_tau4: float = 0.20,
+        band_decor: float = 0.15,
+        lr_mu: float = 1e-3,
+        lr_cholesky: float = 1e-4,
+        lr_rho: float = 3e-4,
+        lr_tau: float = 1.5e-3,
+        sched_cooldown: int = 1,
+        sched_min_lr: float = 5e-5,
+        global_seed: int = 0,
     ) -> dict[str, Tensor]:
-        
         """
         Trains the GTM iteratively using gradient-based optimization.
 
@@ -867,7 +871,7 @@ class GTM(nn.Module):
             if adaptive_lasso_weights_matrix is not False:
                 adaptive_lasso_weights_matrix = adaptive_lasso_weights_matrix.to(self.device)
             
-            return_dict_model_training: dict[str, Tensor]= train_freq(
+            return_dict_model_training: dict[str, Tensor] = train_freq(
                 model=self,
                 train_dataloader=train_dataloader,
                 validate_dataloader=validate_dataloader,
@@ -889,41 +893,46 @@ class GTM(nn.Module):
             
         elif self.inference == 'bayesian':
             return_dict_model_training = train_bayes(
-                model= self,
+                model=self,
                 train_dataloader=train_dataloader,
                 validate_dataloader=validate_dataloader,
-                hyperparameters=hyperparameters,
                 iterations=iterations,
+                hyperparameters=hyperparameters,
                 verbose=verbose,
-                lr=learning_rate,
-                mcmc_sample_train=mcmc_sample_train,#4,
-                mcmc_sample_val=mcmc_sample_val,#16,
-                mc_ramp_every=mc_ramp_every,#25,
-                mc_ramp_max=mc_ramp_max,#32,
-                patience_val=patience,#15,
-                min_delta=min_delta,#15,
-                rho_lr_multiplier=rho_lr_multiplier,#1.5,
-                sched_factor=sched_factor,#0.5,
-                sched_patience=sched_patience,#6,
+                max_batches_per_iter=max_batches_per_iter,
+                mcmc_sample_train=mcmc_sample_train,
+                mcmc_sample_val=mcmc_sample_val,
+                mc_ramp_every=mc_ramp_every,
+                mc_ramp_max=mc_ramp_max,
+                global_seed=global_seed,
+                patience_val=patience,
+                min_delta=min_delta,
+                lr_mu=lr_mu,
+                lr_cholesky=lr_cholesky,
+                lr_rho=lr_rho,
+                lr_tau=lr_tau,
+                sched_factor=sched_factor,
+                sched_patience=sched_patience,
                 sched_threshold=sched_threshold,
+                sched_cooldown=sched_cooldown,
+                sched_min_lr=sched_min_lr,
                 warm_tau_epochs=warm_tau_epochs,
-                warm_sigma_epochs= warm_sigma_epochs,  # try 5–10
-                
-                #Optimization method
-                beta_kl_start=beta_kl_start,    # try 1.5–3.0
-                beta_kl_anneal_epochs = beta_kl_anneal_epochs,  # how fast to decay to 1.0
-                
-                tau_vi_mode=tau_vi_mode, #"off" | "after_warm" | "always"
+                warm_sigma_epochs=warm_sigma_epochs,
+                beta_kl_start=beta_kl_start,
+                beta_kl_anneal_epochs=beta_kl_anneal_epochs,
+                use_empirical_bayes=use_empirical_bayes,
+                eb_warm_then_cavi=eb_warm_then_cavi,
+                band_tau4=band_tau4,
+                band_decor=band_decor,
+                tau_vi_mode=tau_vi_mode,
                 tau_kl_beta=tau_kl_beta,
                 tau_vi_sigma_init=tau_vi_sigma_init,
-                        # --- VI convergence (no-val) ---
-                conv_use_ema = conv_use_ema,#: bool = True,
-                conv_window_size = conv_window_size,#: int = 5,   # used if conv_use_ema=False
-                conv_tol=conv_tol,#: float = 1e-5,      # absolute ELBO change per-obs
-                conv_min_epochs=conv_min_epochs,#: int = 10,   # don't stop too early
-                conv_ema_beta= conv_ema_beta,#: float = 0.9,  # if conv_use_ema=True
-
-                )
+                conv_use_ema=conv_use_ema,
+                conv_window_size=conv_window_size,
+                conv_tol=conv_tol,
+                conv_min_epochs=conv_min_epochs,
+                conv_ema_beta=conv_ema_beta,
+            )
         else:
             raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')
 
@@ -932,23 +941,6 @@ class GTM(nn.Module):
 
         return return_dict_model_training
     
-    """
-                train_dataloader=dataloader_train,
-                validate_dataloader=dataloader_validate,
-                hyperparameters=None,
-                iterations=1000,
-                verbose=True,
-                lr=0.01,
-                mcmc_sample_train=4,            # will ramp
-                mcmc_sample_val=16,             # fixed & larger for stable eval
-                mc_ramp_every=25,               # 4→8→16→32 at epochs 25/50/75
-                mc_ramp_max=32,
-                patience_val=15,                # early-stop patience
-                min_delta=0.001,                # ~0.1% absolute of your loss scale
-                rho_lr_multiplier=1.5,          # slightly faster variance adaption (optional)
-                sched_factor=0.5, sched_patience=6, sched_threshold=1e-4,
-    
-    """
     def pretrain_transformation_layer(
         self,
         train_dataloader: DataLoader,
