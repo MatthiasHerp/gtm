@@ -24,7 +24,12 @@ class Trackers:
             "sigma_mean": [],       # mean(σ)
             "sigma_min": [],        # min(σ)
             "sigma_max": [],        # max(σ)
-
+            "var_ratio_mean": [],   # shrink_mean
+            "var_ratio_min": [],        # shrink_min
+            "var_ratio_max": [],        # shrink_max
+            "var_ratio_trans_mean": [], # var_ratio_trans_mean
+            "var_ratio_decor_mean": [], # decor_ratio_mean 
+            
             # ELBO / likelihood
             "train_loss": [],       # per-obs loss = -ELBO/obs
             "elbo_per_obs": [],     # ELBO/obs

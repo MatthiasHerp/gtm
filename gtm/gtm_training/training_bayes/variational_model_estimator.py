@@ -6,7 +6,7 @@ from torch.distributions import Normal
 from torch.special import digamma as ψ
 from torch import nn, Tensor
 from torch.amp import autocast
-
+from torch.nn import functional as F
 
 try: torch.set_float32_matmul_precision("high")
 except: pass
@@ -60,7 +60,9 @@ class VI_Model(nn.Module):
         init_scale: float = 0.05,
         learn_scale: bool = True,
         key_filter= None,
+        mv_block_keys: list[str] | None = None,
         device: torch.device | str = "cpu",
+        full_mvn: bool = False
         ):
         
         super().__init__()
@@ -76,74 +78,351 @@ class VI_Model(nn.Module):
             theta0, self._schema = _flatten_state_dict(base_sd, key_filter=key_filter)
 
         D = theta0.numel()
-        
         if D == 0:
             raise RuntimeError("Key filter selected zero parameters; check your include/exclude patterns.")
-                
-        # Variational parameters: μ and ρ with σ = softplus(ρ)
+        
+        # Mean Vector
         self.mu = nn.Parameter(theta0.clone())
-        self.rho = nn.Parameter(torch.full((D,), math.log(math.exp(init_scale) - 1.0)))
+        
+        # --- Build block structure ---------------------------------------------------
+        #self.rho = nn.Parameter(torch.full((D,), math.log(math.exp(init_scale) - 1.0)))
+        self._build_block_structure(D, mv_block_keys, full_mvn=full_mvn)
+        
+        # scalear -> softplus(ρ) = init_scale
+        rho0 = math.log(math.exp(init_scale)-1.0)
+        
+        if self.num_diag > 0:
+            self.rho = nn.Parameter(
+                torch.full(
+                    (self.num_diag,),
+                    rho0,
+                    device=self.device,
+                )
+            )
+        else:
+            # keep attributes to avoid attributes errors
+            self.rho = nn.Parameter(
+                torch.empty(
+                    0, 
+                    device = self.device
+                    )
+                )
         
         self.learn_scale = learn_scale
         if not learn_scale:
             self.rho.requires_grad_(False)
 
-        self._normal0 = torch.distributions.Normal(
+        # Multivariate blocks: unconstrained Cholesky params concatenated
+        if self.block_sizes:
+            total_tris = sum(
+                k * (k + 1) // 2 
+                for k in self.block_sizes
+                )
+            
+            L_unscontrained = torch.zeros(
+                total_tris, device=self.device
+            )
+            
+            # initialize diagonals so softplus(diag) = init_scale
+            offset = 0 
+            for K in self.block_sizes:
+                for i in range(K):
+                    pos = offset + (i * (i + 1))// 2 + i
+                    L_unscontrained[pos] = rho0
+                offset += K * (K + 1) // 2
+            
+            self.L_unconstrained = nn.Parameter(L_unscontrained)
+        else: 
+            self.L_unconstrained = nn.Parameter(
+                torch.empty(0, device=self.device)
+            )
+        
+        self._normal0 = Normal(
             torch.zeros(D, device=self.device),
             torch.ones(D, device=self.device),
         )
         
+        with torch.no_grad():
+            sigma0 = self.sigma.detach().clone()
+        self.register_buffer("sigma_init", sigma0)
+        
         try:
-            self._single_objective_terms = torch.compile(self._single_objective_terms, mode="max-autotune")
+            self._single_objective_terms = torch.compile(
+                self._single_objective_terms, 
+                mode="max-autotune"
+                )
+
         except Exception:
             pass
 
     
     def set_rng(self, gen: torch.Generator | None):
         self._rng = gen
+        
+    def shrinkage_groups(self):
+        """
+        Return indices for transformation vs decorrelation parameters
+        based on the schema keys used when flattening.
+        """
+        trans_idx = []
+        decor_idx = []
 
+        offset = 0
+        for key, shape in self._schema:
+            n = int(torch.tensor(shape).prod().item())
+            idx = torch.arange(offset, offset + n, device=self.device)
+            if key.startswith("transformation."):
+                trans_idx.append(idx)
+            elif key.startswith("decorrelation_layers."):
+                decor_idx.append(idx)
+            offset += n
+
+        if trans_idx:
+            trans_idx = torch.cat(trans_idx)
+        else:
+            trans_idx = torch.empty(0, dtype=torch.long, device=self.device)
+
+        if decor_idx:
+            decor_idx = torch.cat(decor_idx)
+        else:
+            decor_idx = torch.empty(0, dtype=torch.long, device=self.device)
+
+        return trans_idx, decor_idx
+
+    
+    def _build_block_structure(
+        self,
+        D: int,
+        mv_block_keys: list[str]| None,
+        full_mvn: bool = False,
+        ):
+        """
+        Decide which flattened parameters belong to full-covariance blocks.
+
+        For each (key, shape) in self._schema, if key contains any substring in
+        mv_block_keys, that whole tensor becomes one MVN block (e.g. one spline).
+        All remaining dims stay independent (diagonal).
+        """
+        
+        self.block_indices: list[torch.Tensor] = []
+        self.block_sizes: list[torch.Tensor] = []
+        
+        if full_mvn:
+            # --- ONE HUGE BLOCK: everything is multivariate ---
+            idx_all = torch.arange(D, device=self.device)
+            self.block_indices = [idx_all]
+            self.block_sizes = [D]
+
+            block_mask = torch.ones(D, dtype=torch.bool, device=self.device)
+            self.block_mask = block_mask
+            self.diag_mask = ~block_mask      # all False
+            self.diag_indices = torch.nonzero(self.diag_mask, as_tuple=True)[0]
+            self.num_diag = int(self.diag_indices.numel())
+            return
+        
+        block_mask = torch.zeros(D, dtype= torch.bool, device = self.device)
+        
+        if mv_block_keys:
+            offset = 0
+            for key, shape in self._schema:
+                n = int(torch.tensor(shape).prod().item())
+                idx = torch.arange(offset, offset + n, device=self.device)
+                
+                if any(sub in key for sub in mv_block_keys):
+                    self.block_indices.append(idx)
+                    self.block_sizes.append(n)
+                    block_mask[idx] = True
+
+                offset += n
+        
+        self.block_mask = block_mask
+        self.diag_mask = ~block_mask
+        
+        self.diag_indices = torch.nonzero(self.diag_mask, as_tuple=True)[0]
+        self.num_diag = int(self.diag_indices.numel())
+        
+
+
+    @property
+    def sigma_diag(self) -> Tensor:
+        """Std for diagonal (independent) dims only."""
+        if self.num_diag == 0:
+            return torch.empty(0, device= self.device)
+        
+        return 1e-6 + F.softplus(self.rho) #to avoid softplus near-zero stickiness 1e-6
+    
+    def _build_L_blocks(self) -> list[Tensor]:
+        """
+        Turn self.L_unconstrained into a list of lower-triangular matrices
+        with positive diagonal via softplus.
+        """
+        L_blocks: list[Tensor] = []
+        offset = 0
+
+        for K in self.block_sizes:
+            n_elem = K * (K + 1) // 2
+
+            tri = torch.zeros((K, K), device=self.device)
+            tril_idx = torch.tril_indices(K, K, offset=0)
+
+            # FIX 1: use the correctly named attribute
+            tri[tril_idx[0], tril_idx[1]] = self.L_unconstrained[offset:offset + n_elem]
+
+            # enforce positive diagonal
+            diag_raw = torch.diagonal(tri)
+            diag_pos = F.softplus(diag_raw) + 1e-6
+            tri = tri.clone()
+            tri[torch.arange(K, device=self.device),
+                torch.arange(K, device=self.device)] = diag_pos
+
+            L_blocks.append(tri)
+            offset += n_elem
+
+        return L_blocks
     
     @property
     def sigma(self) -> Tensor:
-        return 1e-6 + nn.functional.softplus(self.rho) #to avoid softplus near-zero stickiness 1e-6
+        """
+        Approximate per-parameter std dev = sqrt(diag(Σ)) combining
+        block and diagonal parts. Used only for monitoring.
+        """
+        
+        D = self.mu.numel()
+        sigma2 = torch.zeros(D, device = self.device)
+        
+        # diag dims 
+        if self.num_diag >0:
+            sig_d = self.sigma_diag
+            sigma2[self.diag_indices] = sig_d ** 2
+        
+        # block dims
+        if self.block_sizes:
+            L_blocks = self._build_L_blocks()
+            
+            for idx, L in zip(self.block_indices, L_blocks):
+                # diag(Σ_b) for Σ_b = L L^T is sum over squares of each row
+                cov_diag = (L**2).sum(dim=1)
+                sigma2[idx] = cov_diag
+        
+        return torch.sqrt(1e-6 + sigma2) 
+        
         
     def sample_theta(self, num_samples: int = 1, antithetic = False) -> Tensor:
-        """Reparameterized samples θ = μ + σ ⊙ ε, ε ~ N(0, I). Shape: [S, D]."""
-        #eps = self._normal0.sample((num_samples,))
-        #return self.mu + self.sigma * eps
+        """
+        Reparameterized samples θ = μ + T ε, ε ~ N(0, I).
+        Block-diagonal T: full-cov blocks for splines, diagonal for the rest.
+        Shape: [S, D].
+        """
+        
         gen = self._rng
+        D = self.mu.numel()
+        
+        # global base noise, so antithetic pairing is for entire θ
         if antithetic and num_samples >= 2:
             half = num_samples // 2
-            eps = torch.randn((half, self.mu.numel()), device=self.mu.device, generator=gen)
-            thetas = torch.cat([self.mu + self.sigma * eps,
-                                self.mu - self.sigma * eps], dim=0)
-            if thetas.shape[0] < num_samples:
-                # one extra draw if odd
-                extra = torch.randn((1, self.mu.numel()), device=self.mu.device, generator=gen)
-                thetas = torch.cat([thetas, self.mu + self.sigma * extra], dim=0)
-            return thetas
+            eps_half = torch.randn((half, D), device=self.mu.device, generator=gen)
+            eps = torch.cat([eps_half, -eps_half], dim=0)
+            if eps.shape[0] < num_samples:
+                extra = torch.randn((1, D), device=self.mu.device, generator=gen)
+                eps = torch.cat([eps, extra], dim=0)
         else:
-            eps = torch.randn((num_samples, self.mu.numel()), device=self.mu.device, generator=gen)
-            return self.mu + self.sigma * eps
+            eps = torch.randn((num_samples, D), device=self.mu.device, generator=gen)
+
+        theta = self.mu.expand_as(eps).clone()
+
+        # Diagonal part: θ_i = μ_i + σ_i ε_i
+        if self.num_diag > 0:
+            sig_d = self.sigma_diag  # [D_diag]
+            theta[:, self.diag_indices] += eps[:, self.diag_indices] * sig_d
+
+        # Block parts: θ_b = μ_b + L_b ε_b
+        if self.block_sizes:
+            L_blocks = self._build_L_blocks()
+            for idx, L in zip(self.block_indices, L_blocks):
+                eps_block = eps[:, idx]       # [S, K]
+                theta[:, idx] += eps_block @ L.T  # [S, K]
+
+        return theta
         
 
+#    def log_q(self, theta: Tensor) -> Tensor:
+#        """log q_phi(θ) under mean-field Normal. theta shape [S, D] or [D]. Returns [S]."""
+#        mu = self.mu
+#        sigma = self.sigma
+#        # compute per-sample log prob
+#        if theta.dim() == 1:
+#            theta = theta.unsqueeze(0)
+#        S, D = theta.shape
+#        # Normal log-density per dimension then sum
+#        log_det = torch.sum(torch.log(sigma))
+#        quad = 0.5 * torch.sum(((theta - mu) / sigma) ** 2, dim=1)
+#        const = 0.5 * D * math.log(2 * math.pi)
+#        return -(const + log_det + quad)
+    
     def log_q(self, theta: Tensor) -> Tensor:
-        """log q_phi(θ) under mean-field Normal. theta shape [S, D] or [D]. Returns [S]."""
-        mu = self.mu
-        sigma = self.sigma
-        # compute per-sample log prob
+        """
+        log q_phi(θ) for block-diagonal MVN:
+        - full-cov blocks for splines
+        - diagonal for the rest
+        Input: θ shape [S, D] or [D]; returns [S].
+        """
         if theta.dim() == 1:
             theta = theta.unsqueeze(0)
         S, D = theta.shape
-        # Normal log-density per dimension then sum
-        log_det = torch.sum(torch.log(sigma))
-        quad = 0.5 * torch.sum(((theta - mu) / sigma) ** 2, dim=1)
-        const = 0.5 * D * math.log(2 * math.pi)
-        return -(const + log_det + quad)
+        mu = self.mu
+
+        log_q_val = torch.zeros(S, device=theta.device, dtype=theta.dtype)
+
+        # Diagonal contribution
+        if self.num_diag > 0:
+            sig_d = self.sigma_diag  # [D_diag]
+            mu_d = mu[self.diag_indices]  # [D_diag]
+            th_d = theta[:, self.diag_indices]  # [S, D_diag]
+
+            diff = (th_d - mu_d) / sig_d  # [S, D_diag]
+            quad = (diff ** 2).sum(dim=1)  # [S]
+            log_det = torch.sum(torch.log(sig_d))  # scalar
+
+            const = self.num_diag * math.log(2.0 * math.pi)
+            log_q_diag = -0.5 * (const + 2.0 * log_det + quad)
+            log_q_val += log_q_diag
+
+        # Block contributions
+        if self.block_sizes:
+            L_blocks = self._build_L_blocks()
+            for idx, L in zip(self.block_indices, L_blocks):
+                K = idx.numel()
+                th_b = theta[:, idx]        # [S, K]
+                mu_b = mu[idx]              # [K]
+                diff = th_b - mu_b          # [S, K]
+
+                # y = L^{-1} (θ - μ)  (whitening)
+                # torch.linalg.solve_triangular solves A x = B with B shape [..., K]
+                y = torch.linalg.solve_triangular(
+                    L,
+                    diff.T,
+                    upper=False,
+                ).T  # [S, K]
+
+                quad = (y ** 2).sum(dim=1)  # [S]
+                log_det = 2.0 * torch.log(torch.diagonal(L)).sum()  # log |Σ_b|
+
+                const = K * math.log(2.0 * math.pi)
+                log_q_block = -0.5 * (const + log_det + quad)
+                log_q_val += log_q_block
+
+        return log_q_val
+
+
 
     def _theta_to_state_dict(self, theta_1d: Tensor):
         return _unflatten_to_state_dict(theta_1d, self._schema)
 
+    def _device_type_from(self):
+        if isinstance(self.device, torch.device):
+            return self.device.type       # "cuda" / "cpu"
+        return str(self.device)
+    
     @torch.no_grad()
     def set_model_params(self, theta_1d: Tensor):
         """Load θ back into the GTM model."""
@@ -168,7 +447,7 @@ class VI_Model(nn.Module):
         params_s = self._theta_to_state_dict(theta_1d)
 
         with _reparametrize_module(model, params_s):
-            with autocast(device_type=str(self.device), dtype=torch.float16):
+            with autocast(device_type=self._device_type_from(), dtype=torch.float16):
                 out = model.__bayesian_training_objective__(
                     samples=samples,
                     hyperparameters_transformation=tau4_s,
@@ -352,7 +631,7 @@ class VI_Model(nn.Module):
         def _single_nll(theta_1d, t4, t1, t2):
             params_s = self._theta_to_state_dict(theta_1d)
             with _reparametrize_module(model, params_s):
-                with autocast(str(self.device), dtype=torch.float16):
+                with autocast(device_type=self._device_type_from(), dtype=torch.float16):
                     out = model.__bayesian_training_objective__(
                         samples=y_batch,
                         hyperparameters_transformation=t4,
@@ -442,7 +721,7 @@ class GammaTauNode(nn.Module):
         b: float,
         mean_init: float,
         cv_init: float=0.5,
-        eps_floor: float=1e-5,
+        eps_floor: float=1e-3,
         device="cpu"
         ):
         
