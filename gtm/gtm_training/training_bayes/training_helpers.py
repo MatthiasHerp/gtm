@@ -219,12 +219,7 @@ def train_bayes(
     # --------------------------------------------------------------------
     # 2. Hyperparameters & τ initialisation
     # --------------------------------------------------------------------
-    if hyperparameters is None:
-        hyper_T = model.hyperparameter.get("transformation", {})
-        hyper_D = model.hyperparameter.get("decorrelation", {})
-    else:
-        hyper_T = hyperparameters.get("transformation", {})
-        hyper_D = hyperparameters.get("decorrelation", {})
+    hyper_T, hyper_D = initialize_hyperparameters(model, hyperparameters)
 
     # --- transformation τ4 ----------------------------------------------
     nullspace_dim_T = int(hyper_T.get("nullspace_dim", 2))
@@ -777,6 +772,15 @@ def train_bayes(
         "tau_nodes": tau_nodes,
         "monitor": monitors,
     }
+
+def initialize_hyperparameters(model, hyperparameters):
+    if hyperparameters is None:
+        hyper_T = model.hyperparameter.get("transformation", {})
+        hyper_D = model.hyperparameter.get("decorrelation", {})
+    else:
+        hyper_T = hyperparameters.get("transformation", {})
+        hyper_D = hyperparameters.get("decorrelation", {})
+    return hyper_T,hyper_D
 
 def initialize_vi_model(model, global_seed, decor_present):
     key_filter = initialized_param_filter(decor_present)
