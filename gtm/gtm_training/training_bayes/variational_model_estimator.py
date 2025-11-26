@@ -596,36 +596,27 @@ class VI_Model(nn.Module):
     
         thetas = self.sample_theta(S, antithetic=True)  # [S, D]
 
-        decor_present_flag = not (model.number_decorrelation_layers == 0 or model.transform_only)
+        """For validation using the ELPD approach on a minibatch."""
+        # θ ~ q
+        thetas = self.sample_theta(S, antithetic=True)
 
+        # either VI τ or fixed τ
         if use_tau_vi_now and (tau_nodes is not None):
-            tau4_vec, tau1_vec, tau2_vec, _kl = tau_nodes.sample_many(
-                S=S, decor_present=decor_present_flag, generator=self._rng
+            tau4_vec, tau1_vec, tau2_vec, _ = self._tau_vectors(
+                S=S,
+                model=model,
+                hyper_T=hyperparameter_transformation,
+                hyper_D=hyperparameter_decorrelation,
+                tau_nodes=tau_nodes,
             )
-            if tau4_vec is None:
-                tau4_vec = torch.full((S,), float(hyperparameter_transformation["tau"]),
-                                      device=self.device, dtype=torch.float32)
-            if decor_present_flag:
-                if tau1_vec is None:
-                    tau1_vec = torch.full((S,), float(hyperparameter_decorrelation.get("tau_1", 0.0)),
-                                          device=self.device, dtype=torch.float32)
-                if tau2_vec is None:
-                    tau2_vec = torch.full((S,), float(hyperparameter_decorrelation.get("tau_2", 0.0)),
-                                          device=self.device, dtype=torch.float32)
-            else:
-                tau1_vec = torch.zeros((S,), device=self.device, dtype=torch.float32)
-                tau2_vec = torch.zeros((S,), device=self.device, dtype=torch.float32)
         else:
-            tau4_vec = torch.full((S,), float(hyperparameter_transformation["tau"]),
-                                  device=self.device, dtype=torch.float32)
-            if decor_present_flag:
-                tau1_vec = torch.full((S,), float(hyperparameter_decorrelation.get("tau_1", 0.0)),
-                                      device=self.device, dtype=torch.float32)
-                tau2_vec = torch.full((S,), float(hyperparameter_decorrelation.get("tau_2", 0.0)),
-                                      device=self.device, dtype=torch.float32)
-            else:
-                tau1_vec = torch.zeros((S,), device=self.device, dtype=torch.float32)
-                tau2_vec = torch.zeros((S,), device=self.device, dtype=torch.float32)
+            tau4_vec, tau1_vec, tau2_vec, _ = self._tau_vectors(
+                S=S,
+                model=model,
+                hyper_T=hyperparameter_transformation,
+                hyper_D=hyperparameter_decorrelation,
+                tau_nodes=None,
+            )
 
         # vmap a function that returns the batch NLL for each θ_s
         def _single_nll(theta_1d, t4, t1, t2):
@@ -644,7 +635,203 @@ class VI_Model(nn.Module):
         nll_vec = torch.vmap(_single_nll)(thetas, tau4_vec, tau1_vec, tau2_vec)  # [S]
         ll_vec = -nll_vec
         return float(_logmeanexp(ll_vec, dim=0))
+    
+    
+    ##### HELPER FOR BRECHMARKING AND REVERSE-SAMPLING ######
+    
+    def _tau_vectors(
+        self,
+        S: int,
+        model: "GTM",
+        hyper_T,
+        hyper_D,
+        tau_nodes: "TauPack",
+    ):
+        """
+        Helper: produce tau4_vec, tau1_vec, tau2_vec, kl_vec for S MC samples.
 
+        - Uses TauPack.sample_many if tau_nodes is not None.
+        - Falls back to fixed hyperparameters if node is missing.
+        - Handles 'no decorrelation layer' case.
+        """
+        device = self.device
+        decor_present_flag = not (model.number_decorrelation_layers == 0 or model.transform_only)
+
+        if tau_nodes is not None:
+            tau4_vec, tau1_vec, tau2_vec, kl_vec = tau_nodes.sample_many(
+                S=S,
+                decor_present=decor_present_flag,
+                generator=self._rng,
+            )
+            # Fallbacks if some nodes are None
+            if tau4_vec is None:
+                tau4_vec = torch.full(
+                    (S,),
+                    float(hyper_T["tau"]),
+                    device=device,
+                    dtype=torch.float32,
+                )
+            if decor_present_flag:
+                if tau1_vec is None:
+                    tau1_vec = torch.full(
+                        (S,),
+                        float(hyper_D.get("tau_1", 0.0)),
+                        device=device,
+                        dtype=torch.float32,
+                    )
+                if tau2_vec is None:
+                    tau2_vec = torch.full(
+                        (S,),
+                        float(hyper_D.get("tau_2", 0.0)),
+                        device=device,
+                        dtype=torch.float32,
+                    )
+            else:
+                tau1_vec = torch.zeros((S,), device=device, dtype=torch.float32)
+                tau2_vec = torch.zeros((S,), device=device, dtype=torch.float32)
+        else:
+            # Pure EB / fixed τ case
+            tau4_vec = torch.full(
+                (S,),
+                float(hyper_T["tau"]),
+                device=device,
+                dtype=torch.float32,
+            )
+            decor_present_flag = not (model.number_decorrelation_layers == 0 or model.transform_only)
+            if decor_present_flag:
+                tau1_vec = torch.full(
+                    (S,),
+                    float(hyper_D.get("tau_1", 0.0)),
+                    device=device,
+                    dtype=torch.float32,
+                )
+                tau2_vec = torch.full(
+                    (S,),
+                    float(hyper_D.get("tau_2", 0.0)),
+                    device=device,
+                    dtype=torch.float32,
+                )
+            else:
+                tau1_vec = torch.zeros((S,), device=device, dtype=torch.float32)
+                tau2_vec = torch.zeros((S,), device=device, dtype=torch.float32)
+            kl_vec = None
+
+        return tau4_vec, tau1_vec, tau2_vec, kl_vec
+    
+    
+    @torch.no_grad()
+    def predictive_log_prob(
+        self,
+        y: torch.Tensor,                # [N, d]
+        model: "GTM",
+        hyperparameter_transformation,
+        hyperparameter_decorrelation,
+        tau_nodes: "TauPack" = None,
+        S: int = 32,
+    ) -> torch.Tensor:
+        """
+        Monte Carlo estimate of log p(y) under the Bayesian predictive,
+        via log-mean-exp over (θ, τ):
+
+            log p(y_n) ≈ log (1/S ∑_s p(y_n | θ_s, τ_s))
+
+        Returns: [N] tensor of log predictive densities for each observation.
+        """
+        device = self.device
+        N = y.shape[0]
+
+        # θ ~ q
+        thetas = self.sample_theta(S, antithetic=True)  # [S, D]
+
+        # τ vectors
+        tau4_vec, tau1_vec, tau2_vec, _ = self._tau_vectors(
+            S=S,
+            model=model,
+            hyper_T=hyperparameter_transformation,
+            hyper_D=hyperparameter_decorrelation,
+            tau_nodes=tau_nodes,
+        )
+
+        logps = []
+
+        for s in range(S):
+            theta_s = thetas[s]
+            params_s = self._theta_to_state_dict(theta_s)
+
+            with _reparametrize_module(model, params_s):
+                # write τ into the model's hyperparameter dict
+                model.hyperparameter["transformation"]["tau"] = float(tau4_vec[s].item())
+                if model.number_decorrelation_layers > 0 and not model.transform_only:
+                    model.hyperparameter["decorrelation"]["tau_1"] = float(tau1_vec[s].item())
+                    model.hyperparameter["decorrelation"]["tau_2"] = float(tau2_vec[s].item())
+
+                # your GTM API: returns [N] log-likelihood
+                ll_s = model.log_likelihood(y)  # [N]
+                logps.append(ll_s)
+
+        logps = torch.stack(logps, dim=0)  # [S, N]
+
+        # log-mean-exp over S
+        m, _ = torch.max(logps, dim=0, keepdim=True)      # [1, N]
+        log_mean = m.squeeze(0) + torch.log(torch.mean(torch.exp(logps - m), dim=0))  # [N]
+
+        return log_mean
+    
+    @torch.no_grad()
+    def predictive_sample(
+        self,
+        model: "GTM",
+        hyperparameter_transformation,
+        hyperparameter_decorrelation,
+        tau_nodes: "TauPack" = None,
+        n_samples: int = 10_000,
+        S: int = 32,
+    ) -> torch.Tensor:
+        """
+        Draw samples from the Bayesian predictive
+
+            p(y) ≈ (1/S) ∑_s p(y | θ_s, τ_s)
+
+        by:
+          - sampling θ_s ~ q(θ)
+          - sampling τ_s ~ q(τ) (or using hyperparameters)
+          - for each s, drawing ≈ n_samples / S from model.sample()
+
+        Returns: [n_samples, d] tensor of draws.
+        """
+        device = self.device
+        S_eff = min(S, n_samples)
+        n_per = math.ceil(n_samples / S_eff)
+
+        # θ ~ q
+        thetas = self.sample_theta(S_eff, antithetic=True)  # [S_eff, D]
+
+        # τ vectors
+        tau4_vec, tau1_vec, tau2_vec, _ = self._tau_vectors(
+            S=S_eff,
+            model=model,
+            hyper_T=hyperparameter_transformation,
+            hyper_D=hyperparameter_decorrelation,
+            tau_nodes=tau_nodes,
+        )
+
+        samples_all = []
+
+        for s in range(S_eff):
+            theta_s = thetas[s]
+            params_s = self._theta_to_state_dict(theta_s)
+
+            with _reparametrize_module(model, params_s):
+                model.hyperparameter["transformation"]["tau"] = float(tau4_vec[s].item())
+                if model.number_decorrelation_layers > 0 and not model.transform_only:
+                    model.hyperparameter["decorrelation"]["tau_1"] = float(tau1_vec[s].item())
+                    model.hyperparameter["decorrelation"]["tau_2"] = float(tau2_vec[s].item())
+
+                y_s = model.sample(n_per)  # [n_per, d]
+                samples_all.append(y_s)
+
+        y_cat = torch.cat(samples_all, dim=0)
+        return y_cat[:n_samples]
 
 class VariationalGamma:
     """q(tau) = Gamma(a_hat, b_hat) (shape-rate) with analytics you need for ELBO."""
