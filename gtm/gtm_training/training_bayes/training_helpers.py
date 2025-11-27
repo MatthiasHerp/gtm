@@ -345,6 +345,7 @@ def train_bayes(
     # --------------------------------------------------------------------
     best_val, monitors, loss_history, val_history = _init_bookkeping_and_monitors(VI, tau_nodes)
     start = time.time()
+    no_improve = 0
     # --------------------------------------------------------------------
     # 6. Training loop
     # --------------------------------------------------------------------
@@ -880,7 +881,7 @@ def _init_bookkeping_and_monitors(VI, tau_nodes):
         },
     }
 
-    no_improve = 0
+    
     monitors = Trackers.new_monitour()  # keep your existing tracker layout
     loss_history, val_history = [], []
     return best_val,monitors,loss_history,val_history

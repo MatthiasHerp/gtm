@@ -11,7 +11,7 @@ import pyvinecopulib as pv
 
 from gtm import GTM   # and your Bayesian GTM class if it's also in gtm.py
 from dataset_helpers import Generic_Dataset
-from tests.bayesian_tests.utils import load_copula_configs_from_json
+from utils import load_copula_configs_from_json
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -32,6 +32,7 @@ def set_global_seed(seed: int):
 # ---------------------------------------------------------------------
 def save_density_plots_for_copula(
     model_bgtm: "GTM",
+    output_bgtm,
     model_gtm: "GTM",
     x_train,
     cfg_name,
@@ -50,8 +51,23 @@ def save_density_plots_for_copula(
     os.makedirs(out_dir, exist_ok=True)
 
     # --- 1) BGTM inverse-sampling ---
+    
+    
+    VI        = output_bgtm["vi_model"]
+    tau_nodes = output_bgtm["tau_nodes"]
+    hyper_T   = model_bgtm.hyperparameter["transformation"]
+    hyper_D   = model_bgtm.hyperparameter["decorrelation"]
+
     with torch.no_grad():
-        synthetic_bgtm = model_bgtm.sample(n_samples_inverse).cpu()
+        synthetic_bgtm = VI.predictive_sample(
+            model=model_bgtm,
+            hyperparameter_transformation=hyper_T,
+            hyperparameter_decorrelation=hyper_D,
+            tau_nodes=tau_nodes,
+            n_samples=10_000,
+            S=32,
+        ).cpu()
+    
 
     plt.figure()
     model_bgtm.plot_densities(
@@ -406,9 +422,13 @@ def fit_bgtm(x_train, x_val, x_test):
     output = model_bayes.train(
         train_dataloader=dl_train,
         validate_dataloader=None,
+        hyperparameters=None,
         iterations=800,
-        #verbose=True,
-        learning_rate=0.0015,
+        optimizer="Adam",
+        lr_mu = 1e-3,
+        lr_cholesky = 1e-4,
+        lr_rho = 3e-4,
+        lr_tau = 1.5e-3,
         mcmc_sample_train=4,            # will ramp
         mcmc_sample_val=32,             # fixed & larger for stable eval
         mc_ramp_every=25,               # 4→8→16→32 at epochs 25/50/75
@@ -417,36 +437,72 @@ def fit_bgtm(x_train, x_val, x_test):
         patience=10,                # early-stop patience
         min_delta=0.00001, #with val data set 0.00001,                   # ~0.1% absolute of your loss scale
                 
-        rho_lr_multiplier=0.7,          # slightly faster variance adaption (optional)
         sched_factor=0.5, 
-        sched_patience=6,
+        sched_patience=10, 
         sched_threshold=1e-4,
+        sched_min_lr=[5e-5, 1e-5, 5e-5],
         #WARMING
-        warm_tau_epochs = 10,
-        warm_sigma_epochs = 30,  # try 5–10
+        warm_tau_epochs = 15,
+        warm_sigma_epochs = 15,  # try 5–10
                 
         #Optimization method
         beta_kl_start=0.5,    # try 1.5–3.0
-        beta_kl_anneal_epochs = 20,  # how fast to decay to 1.0
+        beta_kl_anneal_epochs = 30,  # how fast to decay to 1.0
                 
         # --- τ-VI toggles (key difference) ---
         tau_vi_mode = "always", #"off" | "after_warm" | "always"
-        tau_kl_beta =2.0,
-        tau_vi_sigma_init = 0.15,
+        tau_kl_beta =0.5,
+        tau_vi_sigma_init = 0.05,
                 
         # --- VI convergence (no-val) ---
         conv_use_ema= True,
-        conv_window_size = 20,   # used if conv_use_ema=False
-        conv_tol = 0.01,      # absolute ELBO change per-obs
+        conv_window_size = 50,   # used if conv_use_ema=False
+        conv_tol = 0.001, #0.001,      # absolute ELBO change per-obs
         conv_min_epochs = 10,   # don't stop too early
         conv_ema_beta = 0.9,  # if conv_use_ema=True
     )
 
     # (Optional) you can also inspect output["monitor"], output["loss_history"], etc.
 
-    log_train = model_bayes.log_likelihood(x_train).detach().cpu()
-    log_val = model_bayes.log_likelihood(x_val).detach().cpu()
-    log_test = model_bayes.log_likelihood(x_test).detach().cpu()
+    #log_train = model_bayes.log_likelihood(x_train).detach().cpu()
+    #log_val = model_bayes.log_likelihood(x_val).detach().cpu()
+    #log_test = model_bayes.log_likelihood(x_test).detach().cpu()
+    
+    
+    
+    variational_inference_model         = output["vi_model"]
+    tau_nodes                           = output["tau_nodes"]
+    hyper_T                             = model_bayes.hyperparameter["transformation"]
+    hyper_D                             = model_bayes.hyperparameter["decorrelation"]
+
+    # BGTM predictive log-likelihoods (Bayesian mixture over θ, τ)
+    log_train = variational_inference_model.predictive_log_prob(
+        y=x_train,
+        model=model_bayes,
+        hyperparameter_transformation=hyper_T,
+        hyperparameter_decorrelation=hyper_D,
+        tau_nodes=tau_nodes,
+        S=32,
+    ).cpu()
+
+    log_val = variational_inference_model.predictive_log_prob(
+        y=x_val,
+        model=model_bayes,
+        hyperparameter_transformation=hyper_T,
+        hyperparameter_decorrelation=hyper_D,
+        tau_nodes=tau_nodes,
+        S=32,
+    ).cpu()
+
+    log_test = variational_inference_model.predictive_log_prob(
+        y=x_test,
+        model=model_bayes,
+        hyperparameter_transformation=hyper_T,
+        hyperparameter_decorrelation=hyper_D,
+        tau_nodes=tau_nodes,
+        S=32,
+    ).cpu()
+    
     
     model_bayes.approximate_transformation_inverse()
 
@@ -533,6 +589,7 @@ def run_experiment_for_copula(cfg, seed, n_train=2000, n_val=2000, n_test=20000)
     
     save_density_plots_for_copula(
         model_bgtm=model_bgtm,
+        output_bgtm=bgtm_output,
         model_gtm=model_gtm,
         x_train=x_train,
         cfg_name=cfg["name"],
