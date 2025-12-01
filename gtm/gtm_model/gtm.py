@@ -744,6 +744,7 @@ class GTM(nn.Module):
         
         #BAYES VI
         hyperparameters=None,
+        mu_init: Tensor|None = None,
         mcmc_sample_train=4,
         mcmc_sample_val=16,
         mc_ramp_every=25,
@@ -932,6 +933,7 @@ class GTM(nn.Module):
                 conv_tol=conv_tol,
                 conv_min_epochs=conv_min_epochs,
                 conv_ema_beta=conv_ema_beta,
+                mu_init=mu_init
             )
         else:
             raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')

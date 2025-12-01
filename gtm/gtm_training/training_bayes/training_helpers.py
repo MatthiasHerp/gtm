@@ -142,6 +142,9 @@ def train_bayes(
     mcmc_sample_val: int = 8,
     mc_ramp_every: int | None = 20,
     mc_ramp_max: int = 32,
+    
+    # --- Init Params ----------------------------------------------------
+    mu_init: torch.Tensor | None = None,
 
     # --- randomness -----------------------------------------------------
     global_seed: int = 0,
@@ -214,7 +217,7 @@ def train_bayes(
     K = model.transformation.priors.K_prior_RW2.to(model.device)
     num_margins = int(model.number_variables)
     
-    VI, gen = initialize_vi_model(model, global_seed, decor_present)
+    VI, gen = initialize_vi_model(model, global_seed, decor_present, mu_init=mu_init,)
 
     # --------------------------------------------------------------------
     # 2. Hyperparameters & τ initialisation
@@ -783,7 +786,7 @@ def initialize_hyperparameters(model, hyperparameters):
         hyper_D = hyperparameters.get("decorrelation", {})
     return hyper_T,hyper_D
 
-def initialize_vi_model(model, global_seed, decor_present):
+def initialize_vi_model(model, global_seed, decor_present, mu_init,):
     key_filter = initialized_param_filter(decor_present)
     VI = VI_Model(
         model=model,
@@ -794,6 +797,7 @@ def initialize_vi_model(model, global_seed, decor_present):
             #"decorrelation_layers.",
         #],
         full_mvn = True,
+        mu_init=mu_init,
     ).to(model.device)
 
     gen = torch.Generator(device=model.device)

@@ -62,7 +62,8 @@ class VI_Model(nn.Module):
         key_filter= None,
         mv_block_keys: list[str] | None = None,
         device: torch.device | str = "cpu",
-        full_mvn: bool = False
+        full_mvn: bool = False,
+        mu_init: Tensor | dict | None = None,
         ):
         
         super().__init__()
@@ -74,12 +75,34 @@ class VI_Model(nn.Module):
         
         # Snapshot an initial state dict to define θ's dimension and schema.
         with torch.no_grad():
-            base_sd = {k: v.detach().to(self.device) for k, v in model.state_dict().items() if torch.is_tensor(v)}
+            base_sd = {k: v.detach().to(self.device) 
+                       for k, v in model.state_dict().items() 
+                       if torch.is_tensor(v)
+                       }
+            
             theta0, self._schema = _flatten_state_dict(base_sd, key_filter=key_filter)
 
         D = theta0.numel()
+        
         if D == 0:
             raise RuntimeError("Key filter selected zero parameters; check your include/exclude patterns.")
+        
+        if mu_init is not None:
+            if isinstance(mu_init, dict):
+                flat_init, schema_init = _flatten_state_dict(mu_init, key_filter=key_filter)
+                schema_keys = [k for k, _ in self._schema]
+                init_keys   = [k for k, _ in schema_init]
+                if schema_keys != init_keys:
+                    raise ValueError("mu_init state_dict has different keys/order than model.state_dict().")
+                if flat_init.numel() != D:
+                    raise ValueError("mu_init flatten size mismatch.")
+                theta0 = flat_init.to(self.device)
+            else:
+                flat = mu_init.to(self.device)
+                if flat.numel() != D:
+                    raise ValueError(f"mu_init has {flat.numel()} params but expected {D}.")
+                theta0 = flat.reshape_as(theta0)
+        
         
         # Mean Vector
         self.mu = nn.Parameter(theta0.clone())
@@ -595,10 +618,6 @@ class VI_Model(nn.Module):
         """For Validation used the ELPD Approach."""
     
         thetas = self.sample_theta(S, antithetic=True)  # [S, D]
-
-        """For validation using the ELPD approach on a minibatch."""
-        # θ ~ q
-        thetas = self.sample_theta(S, antithetic=True)
 
         # either VI τ or fixed τ
         if use_tau_vi_now and (tau_nodes is not None):
