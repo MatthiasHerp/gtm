@@ -361,7 +361,7 @@ def fit_gtm(x_train, x_val, x_test):
 # 6) Helper: fit BGTM (full Bayesian VI)
 #    >>> HERE you paste your BGTM + VI config from the notebook <<<
 # ---------------------------------------------------------------------
-def fit_bgtm(x_train, x_val, x_test):
+def fit_bgtm(x_train, x_val, x_test, model_gtm):
     # The BGTM uses mini-batches in your notebook:
     ds_train = Generic_Dataset(x_train)
     dl_train = DataLoader(
@@ -375,6 +375,7 @@ def fit_bgtm(x_train, x_val, x_test):
     )
 
     ds_val = Generic_Dataset(x_val)
+    
     dl_val = DataLoader(
         ds_val,
         batch_size=30,  # or your batch size
@@ -396,7 +397,7 @@ def fit_bgtm(x_train, x_val, x_test):
         },
         "decorrelation": {
             "sigma_a": 2.1,
-            "sigma_b": -1e6,
+            "sigma_b": 1e6,
             "RW2": {"tau_a": 1.1, "tau_b": 0.1},
             "RW1": {"tau_a": 1.1, "tau_b": 0.2},
         },
@@ -460,13 +461,10 @@ def fit_bgtm(x_train, x_val, x_test):
         conv_tol = 0.001, #0.001,      # absolute ELBO change per-obs
         conv_min_epochs = 10,   # don't stop too early
         conv_ema_beta = 0.9,  # if conv_use_ema=True
+        
+        mu_init=model_gtm.state_dict()
     )
 
-    # (Optional) you can also inspect output["monitor"], output["loss_history"], etc.
-
-    #log_train = model_bayes.log_likelihood(x_train).detach().cpu()
-    #log_val = model_bayes.log_likelihood(x_val).detach().cpu()
-    #log_test = model_bayes.log_likelihood(x_test).detach().cpu()
     
     
     
@@ -551,7 +549,7 @@ def run_experiment_for_copula(cfg, seed, n_train=2000, n_val=2000, n_test=20000)
 
     # --- BGTM (full Bayes VI) ---
     log_bgtm_train, log_bgtm_val, log_bgtm_test, model_bgtm, bgtm_output = fit_bgtm(
-        x_train, x_val, x_test
+        x_train, x_val, x_test, model_gtm
     )
 
     # --- Approximate KLs: E_true[ log p_true - log p_model ] ---
