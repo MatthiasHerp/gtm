@@ -1,5 +1,3 @@
-import multiprocessing
-import pickle
 import time
 import warnings
 
@@ -15,7 +13,7 @@ def compute_conditional_independence_kld(
     y=None,
     x=False,
     evaluation_data_type="data",
-    num_processes=10,
+    num_processes=10,          # kept for API, but no longer used
     sample_size=1000,
     num_points_quad=20,
     optimized=False,
@@ -25,103 +23,110 @@ def compute_conditional_independence_kld(
     likelihood_based_metrics=True,
 ):
 
-    # in case of gpu cuda compute
+    # ------------------------------------------------------------------
+    # 1. Put evaluation_data on the same device as the model
+    # ------------------------------------------------------------------
+    try:
+        device = next(self.parameters()).device
+    except Exception:
+        # fallback if GTM doesn't behave like nn.Module
+        device = torch.device("cpu")
+
     if evaluation_data_type == "data":
-        evaluation_data = y[:sample_size]  # Adjust this based on your needs
-        if copula_only == True:
+        evaluation_data = y[:sample_size].to(device)
+        if copula_only:
             evaluation_data = self.after_transformation(evaluation_data)
     elif evaluation_data_type == "uniform_random_samples":
         evaluation_data = torch.distributions.Uniform(min_val, max_val).sample(
             [sample_size, self.y_train.size(1)]
-        )
+        ).to(device)
     elif evaluation_data_type == "samples_from_model":
-        evaluation_data = self.sample(sample_size).detach()
-        if copula_only == True:
-            evaluation_data = self.after_transformation(evaluation_data).detach()
+        evaluation_data = self.sample(sample_size).to(device)
+        if copula_only:
+            evaluation_data = self.after_transformation(evaluation_data)
 
-    if copula_only == True:
+    if copula_only:
         self.num_trans_layers = 0
-    ll_evaluation_data = self.log_likelihood(evaluation_data).detach().cpu()
 
-    precision_matrix = (
-        self.compute_pseudo_precision_matrix(evaluation_data).detach().cpu()
-    )
-    correlation_matrix = (
-        self.compute_pseudo_conditional_correlation_matrix(evaluation_data)
-        .detach()
-        .cpu()
-    )
+    # ------------------------------------------------------------------
+    # 2. Compute likelihood + pseudo precision / correlation
+    #    Keep heavy stuff on device, only move what we need to CPU.
+    # ------------------------------------------------------------------
+    with torch.no_grad():
+        ll_evaluation_data = self.log_likelihood(evaluation_data).detach()  # [N]
+        precision_matrix = (
+            self.compute_pseudo_precision_matrix(evaluation_data)
+            .detach()
+            .cpu()
+        )  # [S, d, d] on CPU
+        correlation_matrix = (
+            self.compute_pseudo_conditional_correlation_matrix(evaluation_data)
+            .detach()
+            .cpu()
+        )  # [S, d, d] on CPU
+
+    ll_evaluation_data_cpu = ll_evaluation_data.cpu()
 
     precision_matrix_summary_statistics = compute_precision_matrix_summary_statistics(
         precision_matrix
     )
 
-    if likelihood_based_metrics == True:
-
+    # ------------------------------------------------------------------
+    # 3. Compute row-wise KLD / IAE WITHOUT multiprocessing
+    # ------------------------------------------------------------------
+    if likelihood_based_metrics:
         actual_log_distribution_glq_list = []
         under_ci_assumption_log_distribution_glq_list = []
+        under_ci_assumption_log_distribution_glq_full_data_list = []
 
         start = time.time()
 
-        # Using Pool from the multiprocessing module
-        if num_processes > 1:
-            with multiprocessing.Pool(processes=num_processes) as pool:
-                results = pool.starmap(
-                    independence_kld_process_row,
-                    [
-                        (
-                            row_num,
-                            precision_matrix_summary_statistics,
-                            evaluation_data,
-                            self,
-                            num_points_quad,
-                            optimized,
-                            min_val,
-                            max_val,
-                        )
-                        for row_num in range(
-                            precision_matrix_summary_statistics.shape[0]
-                        )
-                    ],
-                )
-            # Unpacking the results
-            (
-                actual_log_distribution_glq_list,
-                under_ci_assumption_log_distribution_glq_list,
-                under_ci_assumption_log_distribution_glq_full_data_list,
-            ) = zip(*results)
-        else:
-            results = [
-                independence_kld_process_row(
+        # single-process, but still on GPU/CPU according to `device`
+        with torch.no_grad():
+            for row_num in range(precision_matrix_summary_statistics.shape[0]):
+                (
+                    actual_log_distribution_glq,
+                    under_ci_assumption_log_distribution_glq,
+                    under_ci_assumption_log_distribution_glq_full_data,
+                ) = independence_kld_process_row(
                     row_num,
                     precision_matrix_summary_statistics,
-                    evaluation_data,
+                    evaluation_data,      # already on correct device
                     self,
                     num_points_quad,
                     optimized,
                     min_val,
                     max_val,
                 )
-                for row_num in range(precision_matrix_summary_statistics.shape[0])
-            ]
 
-            (
-                actual_log_distribution_glq_list,
-                under_ci_assumption_log_distribution_glq_list,
-                under_ci_assumption_log_distribution_glq_full_data_list,
-            ) = zip(*results)
+                # keep tensors on CPU for later scalar operations
+                actual_log_distribution_glq_list.append(
+                    actual_log_distribution_glq.cpu()
+                )
+                under_ci_assumption_log_distribution_glq_list.append(
+                    under_ci_assumption_log_distribution_glq.cpu()
+                )
+                under_ci_assumption_log_distribution_glq_full_data_list.append(
+                    under_ci_assumption_log_distribution_glq_full_data.cpu()
+                )
 
         end = time.time()
-
-        print(f"Time taken: {end-start}")
-
+        print(f"Time taken (single-process, device={device}): {end - start:.2f}s")
         print("All rows processed.")
+    else:
+        actual_log_distribution_glq_list = []
+        under_ci_assumption_log_distribution_glq_list = []
+        under_ci_assumption_log_distribution_glq_full_data_list = []
 
+    # ------------------------------------------------------------------
+    # 4. Summaries (precision, correlation, KLD, IAE) on CPU
+    # ------------------------------------------------------------------
     precision_abs_mean_list = []
     precision_square_mean_list = []
     cond_correlation_abs_mean_list = []
     cond_correlation_square_mean_list = []
-    if likelihood_based_metrics == True:
+
+    if likelihood_based_metrics:
         kld_list = []
         iae_list = []
 
@@ -141,7 +146,7 @@ def compute_conditional_independence_kld(
             correlation_matrix[:, var_row_num, var_col_num].square().mean()
         )
 
-        if likelihood_based_metrics == True:
+        if likelihood_based_metrics:
             actual_log_distribution_glq = actual_log_distribution_glq_list[row_num]
             under_ci_assumption_log_distribution_glq = (
                 under_ci_assumption_log_distribution_glq_list[row_num]
@@ -150,11 +155,7 @@ def compute_conditional_independence_kld(
                 under_ci_assumption_log_distribution_glq_full_data_list[row_num]
             )
 
-            # in case of gpu cuda compute
-            if (
-                evaluation_data_type == "data"
-                or evaluation_data_type == "samples_from_model"
-            ):
+            if evaluation_data_type in ("data", "samples_from_model"):
                 ll_dev = (
                     actual_log_distribution_glq
                     - under_ci_assumption_log_distribution_glq
@@ -164,32 +165,23 @@ def compute_conditional_independence_kld(
                 ll_dev = ll_dev[ll_dev.abs() < ll_dev.abs().quantile(0.99)]
                 kld = ll_dev.mean()
 
-                # p4_glq + p5_glq + p2_glq - (p4_glq+p5_glq) = p2_glq
-                # p2_glq: # compute p2 = log(f(Y_{/ij}))
                 actual_conditioning_set_log_distribution_glq = (
                     under_ci_assumption_log_distribution_glq_full_data
                     - under_ci_assumption_log_distribution_glq
                 )
                 weights = torch.exp(
-                    actual_conditioning_set_log_distribution_glq - ll_evaluation_data
-                )  # p4_glq + p5_glq + p2_glq - (p4_glq+p5_glq) = p2_glq
+                    actual_conditioning_set_log_distribution_glq
+                    - ll_evaluation_data_cpu
+                )
                 ll_dev2 = torch.abs(
                     torch.exp(actual_log_distribution_glq)
                     - torch.exp(under_ci_assumption_log_distribution_glq)
                 )
                 ll_dev2 = ll_dev2[~torch.isnan(ll_dev2)]
                 ll_dev2 = ll_dev2[~torch.isinf(ll_dev2)]
-                # correct
                 iae = ll_dev2 * weights
                 iae = iae[iae < iae.quantile(0.99)]
                 iae = iae.mean() / 2
-
-                # old
-                # ll_dev2 = torch.abs(torch.exp(actual_log_distribution_glq) - torch.exp(under_ci_assumption_log_distribution_glq)) / torch.exp(actual_log_distribution_glq)
-                # ll_dev2 = ll_dev2[~torch.isnan(ll_dev2)]
-                # ll_dev2 = ll_dev2[~torch.isinf(ll_dev2)]
-                # ll_dev2 = ll_dev2[ll_dev2.abs() < ll_dev2.abs().quantile(0.98)]
-                # iae = ll_dev2.mean()
 
             elif evaluation_data_type == "uniform_random_samples":
                 ll_dev = torch.exp(actual_log_distribution_glq) * (
@@ -218,8 +210,6 @@ def compute_conditional_independence_kld(
         cond_correlation_abs_mean_list.append(cond_correlation_abs_mean.item())
         cond_correlation_square_mean_list.append(cond_correlation_square_mean.item())
 
-        # print("Finished row_num: ", row_num)
-
     precision_matrix_summary_statistics["precision_abs_mean"] = precision_abs_mean_list
     precision_matrix_summary_statistics["precision_square_mean"] = (
         precision_square_mean_list
@@ -231,7 +221,7 @@ def compute_conditional_independence_kld(
         cond_correlation_square_mean_list
     )
 
-    if likelihood_based_metrics == True:
+    if likelihood_based_metrics:
         precision_matrix_summary_statistics["kld"] = kld_list
         precision_matrix_summary_statistics["iae"] = iae_list
 
@@ -259,9 +249,8 @@ def compute_conditional_independence_kld(
             ]
         ]
 
-    if copula_only == True:
+    if copula_only:
         self.num_trans_layers = 1
 
     sub_kld_summary_statistics.reset_index(inplace=True)
-
     return sub_kld_summary_statistics

@@ -712,11 +712,11 @@ class Transformation(nn.Module):
         ).T
 
         padded_params = restrict_parameters(
-            padded_params,  # .contiguous().unsqueeze(1),
+            padded_params.to(self.device),  # .contiguous().unsqueeze(1),
             covariate=covariate,
             degree=self.max_degree,
             monotonically_increasing=True,
-            device=input.device,
+            device=self.device,
         )
 
         if (
@@ -728,9 +728,9 @@ class Transformation(nn.Module):
         if self.spline == "bspline" or inverse == True:  # Inverse always uses bspline
             return_dict["output"], return_dict["second_order_ridge_pen_sum"], _, _ = (
                 bspline_prediction_vectorized(
-                    padded_params,  # if inverse==False else torch.vstack(self.params_inverse).T,
-                    input,
-                    self.padded_knots,
+                    padded_params.to(self.device),  # if inverse==False else torch.vstack(self.params_inverse).T,
+                    input.to(self.device),
+                    self.padded_knots.to(self.device),
                     self.max_degree,
                     self.spline_range[
                         :, 0
@@ -751,9 +751,9 @@ class Transformation(nn.Module):
             )
 
             return_dict["log_d"] = bspline_prediction_vectorized(
-                padded_params,  # if inverse==False else torch.vstack(self.params_inverse).T,
-                input,
-                self.padded_knots,
+                padded_params.to(self.device),  # if inverse==False else torch.vstack(self.params_inverse).T,
+                input.to(self.device),
+                self.padded_knots.to(self.device),
                 self.max_degree,
                 self.spline_range[
                     :, 0
@@ -775,8 +775,8 @@ class Transformation(nn.Module):
         elif self.spline == "bernstein":
             return_dict["output"], return_dict["second_order_ridge_pen_sum"], _, _ = (
                 bernstein_prediction_vectorized(
-                    padded_params,  # if inverse==False else torch.vstack(self.params_inverse).T,
-                    input,
+                    padded_params.to(self.device),  # if inverse==False else torch.vstack(self.params_inverse).T,
+                    input.to(self.device),
                     # self.padded_knots, #no different lengths option for bernstein polynomials
                     self.max_degree,
                     self.spline_range[
@@ -801,8 +801,8 @@ class Transformation(nn.Module):
             )
 
             return_dict["log_d"] = bernstein_prediction_vectorized(
-                padded_params,  # if inverse==False else torch.vstack(self.params_inverse).T,
-                input,
+                padded_params.to(self.device),  # if inverse==False else torch.vstack(self.params_inverse).T,
+                input.to(self.device),
                 # self.padded_knots,
                 self.max_degree,
                 self.spline_range[

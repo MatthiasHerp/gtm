@@ -24,25 +24,39 @@ def plot_splines(
     # num_variables = layer.number_variables
 
     if layer.type == "transformation":
-        poly_min = torch.FloatTensor(layer.spline_range)[0, :]  # y_train.min(0).values
-        poly_max = torch.FloatTensor(layer.spline_range)[1, :]  # y_train.max(0).values
+
+        spline_range = convert_to_float_tensor(layer)
+
+        poly_min = spline_range[0, :]
+        poly_max = spline_range[1, :]
 
         num_variables = layer.number_variables
         num_splines = num_variables
 
     elif layer.type == "decorrelation":
-        poly_min = torch.FloatTensor(layer.spline_range)[0, :]
-        poly_max = torch.FloatTensor(layer.spline_range)[1, :]
+
+        spline_range = convert_to_float_tensor(layer)
+
+        poly_min = spline_range[0, :]
+        poly_max = spline_range[1, :]
 
         num_variables = layer.number_variables
         num_splines = int(num_variables * (num_variables - 1) / 2)
 
         lower_tri_indices = np.tril_indices(num_splines, k=-1)
-        output_splines = torch.zeros((1000, num_splines))
+        output_splines = torch.zeros(
+            (1000, num_splines), device=poly_min.device, dtype=torch.float32
+        )
 
-    data_span_vec = torch.zeros((1000, num_variables), dtype=torch.float32)
+    device = poly_min.device  # convenience
+
+    data_span_vec = torch.zeros(
+        (1000, num_variables), dtype=torch.float32, device=device
+    )
     for i in range(num_variables):
-        data_span_vec[:, i] = torch.linspace(poly_min[i], poly_max[i], 1000)
+        data_span_vec[:, i] = torch.linspace(
+            poly_min[i], poly_max[i], 1000, device=device
+        )
 
     if layer.type == "transformation":
         results = pd.DataFrame(
@@ -57,35 +71,36 @@ def plot_splines(
         )
         if covariate_exists is True:
             for cov_value in [0.0, 0.25, 0.5, 0.75, 1.0]:
-                covariate_value = torch.Tensor([cov_value]).repeat(1000)
-                # z_tilde, log_d = layer.forward(data_span_vec, covariate=covariate_value, return_log_d=True)
+                covariate_value = torch.full(
+                    (1000,), cov_value, device=device, dtype=torch.float32
+                )
                 return_dict = layer.forward(
                     data_span_vec, covariate=covariate_value, return_log_d=True
                 )
                 z_tilde = return_dict["output"]
                 log_d = return_dict["log_d"]
                 z_tilde_derivativ = torch.exp(log_d)
-                # data_span_vec_estimated = layer.forward(z_tilde, covariate=covariate_value,  inverse=True)
                 return_dict_inverse = layer.forward(
                     z_tilde, covariate=covariate_value, inverse=True
                 )
                 data_span_vec_estimated = return_dict_inverse["output"]
 
-                # data_span_vec_estimated = data_span_vec_estimated.detach().numpy()
-
-                # For the transformation layer the number of splines is equal to the number of variables
                 for spline_num in range(num_variables):
                     results = results._append(
                         pd.DataFrame(
                             {
-                                "y": data_span_vec.detach().numpy()[:, spline_num],
-                                "y_estimated": data_span_vec_estimated.detach().numpy()[
-                                    :, spline_num
-                                ],
-                                "z_tilde": z_tilde.detach().numpy()[:, spline_num],
-                                "z_tilde_derivativ": z_tilde_derivativ.detach().numpy()[
-                                    :, spline_num
-                                ],
+                                "y": data_span_vec.detach()
+                                .cpu()
+                                .numpy()[:, spline_num],
+                                "y_estimated": data_span_vec_estimated.detach()
+                                .cpu()
+                                .numpy()[:, spline_num],
+                                "z_tilde": z_tilde.detach()
+                                .cpu()
+                                .numpy()[:, spline_num],
+                                "z_tilde_derivativ": z_tilde_derivativ.detach()
+                                .cpu()
+                                .numpy()[:, spline_num],
                                 "covariate": cov_value,
                                 "spline_num": spline_num,
                             }
@@ -95,7 +110,6 @@ def plot_splines(
 
         else:
             results = results.drop(("covariate"), axis=1)
-            # z_tilde, log_d, _ = layer.forward(data_span_vec, covariate=False, return_log_d=True) # _ is for scores
             return_dict = layer.forward(
                 data_span_vec, covariate=False, return_log_d=True
             )
@@ -103,24 +117,27 @@ def plot_splines(
             log_d = return_dict["log_d"]
 
             z_tilde_derivativ = torch.exp(log_d)
-            # data_span_vec_estimated = layer.forward(z_tilde, covariate=False, inverse=True)
-            return_dict_inverse = layer.forward(z_tilde, covariate=False, inverse=True)
+            return_dict_inverse = layer.forward(
+                z_tilde, covariate=False, inverse=True
+            )
             data_span_vec_estimated = return_dict_inverse["output"]
-            # data_span_vec_estimated = data_span_vec_estimated.detach().numpy()
 
-            # For the transformation layer the number of splines is equal to the number of variables
             for spline_num in range(num_variables):
                 results = results._append(
                     pd.DataFrame(
                         {
-                            "y": data_span_vec.detach().numpy()[:, spline_num],
-                            "y_estimated": data_span_vec_estimated.detach().numpy()[
-                                :, spline_num
-                            ],
-                            "z_tilde": z_tilde.detach().numpy()[:, spline_num],
-                            "z_tilde_derivativ": z_tilde_derivativ.detach().numpy()[
-                                :, spline_num
-                            ],
+                            "y": data_span_vec.detach()
+                            .cpu()
+                            .numpy()[:, spline_num],
+                            "y_estimated": data_span_vec_estimated.detach()
+                            .cpu()
+                            .numpy()[:, spline_num],
+                            "z_tilde": z_tilde.detach()
+                            .cpu()
+                            .numpy()[:, spline_num],
+                            "z_tilde_derivativ": z_tilde_derivativ.detach()
+                            .cpu()
+                            .numpy()[:, spline_num],
                             "spline_num": spline_num,
                         }
                     ),
@@ -139,57 +156,73 @@ def plot_splines(
                 "spline_num",
             ]
         )
+
+        # Precompute CPU versions for spline evaluation  # CHANGED
+        spline_range_cpu_1d = spline_range.detach().cpu()[:, 0]
+        knots_cpu = layer.knots.detach().cpu()
+
         if covariate_exists is True:
             for cov_value in [0.0, 0.25, 0.5, 0.75, 1.0]:
-                covariate_value = torch.Tensor([cov_value]).repeat(1000)
+                covariate_value = torch.full(
+                    (1000,), cov_value, device=device, dtype=torch.float32
+                )
                 for spline_num in range(num_splines):
-                    # works for 10D so I need for var_num and for covar .... and iteratively +1 for spline_num
 
                     if num_splines == 1:
                         col_indices = 0
                     else:
                         col_indices = lower_tri_indices[1][spline_num]
 
-                    # output_splines[:,spline_num] = bspline_prediction(layer.params[:, spline_num],
-                    #                   data_span_vec[:, col_indices],
-                    #                   degree=layer.degree,
-                    #                   spline_range=torch.FloatTensor(layer.spline_range)[:, 0], #assume same polly range across variables
-                    #                   monotonically_increasing=False,
-                    #                   derivativ=0,
-                    #                   covariate=covariate_value,
-                    #                   params_covariate=layer.params_covariate[:, 0],
-                    #                   calc_method="deBoor") # hardcoded for only one covariate
+                    # --- all spline inputs to CPU ---  # CHANGED
+                    params_cpu = (
+                        layer.params[:, spline_num]
+                        .detach()
+                        .cpu()
+                        .unsqueeze(1)
+                    )
+                    input_cpu = (
+                        data_span_vec[:, col_indices]
+                        .detach()
+                        .cpu()
+                        .unsqueeze(1)
+                    )
+
                     if layer.spline == "bspline":
-                        output_splines[:, spline_num] = bspline_prediction_vectorized(
-                            layer.params[:, spline_num].unsqueeze(1),
-                            data_span_vec[:, col_indices].unsqueeze(1),
-                            layer.knots,
+                        output_cpu = bspline_prediction_vectorized(
+                            params_cpu,
+                            input_cpu,
+                            knots_cpu,
                             layer.degree,
-                            layer.spline_range[:, 0],
+                            spline_range_cpu_1d,
                             derivativ=0,
                             return_penalties=False,
                             varying_degrees=False,
-                        )  # hardcoded for only one covariate
+                        )
                     elif layer.spline == "bernstein":
-                        output_splines[:, spline_num] = bernstein_prediction_vectorized(
-                            layer.params[:, spline_num].unsqueeze(1),
-                            data_span_vec[:, col_indices].unsqueeze(1),
-                            # layer.knots,
+                        output_cpu = bernstein_prediction_vectorized(
+                            params_cpu,
+                            input_cpu,
                             layer.degree,
-                            layer.spline_range[:, 0],
+                            spline_range_cpu_1d,
                             derivativ=0,
                             return_penalties=False,
                             binom_n=layer.binom_n,
                             binom_n1=layer.binom_n1,
                             binom_n2=layer.binom_n2,
-                        )  # hardcoded for only one covariate
+                        )
+
+                    # Move back to original device  # CHANGED
+                    output_splines[:, spline_num] = output_cpu.to(device)
+
                     results = results._append(
                         pd.DataFrame(
                             {
-                                "y": data_span_vec.detach().numpy()[:, col_indices],
-                                "z_tilde": output_splines.detach().numpy()[
-                                    :, spline_num
-                                ],
+                                "y": data_span_vec.detach()
+                                .cpu()
+                                .numpy()[:, col_indices],
+                                "z_tilde": output_splines.detach()
+                                .cpu()
+                                .numpy()[:, spline_num],
                                 "covariate": cov_value,
                                 "spline_num": spline_num,
                             }
@@ -200,8 +233,6 @@ def plot_splines(
             results = results.drop(("covariate"), axis=1)
 
             for spline_num in range(num_splines):
-                # lower_tri_indices = np.tril_indices(num_splines, k=-1)
-                # row_indices = lower_tri_indices[0]
                 if num_splines == 1:
                     col_indices = 0
                 else:
@@ -213,53 +244,57 @@ def plot_splines(
                 else:
                     params = layer.params[:, spline_num]
                     degree = layer.degree
-                # output_splines[:, spline_num] = bspline_prediction(params,#layer.params[:, spline_num],
-                #                                            data_span_vec[:, col_indices],
-                #                                            degree=degree,#layer.degree,
-                #                                            spline_range=torch.FloatTensor(layer.spline_range)[:, 0],
-                #                                            # assume same polly range across variables
-                #                                            monotonically_increasing=False,
-                #                                            derivativ=0,
-                #                                            covariate=False,
-                #                                            params_covariate=False,
-                #                                            calc_method="deBoor")  # hardcoded for only one covariate
+
+                # --- all spline inputs to CPU ---  # CHANGED
+                params_cpu = params.detach().cpu().unsqueeze(1)
+                input_cpu = (
+                    data_span_vec[:, col_indices]
+                    .detach()
+                    .cpu()
+                    .unsqueeze(1)
+                )
+
                 if layer.spline == "bspline":
-                    output_splines[:, spline_num] = bspline_prediction_vectorized(
-                        layer.params[:, spline_num].unsqueeze(1),
-                        data_span_vec[:, col_indices].unsqueeze(1),
-                        layer.knots,
-                        layer.degree,
-                        layer.spline_range[:, 0],
+                    output_cpu = bspline_prediction_vectorized(
+                        params_cpu,
+                        input_cpu,
+                        knots_cpu,
+                        degree,
+                        spline_range_cpu_1d,
                         derivativ=0,
                         return_penalties=False,
                         varying_degrees=False,
-                    )  # hardcoded for only one covariate
+                    )
                 elif layer.spline == "bernstein":
-                    output_splines[:, spline_num] = bernstein_prediction_vectorized(
-                        layer.params[:, spline_num].unsqueeze(1),
-                        data_span_vec[:, col_indices].unsqueeze(1),
-                        # layer.knots,
-                        layer.degree,
-                        layer.spline_range[:, 0],
+                    output_cpu = bernstein_prediction_vectorized(
+                        params_cpu,
+                        input_cpu,
+                        degree,
+                        spline_range_cpu_1d,
                         derivativ=0,
                         return_penalties=False,
                         binom_n=layer.binom_n,
                         binom_n1=layer.binom_n1,
                         binom_n2=layer.binom_n2,
-                    )  # hardcoded for only one covariate
+                    )
+
+                # back to original device for storage  # CHANGED
+                output_splines[:, spline_num] = output_cpu.to(device)
+
                 results = results._append(
                     pd.DataFrame(
                         {
-                            "y": data_span_vec.detach().numpy()[:, col_indices],
-                            "z_tilde": output_splines.detach().numpy()[:, spline_num],
+                            "y": data_span_vec.detach()
+                            .cpu()
+                            .numpy()[:, col_indices],
+                            "z_tilde": output_splines.detach()
+                            .cpu()
+                            .numpy()[:, spline_num],
                             "spline_num": spline_num,
                         }
                     ),
                     ignore_index=True,
                 )
-
-    # data_span_vec = data_span_vec.detach().numpy()
-    # z_tilde = z_tilde.detach().numpy()
 
     if num_splines > 1:
         number_rows = int(np.ceil(num_splines / 3))
@@ -272,12 +307,12 @@ def plot_splines(
             gridspec_kw={"wspace": 0.25, "hspace": 0.2},
             sharey=False,
             sharex=False,
-        )  # dont want to share all x (sharex) and y axis (sharey)
+        )
 
         for spline_num in range(num_splines):
             subset_results = results[results["spline_num"] == spline_num]
-            row = int(spline_num // 3)  # Get the row index
-            col = int(spline_num % 3)  # Get the column index
+            row = int(spline_num // 3)
+            col = int(spline_num % 3)
             if covariate_exists is True:
                 sns.lineplot(
                     x="y",
@@ -331,11 +366,7 @@ def plot_splines(
                             [], [], color="green", linestyle="--", label="inverse"
                         )
                         axs[row, col].legend()
-            # TODO: solve this issue, somehow the min() max() in the comment below does not span all possible values
-            # if layer.type == "transformation":
-            #    axs[a].set_ylim(subset_results["z_tilde"].min(), subset_results["z_tilde"].max())
-            # elif layer.type == "decorrelation":
-            #    axs[a].set_ylim(-2, 2)
+
             if layer.type == "transformation":
                 axs[row, col].set_ylim(
                     subset_results["z_tilde"].min(), subset_results["z_tilde"].max()
@@ -395,3 +426,27 @@ def plot_splines(
         plt.savefig(storage, bbox_inches="tight")
     if show_plot == True:
         plt.show()
+
+
+def convert_to_float_tensor(layer):
+    """
+    Make sure spline_range is a float tensor.
+    If it's already a tensor, keep its device and just cast dtype.
+    Otherwise, infer device from layer.params (first element) or CPU.
+    """
+    if torch.is_tensor(layer.spline_range):
+        spline_range = layer.spline_range.to(dtype=torch.float32)
+    else:
+        try:
+            if isinstance(layer.params, torch.nn.ParameterList):
+                target_device = layer.params[0].device
+            else:
+                target_device = layer.params.device
+        except Exception:
+            target_device = torch.device("cpu")
+
+        spline_range = torch.tensor(
+            layer.spline_range, dtype=torch.float32, device=target_device
+        )
+
+    return spline_range

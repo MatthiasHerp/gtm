@@ -26,15 +26,16 @@ def plot_metric_scatter(
     show_plot=True,
 ):
     # Ensures that by default all points are in the plot and axis have the same span (not distortion, can see distribution clearly)
+    if torch.is_tensor(data):
+        data = data.detach().cpu().numpy()
+    if torch.is_tensor(metric):
+        metric = metric.detach().cpu().numpy()
+    
     if x_lim is None:
         x_lim = [data.min(), data.max()]
     if y_lim is None:
         y_lim = [data.min(), data.max()]
 
-    if torch.is_tensor(data):
-        data = data.detach().numpy()
-    if torch.is_tensor(metric):
-        metric = metric.detach().numpy()
 
     num_cols = data.shape[1]
     if pairs is not False:

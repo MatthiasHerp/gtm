@@ -367,6 +367,8 @@ def compute_k_fixed_degrees(x, t):  # , n
     Returns:
         k: (batch, num_x) - Indices of knot intervals
     """
+    
+    t = t.to(x.device)
     k = torch.searchsorted(t, x.contiguous()) - 1
     
     max_k = t.shape[-1] - 1
@@ -602,8 +604,8 @@ def bspline_prediction_vectorized(
     else:
         pass
     
-    x_min = knots.min()
-    x_max = knots.max()
+    x_min = knots.min().to(input_a_clone.device)
+    x_max = knots.max().to(input_a_clone.device)
     
     input_a_clone = torch.clamp(input_a_clone, min=x_min + 1e-6, max=x_max - 1e-6)
 

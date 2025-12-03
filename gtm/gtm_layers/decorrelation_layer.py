@@ -224,12 +224,16 @@ class Decorrelation(nn.Module):
         #                    calc_method=self.calc_method_bspline,
         #                    order = self.spline_order)
 
-        return bspline_prediction_vectorized(
-            (
+        params = (
                 self.params[:, params_index].unsqueeze(1)
                 if multi == False
                 else self.params_multiplier[:, params_index].unsqueeze(1)
-            ).to(self.device),
+            ).to(self.device)
+        
+        input = input.to(self.device)
+        
+        return bspline_prediction_vectorized(
+            params,
             input[:, covar_num].unsqueeze(1),
             self.knots,
             self.degree,
@@ -296,7 +300,7 @@ class Decorrelation(nn.Module):
                 return_dict["first_order_ridge_pen_sum"],
                 return_dict["param_ridge_pen_sum"],
             ) = bspline_prediction_vectorized(
-                self.params,
+                self.params.to(self.device),
                 input.index_select(1, self.covar_num_list),
                 self.knots,
                 self.degree,

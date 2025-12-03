@@ -610,18 +610,19 @@ def independence_kld_process_row(
         under_ci_assumption_log_distribution_glq_full_data,
     ) = compute_ci_probability_deviance_two_dim_glq(
         model_alternative,
-        data=evaluation_data,
+        data=evaluation_data,   # already on correct device
         num_col_1=var_row_num,
         num_col_2=var_col_num,
-        min_val=min_val,  # Adjust as needed
-        max_val=max_val,  # Adjust as needed
+        min_val=min_val,
+        max_val=max_val,
         num_points_quad=num_points_quad,
-        copula=False,  ####### False
+        copula=False,
         optimized=optimized,
     )
 
+    # DO NOT .cpu() here; caller will decide
     return (
-        actual_log_distribution_glq.cpu(),
-        under_ci_assumption_log_distribution_glq.cpu(),
-        under_ci_assumption_log_distribution_glq_full_data.cpu(),
+        actual_log_distribution_glq,
+        under_ci_assumption_log_distribution_glq,
+        under_ci_assumption_log_distribution_glq_full_data,
     )
