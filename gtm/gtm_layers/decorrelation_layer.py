@@ -293,13 +293,14 @@ class Decorrelation(nn.Module):
         self.covar_num_list = self.covar_num_list.to(input.device)
         self.knots = self.knots.to(input.device)
 
+        # ------------------------------------------------------------------
+        # 1. Get all pairwise spline evaluations at once
+        #    lam_vals shape: [B, num_pairs]   (no outer vmap)
+        #                     [S, B, num_pairs] (under θ-vmap)
+        # ------------------------------------------------------------------
+        
         if self.spline == "bspline":
-            (
-                return_dict["lambda_matrix"][:, self.var_num_list, self.covar_num_list],
-                return_dict["second_order_ridge_pen_sum"],
-                return_dict["first_order_ridge_pen_sum"],
-                return_dict["param_ridge_pen_sum"],
-            ) = bspline_prediction_vectorized(
+            lam_vals, pen2, pen1, pen0 = bspline_prediction_vectorized(
                 self.params.to(self.device),
                 input.index_select(1, self.covar_num_list),
                 self.knots,
@@ -320,12 +321,7 @@ class Decorrelation(nn.Module):
             )
         elif self.spline == "bernstein":
             # note that it also returns the log determinant
-            (
-                return_dict["lambda_matrix"][:, self.var_num_list, self.covar_num_list],
-                return_dict["second_order_ridge_pen_sum"],
-                return_dict["first_order_ridge_pen_sum"],
-                return_dict["param_ridge_pen_sum"],
-            ) = bernstein_prediction_vectorized(
+            lam_vals, pen2, pen1, pen0 = bernstein_prediction_vectorized(
                 self.params,
                 input.index_select(1, self.covar_num_list),
                 # self.knots,
@@ -347,11 +343,70 @@ class Decorrelation(nn.Module):
                 binom_n1=self.binom_n1,
                 binom_n2=self.binom_n2,
             )
+        
+        # Update penalties
+        return_dict["second_order_ridge_pen_sum"] = pen2
+        return_dict["first_order_ridge_pen_sum"] = pen1
+        return_dict["param_ridge_pen_sum"] = pen0
+        
+        # ------------------------------------------------------------------
+        # 2. Build λ-matrix functionally from lam_vals
+        #    No in-place index_put, works under vmap.
+        # ------------------------------------------------------------------
+        
+        lam_vals = lam_vals.to(input.device)
+        V = self.number_variables
+        device = lam_vals.device
+        dtype = lam_vals.dtype
 
-        return_dict["output"] = return_dict["output"].unsqueeze_(2)
-        return_dict["output"] = torch.bmm(
-            return_dict["lambda_matrix"], return_dict["output"]
-        ).squeeze(2)
+        var = self.var_num_list
+        cov = self.covar_num_list
+        num_pairs = var.numel()
+        
+        # Precompute basis[p, i, j] = 1 if (i,j) = (var[p], cov[p])
+        # Cache on self to avoid rebuilding every call
+        basis = getattr(self, "_lambda_basis", None)
+        if (basis is None 
+            or basis.shape[0] != num_pairs 
+            or basis.shape[1] != V 
+            or basis.shape[2] != V 
+            or basis.device != device 
+            or basis.dtype != dtype):
+            basis = torch.zeros(num_pairs, V, V, device=device, dtype=dtype)
+            idx = torch.arange(num_pairs, device=device)
+            basis[idx, var, cov] = 1.0
+            self._lambda_basis = basis
+        else:
+            basis = basis.to(device=device, dtype=dtype)
+        
+        # lam_vals: [..., num_pairs]
+        # basis: [num_pairs, V, V]
+        # -> lower: [..., V, V]
+        vals_exp  = lam_vals[..., :, None, None]      # [..., num_pairs, 1, 1]
+        basis_exp = basis[None, ...]                 # [1, num_pairs, V, V]
+        lower = (vals_exp * basis_exp).sum(dim=-3)   # sum over num_pairs axis
+
+        # Add identity on the diagonal (diag multiplier = 1)
+        I = torch.eye(V, device=device, dtype=dtype)
+        lambda_matrix = lower + I
+        
+        return_dict["lambda_matrix"] = lambda_matrix
+        
+        # ------------------------------------------------------------------
+        # 3. Apply λ to the data: y' = Λ y
+        #    Use matmul so vmap can add extra batch dims (S,B,...) if needed.
+        # ------------------------------------------------------------------
+
+        out = return_dict["output"].to(device)   # [B, V]
+        out = out.unsqueeze(-1)                  # [B, V, 1] (or [S,B,V,1] under vmap)
+
+        # torch.matmul supports broadcasting & vmap nicely
+        out = torch.matmul(lambda_matrix, out).squeeze(-1)  # [..., B, V] -> [..., B, V]
+
+        return_dict["output"] = out
+
+        # log_d: diag multipliers are 1 -> log|Λ|=0 for this layer,
+        # so return_dict["log_d"] stays as created in create_return_dict_decorrelation.
 
         return return_dict
 

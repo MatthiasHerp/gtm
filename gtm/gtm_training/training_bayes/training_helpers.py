@@ -788,6 +788,15 @@ def initialize_hyperparameters(model, hyperparameters):
 
 def initialize_vi_model(model, global_seed, decor_present, mu_init,):
     key_filter = initialized_param_filter(decor_present)
+    
+    if decor_present:
+        mv_keys = [
+            "transformation.params",   # all marginal spline params
+            "decorrelation_layers.",   # all decorrelation spline params
+        ]
+    else:
+        mv_keys = ["transformation.params"]
+    
     VI = VI_Model(
         model=model,
         device=model.device,

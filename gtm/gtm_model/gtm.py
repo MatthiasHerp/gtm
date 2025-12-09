@@ -1876,9 +1876,13 @@ class GTM(nn.Module):
         min_val: float = -5,
         max_val: float = 5,
         likelihood_based_metrics: bool = True,
+        vi_model: Optional[torch.nn.Module] = None,
+        tau_nodes: Optional[torch.Tensor] = None,
+        S_posterior: int = 100,
+        cred_level: float = 0.95,
     ):
         """
-        Computes a table of pairwise conditional dependence statistics (e.g., KLD, IAE, psuedo precision matrix, and pseudo conditional correlation)
+        Computes a table of pairwise conditional dependence statistics (e.g., KLD, IAE, pseudo precision matrix, and pseudo conditional correlation)
         to assess conditional independence relationships between variables.
 
         For the Likelihood based KLD and IAE, this is done via approximation of conditional log-densities using numerical quadrature, comparing full model predictions
@@ -1906,7 +1910,7 @@ class GTM(nn.Module):
 
         copula_only : bool, default=False
             If True, evaluates only the copula likelihood component by disregarding the transformation layer likelihood contribution.
-            Can be sensible to get more stable results if marginals are highely complex. Especialyl since the dependence is only modelled in the decorrelation layers.
+            Can be sensible to get more stable results if marginals are highly complex. Especially since the dependence is only modeled in the decorrelation layers.
 
         min_val : float, default=-5
             Minimum value for the quadrature bound as well as for uniform random samples when evaluation_data_type == "uniform_random_samples".
@@ -1918,9 +1922,21 @@ class GTM(nn.Module):
             If True, computes log-likelihood based divergence metrics (KLD, IAE). These take time due to the quadratures.
             If False, only precision and conditional correlation metrics are computed.
 
+        vi_model : torch.nn.Module, optional
+            Variational inference model used for Bayesian inference. Required if `self.inference == "bayesian"`.
+
+        tau_nodes : torch.Tensor, optional
+            Tensor of tau nodes for Bayesian inference. Required if `self.inference == "bayesian"`.
+
+        S_posterior : int, default=100
+            Number of posterior samples for Bayesian inference.
+
+        cred_level : float, default=0.95
+            Credible level for Bayesian inference.
+
         Returns
         -------
-        sub_kld_summary_statistics : pandas.DataFrame
+        self.conditional_independence_table : pandas.DataFrame
             A table containing one row per variable pair with the following columns:
             - var_row: index of first variable
             - var_col: index of second variable
@@ -1930,28 +1946,45 @@ class GTM(nn.Module):
             - cond_correlation_square_mean: mean squared pseudo-conditional correlation
             - kld: Kullback-Leibler divergence (only if likelihood_based_metrics is True)
             - iae: Integrated Absolute Error (only if likelihood_based_metrics is True)
-
-        Notes
-        -------
-        - If multiprocessing is enabled (num_processes > 1), then the rows of the summary table are computed in parallel with num_processes rows at the same time.
         """
         x = False
         optimized = True
 
-        self.conditional_independence_table = compute_conditional_independence_kld(
-            self,
-            y,
-            x,
-            evaluation_data_type,
-            num_processes,
-            sample_size,
-            num_points_quad,
-            optimized,
-            copula_only,
-            min_val,
-            max_val,
-            likelihood_based_metrics,
-        )
+        if self.inference == "frequentist":
+            self.conditional_independence_table = compute_conditional_independence_kld(
+                self,
+                y=y,
+                x=x,
+                evaluation_data_type=evaluation_data_type,
+                num_processes=num_processes,
+                sample_size=sample_size,
+                num_points_quad=num_points_quad,
+                optimized=optimized,
+                copula_only=copula_only,
+                min_val=min_val,
+                max_val=max_val,
+                likelihood_based_metrics=likelihood_based_metrics,
+            )
+        elif self.inference == "bayesian":
+            self.conditional_independence_table = compute_conditional_independence_kld_bayesian(
+                self,
+                vi_model=vi_model,
+                tau_nodes=tau_nodes,
+                y=y,
+                evaluation_data_type=evaluation_data_type,
+                num_processes=num_processes,
+                sample_size=sample_size,
+                num_points_quad=num_points_quad,
+                optimized=optimized,
+                copula_only=copula_only,
+                min_val=min_val,
+                max_val=max_val,
+                likelihood_based_metrics=likelihood_based_metrics,
+                S_posterior=S_posterior,
+                cred_level=cred_level,
+            )
+        else:
+            raise ValueError(f"Inference type {self.inference} not understood or implemented.")
 
         return self.conditional_independence_table
 
