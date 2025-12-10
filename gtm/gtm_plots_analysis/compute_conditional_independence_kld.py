@@ -298,7 +298,7 @@ def compute_conditional_independence_kld_bayesian(
     else:
         old_num_trans_layers = None
 
-    decor_present = not (self.number_decorrelation_layers == 0 or self.transform_only)
+    #decor_present = not (self.number_decorrelation_layers == 0 or self.transform_only)
 
     # We'll need the list of pairs once. We get it by calling the existing
     # precision summary function on one "reference" parameter setting.
@@ -323,26 +323,27 @@ def compute_conditional_independence_kld_bayesian(
 
     # 1) Draw S_posterior samples from q(θ, τ) ---------------------------
     thetas = vi_model.sample_theta(S_posterior, antithetic=True)  # [S, D]
-    tau4_vec, tau1_vec, tau2_vec = sample_tau_vectors(self, vi_model, tau_nodes, S_posterior, device, decor_present)
+    #tau4_vec, tau1_vec, tau2_vec = sample_tau_vectors(self, vi_model, tau_nodes, S_posterior, device, decor_present)
 
     alpha = 1.0 - cred_level
-
+    start_total = time.time()
+    
     # 2) Loop over posterior draws ---------------------------------------
     for s in range(S_posterior):
         theta_s = thetas[s]
         params_s = vi_model._theta_to_state_dict(theta_s)
 
-        t4 = tau4_vec[s]
-        t1 = tau1_vec[s]
-        t2 = tau2_vec[s]
+        #t4 = tau4_vec[s]
+        #t1 = tau1_vec[s]
+        #t2 = tau2_vec[s]
 
         # Instantiate model with (θ_s, τ_s)
         with _reparametrize_module(self, params_s):
             # write τ into self.hyperparameter so log_likelihood etc use them
-            self.hyperparameter["transformation"]["tau"] = float(t4.item())
-            if decor_present:
-                self.hyperparameter["decorrelation"]["tau_1"] = float(t1.item())
-                self.hyperparameter["decorrelation"]["tau_2"] = float(t2.item())
+            #self.hyperparameter["transformation"]["tau"] = float(t4.item())
+            #if decor_present:
+            #    self.hyperparameter["decorrelation"]["tau_1"] = float(t1.item())
+            #    self.hyperparameter["decorrelation"]["tau_2"] = float(t2.item())
 
             with torch.no_grad():
                 ll_evaluation_data = self.log_likelihood(evaluation_data).detach()
@@ -445,6 +446,16 @@ def compute_conditional_independence_kld_bayesian(
             metrics_kld.append(kld_s)
             metrics_iae.append(iae_s)
 
+    
+    end_total = time.time()
+    total_sec = end_total - start_total
+    per_draw = total_sec / float(S_posterior)
+    print(
+        f"[Bayesian CI] Time taken (device={device}, "
+        f"S_post={S_posterior}, pairs={n_pairs}): "
+        f"{total_sec:.2f}s  (~{per_draw:.2f}s per posterior draw)"
+    )
+    
     # 3) Convert to tensors & aggregate over posterior draws -------------
     metrics_precision_abs = torch.tensor(metrics_precision_abs)  # [S, n_pairs]
     metrics_precision_sq  = torch.tensor(metrics_precision_sq)
