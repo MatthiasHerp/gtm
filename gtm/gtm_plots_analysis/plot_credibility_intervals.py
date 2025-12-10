@@ -1,8 +1,4 @@
 import torch
-
-import matplotlib.pyplot as plt
-
-import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -53,11 +49,33 @@ def plot_theta_ci(mu, lower, upper, order=None, title="θ credible intervals"):
     plt.tight_layout()
     plt.show()
 
+
+def plot_theta_ci_group(ci: dict, group_name: str, max_params: int = 200):
+    """
+    ci: {"mu": Tensor, "lower": Tensor, "upper": Tensor}
+    Plots horizontal errorbars for up to `max_params` parameters.
+    """
+    mu    = ci["mu"][:max_params].numpy()
+    lower = ci["lower"][:max_params].numpy()
+    upper = ci["upper"][:max_params].numpy()
+
+    D = mu.shape[0]
+    idx = np.arange(D)
+
+    err_low = mu - lower
+    err_hi  = upper - mu
+    xerr = np.vstack([err_low, err_hi])
+
+    plt.figure(figsize=(8, max(4, D * 0.1)))
+    plt.errorbar(mu, idx, xerr=xerr, fmt=".", capsize=2)
+    plt.axvline(0.0, linestyle="--", linewidth=1)
+    plt.gca().invert_yaxis()
+    plt.xlabel("θ value")
+    plt.ylabel("parameter index (within group)")
+    plt.title(f"θ credible intervals – {group_name}")
+    plt.tight_layout()
+    plt.show()
     
-    
-    
-import numpy as np
-import matplotlib.pyplot as plt
 
 def plot_tau_nodes(tau_info, title="τ Hyperparameter Credible Intervals"):
     """

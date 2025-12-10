@@ -1,5 +1,6 @@
 import torch
-import math
+from typing import Dict
+
 
 from typing import TYPE_CHECKING, Optional
 
@@ -46,6 +47,82 @@ def theta_credible_intervals(vi_model: "VI_Model", level=0.95, sort_by_magnitude
         "upper": upper,
         "order": None
         }
+    
+    
+def shrinkage_groups(self):
+    """
+    Return indices for transformation vs decorrelation parameters
+    based on the schema keys used when flattening.
+    """
+    trans_idx = []
+    decor_idx = []
+
+    offset = 0
+    for key, shape in self._schema:
+        n = int(torch.tensor(shape).prod().item())
+        idx = torch.arange(offset, offset + n, device=self.device)
+        if key.startswith("transformation."):
+            trans_idx.append(idx)
+        elif key.startswith("decorrelation_layers."):
+            decor_idx.append(idx)
+        offset += n
+    ...
+    return trans_idx, decor_idx
+
+
+def theta_ci_by_group(
+    vi_model: "VI_Model",
+    level: float = 0.95,
+    sort_within_group: bool = False,
+) -> Dict[str, dict]:
+    """
+    Compute marginal CIs for θ and split them into
+    - 'transformation'
+    - 'decorrelation'
+
+    Returns dict:
+      {
+        "transformation": {"mu": ..., "lower": ..., "upper": ...} or None,
+        "decorrelation":  {"mu": ..., "lower": ..., "upper": ...} or None,
+      }
+    """
+    mu = vi_model.mu.detach()
+    sigma = vi_model.sigma.detach()
+
+    alpha = 1.0 - level
+    z = torch.distributions.Normal(0.0, 1.0).icdf(
+        torch.tensor(1.0 - alpha / 2.0, device=mu.device)
+    )
+
+    lower = mu - z * sigma
+    upper = mu + z * sigma
+
+    trans_idx, decor_idx = vi_model.shrinkage_groups()
+
+    def _subset(idx: torch.Tensor):
+        if idx is None or idx.numel() == 0:
+            return None
+        mu_g    = mu[idx]
+        lower_g = lower[idx]
+        upper_g = upper[idx]
+
+        if sort_within_group:
+            order = torch.argsort(mu_g.abs(), descending=True)
+            mu_g    = mu_g[order]
+            lower_g = lower_g[order]
+            upper_g = upper_g[order]
+
+        return {
+            "mu":    mu_g.cpu(),
+            "lower": lower_g.cpu(),
+            "upper": upper_g.cpu(),
+        }
+
+    return {
+        "transformation": _subset(trans_idx),
+        "decorrelation":  _subset(decor_idx),
+    }
+
 
 
 
