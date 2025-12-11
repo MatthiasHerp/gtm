@@ -36,7 +36,7 @@ if __name__ == "__main__":
             y_train, y_validate, y_test = load_magic_data(
                 group=group,
                 train_portion=2 / 3,
-                data_dims=10,
+                data_dims=8,
                 poly_span_abs=12,
                 cross_validation_folds=5,
                 validation_fold_index=4,
@@ -55,7 +55,7 @@ if __name__ == "__main__":
 
             
             model_freq = GTM(
-                number_variables=10,
+                number_variables=8,
                 number_transformation_layers=1,
                 number_decorrelation_layers=num_decorr_layers,
                 degree_transformations=variable_degree_list,
@@ -63,10 +63,9 @@ if __name__ == "__main__":
                 spline_transformation="bspline",
                 spline_decorrelation="bspline",
                 transformation_spline_range=(-15, 15),
-                device="cpu",
+                device="cuda" if torch.cuda.is_available() else "cpu",
             )
 
-            model_freq.to(device=device)
 
             study: Study | None = model_freq.hyperparameter_tune_penalties(
                 train_dataloader=dataloader_train,
@@ -121,6 +120,10 @@ if __name__ == "__main__":
             )
 
             
+            # Create dataset and DataLoader
+            dataloader_train_bgtm = DataLoader(dataset_train, batch_size=35, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True, prefetch_factor=4)
+            #dataloader_validate_bgtm = DataLoader(dataset_validate, batch_size=35, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True, prefetch_factor=2)
+                        
             def gamma_from_mean_cv(mean, cv=1.0):
                 a = 1.0 / (cv ** 2)
                 b = a / mean
@@ -149,7 +152,7 @@ if __name__ == "__main__":
 
             
             model = GTM(
-                number_variables=10,
+                number_variables=8,
                 number_transformation_layers=1,
                 number_decorrelation_layers=num_decorr_layers,
                 degree_transformations=variable_degree_list,
@@ -157,7 +160,7 @@ if __name__ == "__main__":
                 spline_transformation="bspline",
                 spline_decorrelation="bspline",
                 transformation_spline_range=(-15, 15),
-                device="cuda",
+                device="cuda" if torch.cuda.is_available() else "cpu",
                 ## NEW ARGUMENTS ##
                 inference = 'bayesian',
                 hyperparameter=hyperparameters
@@ -165,7 +168,7 @@ if __name__ == "__main__":
 
             
             output = model.train(
-                train_dataloader=dataloader_train,
+                train_dataloader=dataloader_train_bgtm,
                 validate_dataloader=None,
                 hyperparameters=None,
                 iterations=800,
