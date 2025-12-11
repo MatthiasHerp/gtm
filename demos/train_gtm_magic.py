@@ -11,9 +11,6 @@
 ####################################################################################################
 
 import os
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from optuna import Study
 import torch
 from torch.utils.data import DataLoader

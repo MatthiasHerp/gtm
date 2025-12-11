@@ -770,10 +770,22 @@ def train_bayes(
         "best_val": best_val,
         "loss_history": loss_history,
         "val_history": val_history if validate_dataloader is not None else None,
+        
+        # VI state
         "mu": VI.mu.detach(),
         "rho": VI.rho.detach(),
         "vi_model": VI,
         "tau_nodes": tau_nodes,
+        
+        # model state (so you can re-load into a fresh GTM if needed)
+        "model_state_dict": model.state_dict(),
+        
+        # τ hyperparameters / structure
+        "hyper_T": hyper_T,
+        "hyper_D": hyper_D,
+        "decor_present": decor_present,
+        
+        # diagnostics / monitors
         "monitor": monitors,
     }
 
