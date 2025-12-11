@@ -113,3 +113,29 @@ def plot_tau_nodes(tau_info, title="τ Hyperparameter Credible Intervals"):
     plt.title(title)
     plt.tight_layout()
     plt.show()
+
+
+def plot_theta_ci_block(ci_block: dict, title: str, max_params: int = 200):
+    """
+    ci_block: dict with keys 'mu', 'lower', 'upper'
+    """
+    mu    = ci_block["mu"][:max_params].numpy()
+    lower = ci_block["lower"][:max_params].numpy()
+    upper = ci_block["upper"][:max_params].numpy()
+
+    D = mu.shape[0]
+    idx = np.arange(D)
+
+    err_low = mu - lower
+    err_hi  = upper - mu
+    xerr = np.vstack([err_low, err_hi])
+
+    plt.figure(figsize=(8, max(3, D * 0.12)))
+    plt.errorbar(mu, idx, xerr=xerr, fmt=".", capsize=2)
+    plt.axvline(0.0, linestyle="--", linewidth=1)
+    plt.gca().invert_yaxis()
+    plt.xlabel("θ value")
+    plt.ylabel("parameter index (within block)")
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()

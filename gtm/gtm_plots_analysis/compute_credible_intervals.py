@@ -154,3 +154,55 @@ def tau_ci_from_node(node: "GammaTauNode", level=0.95, n_mc: int = 50_000):
         "upper": float(hi)
         }
 
+def theta_ci_by_schema(
+    vi_model: "VI_Model",
+    level: float = 0.95,
+    sort_within_group: bool = False,
+) -> Dict[str, dict]:
+    """
+    Returns a dict keyed by schema key, e.g.
+        {
+          'transformation.params.0': {'mu':..., 'lower':..., 'upper':...},
+          'transformation.params.1': {...},
+          ...
+          'decorrelation_layers.2.params': {...},
+        }
+    All tensors are on CPU.
+    """
+    mu = vi_model.mu.detach()
+    sigma = vi_model.sigma.detach()
+
+    alpha = 1.0 - level
+    z = torch.distributions.Normal(0.0, 1.0).icdf(
+        torch.tensor(1.0 - alpha / 2.0, device=mu.device)
+    )
+
+    lower = mu - z * sigma
+    upper = mu + z * sigma
+
+    # vi_model._schema is a list of (key, shape) in flatten order
+    groups: Dict[str, dict] = {}
+    offset = 0
+
+    for key, shape in vi_model._schema:
+        n_param = int(torch.tensor(shape).prod().item())
+        idx = torch.arange(offset, offset + n_param, device=mu.device)
+        offset += n_param
+
+        mu_g    = mu[idx]
+        lower_g = lower[idx]
+        upper_g = upper[idx]
+
+        if sort_within_group:
+            order = torch.argsort(mu_g.abs(), descending=True)
+            mu_g    = mu_g[order]
+            lower_g = lower_g[order]
+            upper_g = upper_g[order]
+
+        groups[key] = {
+            "mu":    mu_g.cpu(),
+            "lower": lower_g.cpu(),
+            "upper": upper_g.cpu(),
+        }
+
+    return groups
