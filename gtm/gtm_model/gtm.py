@@ -1877,7 +1877,6 @@ class GTM(nn.Module):
         max_val: float = 5,
         likelihood_based_metrics: bool = True,
         vi_model: Optional[torch.nn.Module] = None,
-        tau_nodes: Optional[torch.Tensor] = None,
         S_posterior: int = 100,
         cred_level: float = 0.95,
     ):
@@ -1969,7 +1968,6 @@ class GTM(nn.Module):
             self.conditional_independence_table = compute_conditional_independence_kld_bayesian(
                 self,
                 vi_model=vi_model,
-                tau_nodes=tau_nodes,
                 y=y,
                 evaluation_data_type=evaluation_data_type,
                 num_processes=num_processes,

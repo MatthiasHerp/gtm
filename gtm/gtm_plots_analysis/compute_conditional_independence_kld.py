@@ -1,9 +1,9 @@
 import time
 import warnings
-import torch
 
 import pandas as pd
 import torch
+from tqdm.auto import tqdm
 from typing import TYPE_CHECKING, Optional
 from torch.nn.utils.stateless import _reparametrize_module
 
@@ -265,7 +265,6 @@ def compute_conditional_independence_kld(
 def compute_conditional_independence_kld_bayesian(
     self: "GTM",
     vi_model: "VI_Model",
-    tau_nodes: Optional["TauPack"] = None,
     y=None,
     evaluation_data_type="data",
     num_processes=1,          # Not Used, tbignored
@@ -288,15 +287,16 @@ def compute_conditional_independence_kld_bayesian(
 
     # 0) Setup ------------------------------------------------------------
     device = next(self.parameters()).device
+    show_progress = True
+    progress_every = 1
 
     # evaluation data (same for all posterior draws)
     evaluation_data = get_evaluation_data(self, y, evaluation_data_type, sample_size, copula_only, min_val, max_val, device)
-
+    
+    old_num_trans_layers = None
     if copula_only:
         old_num_trans_layers = self.num_trans_layers
         self.num_trans_layers = 0
-    else:
-        old_num_trans_layers = None
 
     #decor_present = not (self.number_decorrelation_layers == 0 or self.transform_only)
 
@@ -328,120 +328,171 @@ def compute_conditional_independence_kld_bayesian(
     alpha = 1.0 - cred_level
     start_total = time.time()
     
-    # 2) Loop over posterior draws ---------------------------------------
-    for s in range(S_posterior):
-        theta_s = thetas[s]
-        params_s = vi_model._theta_to_state_dict(theta_s)
+    bar = tqdm(
+        thetas,
+        total=S_posterior,
+        desc="[Bayesian CI] posterior draws",
+        unit="draw",
+        dynamic_ncols=True,
+        smoothing=0.05,
+        leave=True,
+    )
 
-        #t4 = tau4_vec[s]
-        #t1 = tau1_vec[s]
-        #t2 = tau2_vec[s]
+    # running diagnostics (for tqdm postfix)
+    kld_running_sum = 0.0
+    iae_running_sum = 0.0
+    draws_done = 0
+    kld_draw_mean = None
+    iae_draw_mean = None
+    
+    # 2) Loop over posterior draws ---------------------------------------
+    for draw_idx ,theta_s in enumerate(bar, start=1):
+        
+        draw_t0 = time.time()
+        # Convert θ_s vector to parameter dict
+        #precision_matrix, correlation_matrix, ll_eval_cpu = compute_precision_and_correlation(self, vi_model, evaluation_data, theta_s)
+
+        params_s = vi_model._theta_to_state_dict(theta_s)
 
         # Instantiate model with (θ_s, τ_s)
         with _reparametrize_module(self, params_s):
-            # write τ into self.hyperparameter so log_likelihood etc use them
-            #self.hyperparameter["transformation"]["tau"] = float(t4.item())
-            #if decor_present:
-            #    self.hyperparameter["decorrelation"]["tau_1"] = float(t1.item())
-            #    self.hyperparameter["decorrelation"]["tau_2"] = float(t2.item())
-
+                # write τ into self.hyperparameter so log_likelihood etc use them
             with torch.no_grad():
                 ll_evaluation_data = self.log_likelihood(evaluation_data).detach()
                 precision_matrix = (
-                    self.compute_pseudo_precision_matrix(evaluation_data)
-                    .detach()
-                    .cpu()
-                )  # [S_eval, d, d]
+                        self.compute_pseudo_precision_matrix(evaluation_data)
+                        .detach()
+                        .cpu()
+                    )  # [S_eval, d, d]
                 correlation_matrix = (
-                    self.compute_pseudo_conditional_correlation_matrix(evaluation_data)
-                    .detach()
-                    .cpu()
-                )  # [S_eval, d, d]
+                        self.compute_pseudo_conditional_correlation_matrix(evaluation_data)
+                        .detach()
+                        .cpu()
+                    )  # [S_eval, d, d]
 
-        ll_eval_cpu = ll_evaluation_data.cpu()
+            ll_eval_cpu = ll_evaluation_data.cpu()
+        
+            # Pairwise summaries for this posterior draw
+            prec_abs_s  = []
+            prec_sq_s   = []
+            corr_abs_s  = []
+            corr_sq_s   = []
+            kld_s       = [] if likelihood_based_metrics else None
+            iae_s       = [] if likelihood_based_metrics else None
 
-        # Pairwise summaries for this posterior draw
-        prec_abs_s  = []
-        prec_sq_s   = []
-        corr_abs_s  = []
-        corr_sq_s   = []
-        kld_s       = [] if likelihood_based_metrics else None
-        iae_s       = [] if likelihood_based_metrics else None
+            for row_num in range(n_pairs):
+                var_row = int(precision_summary.iloc[row_num]["var_row"])
+                var_col = int(precision_summary.iloc[row_num]["var_col"])
 
-        for row_num in range(n_pairs):
-            var_row = int(precision_summary.iloc[row_num]["var_row"])
-            var_col = int(precision_summary.iloc[row_num]["var_col"])
+                # precision / correlation summaries over evaluation data
+                prec_vals = precision_matrix[:, var_row, var_col]
+                corr_vals = correlation_matrix[:, var_row, var_col]
 
-            # precision / correlation summaries over evaluation data
-            prec_vals = precision_matrix[:, var_row, var_col]
-            corr_vals = correlation_matrix[:, var_row, var_col]
+                prec_abs_s.append(float(prec_vals.abs().mean()))
+                prec_sq_s.append(float(prec_vals.square().mean()))
+                corr_abs_s.append(float(corr_vals.abs().mean()))
+                corr_sq_s.append(float(corr_vals.square().mean()))
 
-            prec_abs_s.append(float(prec_vals.abs().mean()))
-            prec_sq_s.append(float(prec_vals.square().mean()))
-            corr_abs_s.append(float(corr_vals.abs().mean()))
-            corr_sq_s.append(float(corr_vals.square().mean()))
+                if likelihood_based_metrics:
+                    # For each pair and posterior draw, compute the KLD/IAE row via your existing helper
+                    (
+                        actual_log_distribution_glq,
+                        under_ci_assumption_log_distribution_glq,
+                        under_ci_assumption_log_distribution_glq_full_data
+                        
+                    ) = independence_kld_process_row(
+                        row_num,
+                        precision_summary,
+                        evaluation_data,  # still on device
+                        self,
+                        num_points_quad,
+                        optimized,
+                        min_val,
+                        max_val,
+                    )
 
+                    # move to CPU for safe manipulations
+                    actual = actual_log_distribution_glq.cpu()
+                    under  = under_ci_assumption_log_distribution_glq.cpu()
+                    under_full = under_ci_assumption_log_distribution_glq_full_data.cpu()
+
+                    if evaluation_data_type in ("data", "samples_from_model"):
+                        ll_dev = actual - under
+                        ll_dev = ll_dev[torch.isfinite(ll_dev)]
+                        if ll_dev.numel() == 0:
+                            kld = torch.tensor(0.0)
+                        else:
+                            q = ll_dev.abs().quantile(0.99)
+                            ll_dev = ll_dev[ll_dev.abs() < q]
+                            kld = ll_dev.mean() if ll_dev.numel() else torch.tensor(0.0)
+                            
+
+                        # --- weights for IAE ---
+                        actual_cond = under_full - under
+                        ll_eval_cpu_ = ll_eval_cpu.to(actual_cond.device)
+                        weights = torch.exp(actual_cond - ll_eval_cpu_)
+                        
+                        # --- IAE ---
+                        ll_dev2 = torch.abs(torch.exp(actual) - torch.exp(under))
+                        iae_vals = ll_dev2 * weights
+                        iae_vals = iae_vals[torch.isfinite(iae_vals)]
+                        if iae_vals.numel() == 0:
+                            iae = torch.tensor(0.0)
+                        else:
+                            q = iae_vals.quantile(0.99)
+                            iae_vals = iae_vals[iae_vals < q]
+                            iae = (iae_vals.mean() / 2.0) if iae_vals.numel() else torch.tensor(0.0)
+
+                    elif evaluation_data_type == "uniform_random_samples":
+                        ll_dev = torch.exp(actual) * (actual - under)
+                        ll_dev = ll_dev[torch.isfinite(ll_dev)]
+                        kld = ll_dev.mean() if ll_dev.numel() else torch.tensor(0.0)
+
+                        ll_dev2 = torch.abs(torch.exp(actual) - torch.exp(under))
+                        iae_vals = ll_dev2
+                        iae_vals = iae_vals[torch.isfinite(iae_vals)]
+                        if iae_vals.numel() == 0:
+                            iae = torch.tensor(0.0)
+                        else:
+                            q = iae_vals.quantile(0.99)
+                            iae_vals = iae_vals[iae_vals < q]
+                            iae = (iae_vals.mean() / 2.0) if iae_vals.numel() else torch.tensor(0.0)
+                    else:
+                        raise ValueError("unknown evaluation_data_type in Bayesian KLD")
+
+                    kld_s.append(float(kld))
+                    iae_s.append(float(iae))
+
+        draws_done += 1
+        dt = time.time() - draw_t0
+
+        # ----- update tqdm diagnostics -----
+        if likelihood_based_metrics:
+            # mean over pairs for this draw (scalar -> nice progress display)
+            kld_draw_mean = float(sum(kld_s) / max(len(kld_s), 1))
+            iae_draw_mean = float(sum(iae_s) / max(len(iae_s), 1))
+            kld_running_sum += kld_draw_mean
+            iae_running_sum += iae_draw_mean
+
+        if show_progress and (draws_done % progress_every == 0):
+            postfix = {
+                "device": str(device),
+                "pairs": n_pairs,
+                "sec/draw": f"{dt:.2f}",
+            }
             if likelihood_based_metrics:
-                # For each pair and posterior draw, compute the KLD/IAE row via your existing helper
-                (
-                    actual_log_distribution_glq,
-                    under_ci_assumption_log_distribution_glq,
-                    under_ci_assumption_log_distribution_glq_full_data,
-                ) = independence_kld_process_row(
-                    row_num,
-                    precision_summary,
-                    evaluation_data,  # still on device
-                    self,
-                    num_points_quad,
-                    optimized,
-                    min_val,
-                    max_val,
-                )
+                postfix["KLD(draw)"] = f"{kld_draw_mean:.4g}"
+                postfix["KLD(avg)"]  = f"{(kld_running_sum / draws_done):.4g}"
+                postfix["IAE(avg)"]  = f"{(iae_running_sum / draws_done):.4g}"
+            bar.set_postfix(postfix)
 
-                # move to CPU for safe manipulations
-                actual = actual_log_distribution_glq.cpu()
-                under  = under_ci_assumption_log_distribution_glq.cpu()
-                under_full = under_ci_assumption_log_distribution_glq_full_data.cpu()
-
-                if evaluation_data_type in ("data", "samples_from_model"):
-                    ll_dev = actual - under
-                    ll_dev = ll_dev[~torch.isnan(ll_dev)]
-                    ll_dev = ll_dev[~torch.isinf(ll_dev)]
-                    ll_dev = ll_dev[ll_dev.abs() < ll_dev.abs().quantile(0.99)]
-                    kld = ll_dev.mean()
-
-                    actual_cond = under_full - under
-                    weights = torch.exp(actual_cond - ll_eval_cpu)
-                    ll_dev2 = torch.abs(torch.exp(actual) - torch.exp(under))
-                    ll_dev2 = ll_dev2[~torch.isnan(ll_dev2)]
-                    ll_dev2 = ll_dev2[~torch.isinf(ll_dev2)]
-                    iae_vals = ll_dev2 * weights
-                    iae_vals = iae_vals[iae_vals < iae_vals.quantile(0.99)]
-                    iae = iae_vals.mean() / 2.0
-
-                elif evaluation_data_type == "uniform_random_samples":
-                    ll_dev = torch.exp(actual) * (actual - under)
-                    ll_dev = ll_dev[~torch.isnan(ll_dev)]
-                    ll_dev = ll_dev[~torch.isinf(ll_dev)]
-                    kld = ll_dev.mean()
-
-                    ll_dev2 = torch.abs(torch.exp(actual) - torch.exp(under))
-                    ll_dev2 = ll_dev2[~torch.isnan(ll_dev2)]
-                    ll_dev2 = ll_dev2[~torch.isinf(ll_dev2)]
-                    iae_vals = ll_dev2
-                    iae_vals = iae_vals[iae_vals < iae_vals.quantile(0.99)]
-                    iae = iae_vals.mean() / 2.0
-                else:
-                    raise ValueError("unknown evaluation_data_type in Bayesian KLD")
-
-                kld_s.append(float(kld))
-                iae_s.append(float(iae))
-
+        
         # append this draw's metrics
         metrics_precision_abs.append(prec_abs_s)
         metrics_precision_sq.append(prec_sq_s)
         metrics_corr_abs.append(corr_abs_s)
         metrics_corr_sq.append(corr_sq_s)
+        
         if likelihood_based_metrics:
             metrics_kld.append(kld_s)
             metrics_iae.append(iae_s)
@@ -457,14 +508,14 @@ def compute_conditional_independence_kld_bayesian(
     )
     
     # 3) Convert to tensors & aggregate over posterior draws -------------
-    metrics_precision_abs = torch.tensor(metrics_precision_abs)  # [S, n_pairs]
-    metrics_precision_sq  = torch.tensor(metrics_precision_sq)
-    metrics_corr_abs      = torch.tensor(metrics_corr_abs)
-    metrics_corr_sq       = torch.tensor(metrics_corr_sq)
+    metrics_precision_abs = torch.tensor(metrics_precision_abs, dtype=torch.float32)  # [S, n_pairs]
+    metrics_precision_sq  = torch.tensor(metrics_precision_sq, dtype=torch.float32)
+    metrics_corr_abs      = torch.tensor(metrics_corr_abs, dtype=torch.float32)
+    metrics_corr_sq       = torch.tensor(metrics_corr_sq, dtype=torch.float32)
 
     if likelihood_based_metrics:
-        metrics_kld = torch.tensor(metrics_kld)
-        metrics_iae = torch.tensor(metrics_iae)
+        metrics_kld = torch.tensor(metrics_kld, dtype=torch.float32)
+        metrics_iae = torch.tensor(metrics_iae, dtype=torch.float32)
 
     # Posterior means
     prec_abs_mean  = metrics_precision_abs.mean(dim=0).tolist()
@@ -512,6 +563,28 @@ def compute_conditional_independence_kld_bayesian(
 
     df.reset_index(inplace=True)
     return df
+
+def compute_precision_and_correlation(self, vi_model, evaluation_data, theta_s):
+    params_s = vi_model._theta_to_state_dict(theta_s)
+
+        # Instantiate model with (θ_s, τ_s)
+    with _reparametrize_module(self, params_s):
+            # write τ into self.hyperparameter so log_likelihood etc use them
+        with torch.no_grad():
+            ll_evaluation_data = self.log_likelihood(evaluation_data).detach()
+            precision_matrix = (
+                    self.compute_pseudo_precision_matrix(evaluation_data)
+                    .detach()
+                    .cpu()
+                )  # [S_eval, d, d]
+            correlation_matrix = (
+                    self.compute_pseudo_conditional_correlation_matrix(evaluation_data)
+                    .detach()
+                    .cpu()
+                )  # [S_eval, d, d]
+
+    ll_eval_cpu = ll_evaluation_data.cpu()
+    return precision_matrix, correlation_matrix, ll_eval_cpu
 
 def sample_tau_vectors(self: "GTM", vi_model: "VI_Model", tau_nodes, S_posterior, device, decor_present):
     if tau_nodes is not None:

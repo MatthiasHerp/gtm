@@ -600,9 +600,9 @@ def independence_kld_process_row(
     var_row_num = int(precision_matrix_summary_statistics.iloc[row_num]["var_row"])
     var_col_num = int(precision_matrix_summary_statistics.iloc[row_num]["var_col"])
 
-    print(
-        f"Processing row {row_num} with var_row_num {var_row_num} and var_col_num {var_col_num}."
-    )
+    #print(
+    #    f"Processing row {row_num} with var_row_num {var_row_num} and var_col_num {var_col_num}."
+    #)
 
     (
         actual_log_distribution_glq,
