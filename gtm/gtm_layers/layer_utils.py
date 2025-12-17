@@ -46,17 +46,27 @@ def get_param_matrix_live(model, layer_type: str = "transformation", layer_index
         (param_matrix [K, M], M)
     """
     name_to_param = dict(model.named_parameters())
-    cols = []
 
     if layer_type == "transformation":
         # Example: transformation.params.0, transformation.params.1, ...
         pattern = re.compile(r"^transformation\.params\.(\d+)$")
-        for key in sorted(name_to_param.keys()):
-            if pattern.match(key):
-                cols.append(name_to_param[key].reshape(-1))
+        # Collect flat vectors for each margin
+        cols, lengths = _collect_flat_vector_for_each_margin(name_to_param, pattern)
         if not cols:
             raise RuntimeError("No transformation.params.* found.")
-        varphi = torch.stack(cols, dim=1).contiguous()  # [K, M]
+        
+        # If all equal, it reduces to original logic
+        max_len = max(lengths)
+        padded_cols = []
+        
+        for flat, L in zip(cols, lengths):
+            if L < max_len:
+                # pad at the end with zeros
+                pad_len = max_len - L
+                flat = torch.nn.functional.pad(flat, (0, pad_len))
+            padded_cols.append(flat)
+        
+        varphi = torch.stack(padded_cols, dim=1).contiguous()  # [K, M]
         M = varphi.shape[1]
         return varphi, M
 
@@ -75,6 +85,18 @@ def get_param_matrix_live(model, layer_type: str = "transformation", layer_index
 
     else:
         raise ValueError(f"Unknown layer_type '{layer_type}'. Must be 'transformation' or 'decorrelation'.")
+
+def _collect_flat_vector_for_each_margin(name_to_param, pattern):
+    cols = []
+    lengths = []
+        
+    for key in sorted(name_to_param.keys()):
+        if pattern.match(key):
+            p = name_to_param[key]
+            flat = p.reshape(-1)
+            cols.append(flat)
+            lengths.append(flat.numel())
+    return cols, lengths
 
 
 class bayesian_splines:

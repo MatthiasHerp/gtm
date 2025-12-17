@@ -18,6 +18,29 @@ from torch.nn.utils.stateless import _reparametrize_module
 if TYPE_CHECKING:
     from gtm_model.gtm import GTM # type-only; no runtime import
 
+
+def _finite(name, x):
+    ok = torch.isfinite(x).all()
+    if not ok:
+        bad = x[~torch.isfinite(x)]
+        raise FloatingPointError(
+            f"[NON-FINITE] {name}: shape={tuple(x.shape)} "
+            f"min={x.nan_to_num().min().item():.3e} "
+            f"max={x.nan_to_num().max().item():.3e} "
+            f"examples={bad[:5].detach().cpu().tolist()}"
+        )
+        
+def _finite_vmap_safe(x, name):
+    torch._assert(
+        torch.isfinite(x).all(),
+        f"Non-finite detected in {name}"
+    )
+
+
+def _finite_scalar(name, x):
+    _finite(name, x.reshape(-1))
+
+
 def _logmeanexp(x: torch.Tensor, dim: int = 0) -> torch.Tensor:
     """Stable log-mean-exp along dim."""
     m, _ = torch.max(x, dim=dim, keepdim=True)
@@ -413,11 +436,21 @@ class VI_Model(nn.Module):
         # Block contributions
         if self.block_sizes:
             L_blocks = self._build_L_blocks()
-            for idx, L in zip(self.block_indices, L_blocks):
+            for bi, (idx, L) in enumerate(zip(self.block_indices, L_blocks)):
                 K = idx.numel()
                 th_b = theta[:, idx]        # [S, K]
                 mu_b = mu[idx]              # [K]
                 diff = th_b - mu_b          # [S, K]
+
+                d = torch.diagonal(L)
+                _finite(f"diag(L)[block={bi}]", d)
+                
+                d_clamped = d.clamp_min(1e-6)
+                
+                cond_proxy = (d_clamped.max() / d_clamped.min()).item()
+                if cond_proxy > 1e8:
+                    print(f"WARNING ill-conditioned L: cond_proxy≈{cond_proxy:.2e} (block={bi}, K={K})")
+
 
                 # y = L^{-1} (θ - μ)  (whitening)
                 # torch.linalg.solve_triangular solves A x = B with B shape [..., K]
@@ -426,14 +459,17 @@ class VI_Model(nn.Module):
                     diff.T,
                     upper=False,
                 ).T  # [S, K]
-
+                
+                _finite(f"y (whitened)[block={bi}]", y)
+                
                 quad = (y ** 2).sum(dim=1)  # [S]
-                log_det = 2.0 * torch.log(torch.diagonal(L)).sum()  # log |Σ_b|
+                log_det = 2.0 * torch.log(d_clamped).sum() # log |Σ_b|
 
                 const = K * math.log(2.0 * math.pi)
                 log_q_block = -0.5 * (const + log_det + quad)
                 log_q_val += log_q_block
-
+                
+        _finite("log_q_val", log_q_val)
         return log_q_val
 
 
@@ -478,7 +514,19 @@ class VI_Model(nn.Module):
                     N_total=sample_size_total,
                     B=samples.shape[0],
                 )
+                
+        #for k in ["neg_posterior", "negative_log_lik", "nll_batch"]:
+        #    _finite(f"out[{k}]", out[k].reshape(-1))
 
+        #dp = out["negative_decorrelation_prior"]
+        #tp = out["negative_transformation_prior"]
+        #_finite("out[decor.neg_log_prior_total]", dp["neg_log_prior_total"].reshape(-1))
+        #_finite("out[decor.qf1]", dp["qf1"].reshape(-1))
+        #_finite("out[decor.qf2]", dp["qf2"].reshape(-1))
+        #_finite("out[trans.neg_log_prior_total]", tp["neg_log_prior_total"].reshape(-1))
+        #_finite("out[trans.neg_log_prior_qf]", tp["neg_log_prior_qf"].reshape(-1))
+        
+        
         # Extract tensors needed by ELBO/monitors (all scalars)
         neg_post   = out["neg_posterior"]
         neg_lik    = out["negative_log_lik"]
@@ -519,6 +567,9 @@ class VI_Model(nn.Module):
         
         # Sample θ ~ q
         thetas = self.sample_theta(mcmc_samples, antithetic=True)  # [S, D]
+        
+        self.check_values_and_sanity(thetas)
+        
         log_q_vals = self.log_q(thetas)         # [S]
 
         log_p_tilde_vals = []   # log unnormalized posterior per sample
@@ -570,14 +621,22 @@ class VI_Model(nn.Module):
         (neg_post_vec, neg_lik_vec, nll_batch_vec,
          ndp_vec, qf1_vec, qf2_vec,
          ntp_vec, ntp_qf_vec, qf_sum_T_vec, qf_mean_T_vec) = results
+        
+        _finite("neg_post_vec", neg_post_vec)
+        _finite("neg_lik_vec", neg_lik_vec)
+        _finite("nll_batch_vec", nll_batch_vec)
 
         log_p_tilde_vals = -neg_post_vec  # [S]
         elbo_core = torch.mean(beta_kl * log_q_vals - beta_logp * log_p_tilde_vals)
+        _finite_scalar("elbo_core", elbo_core)
 
         if kl_vec is not None:
+            _finite("kl_vec", kl_vec)
             elbo_loss = elbo_core + beta_tau_kl * torch.mean(kl_vec)
         else:
             elbo_loss = elbo_core
+        
+        _finite_scalar("elbo_loss", elbo_loss)
 
         # Monitors (means over S)
         return {
@@ -599,6 +658,25 @@ class VI_Model(nn.Module):
             "transformation_sum_qf": torch.mean(qf_sum_T_vec).detach(),
             "transformation_mean_qf": torch.mean(qf_mean_T_vec).detach(),
         }
+
+    def check_values_and_sanity(self, thetas):
+        _finite("thetas", thetas)
+        _finite("mu", self.mu)
+        _finite("rho", self.rho)
+        _finite("L_unconstrained", self.L_unconstrained)
+
+        sig_d = self.sigma_diag
+        _finite("sigma_diag", sig_d)
+
+        # check L blocks + diagonals
+        if self.block_sizes:
+            L_blocks = self._build_L_blocks()
+            for j, L in enumerate(L_blocks):
+                _finite(f"L_block[{j}]", L)
+                d = torch.diagonal(L)
+                _finite(f"diag(L_block[{j}])", d)
+                if (d <= 0).any():
+                    raise FloatingPointError(f"[BAD DIAG] L_block[{j}] has non-positive diagonal!")
 
         
     @torch.no_grad()

@@ -771,16 +771,21 @@ def train_bayes(
         "loss_history": loss_history,
         "val_history": val_history if validate_dataloader is not None else None,
         
+        # VI tensors for later reconstruction
+        "vi_mu": VI.mu.detach().cpu(),
+        "vi_rho": VI.rho.detach().cpu(),
+        "vi_L_unconstrained": VI.L_unconstrained.detach().cpu(),
+        
         # VI state
         "mu": VI.mu.detach(),
         "rho": VI.rho.detach(),
         "vi_model": VI,
+        
+        # τ-variational nodes (usually picklable; keep for now)
         "tau_nodes": tau_nodes,
         
-        # model state (so you can re-load into a fresh GTM if needed)
+        # model state & hyperparameters
         "model_state_dict": model.state_dict(),
-        
-        # τ hyperparameters / structure
         "hyper_T": hyper_T,
         "hyper_D": hyper_D,
         "decor_present": decor_present,

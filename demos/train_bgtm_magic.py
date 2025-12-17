@@ -121,7 +121,7 @@ if __name__ == "__main__":
 
             
             # Create dataset and DataLoader
-            dataloader_train_bgtm = DataLoader(dataset_train, batch_size=35, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True, prefetch_factor=4)
+            dataloader_train_bgtm = DataLoader(dataset_train, batch_size=35, shuffle=True, num_workers=1, pin_memory=True, persistent_workers=False, prefetch_factor=2)
             #dataloader_validate_bgtm = DataLoader(dataset_validate, batch_size=35, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True, prefetch_factor=2)
                         
             def gamma_from_mean_cv(mean, cv=1.0):
@@ -222,18 +222,29 @@ if __name__ == "__main__":
             run_id = f"magic_group_{group}_decorr_{num_decorr_layers}"
 
             ckpt = {
-                "model_state_dict": model.state_dict(),     # GTM parameters (freq+Bayes init)
-                "vi_model": output["vi_model"],             # full VI_Model object
-                "tau_nodes": output["tau_nodes"],           # full TauPack (GammaTauNode set)
-                "hyper_T": output["hyper_T"],               # transformation hyperparameters
-                "hyper_D": output["hyper_D"],               # decorrelation hyperparameters
-                "decor_present": output["decor_present"],   # bool
-                "monitor": output["monitor"],               # training diagnostics
+                # GTM parameters
+                "model_state_dict": model.state_dict(),
+
+                # VI tensors (sufficient to rebuild VI_Model later)
+                "vi_mu": output["vi_mu"],
+                "vi_rho": output["vi_rho"],
+                "vi_L_unconstrained": output["vi_L_unconstrained"],
+
+                # τ-variational nodes (TauPack)
+                "tau_nodes": output["tau_nodes"],
+
+                # hyperparameters / structure
+                "hyper_T": output["hyper_T"],
+                "hyper_D": output["hyper_D"],
+                "decor_present": output["decor_present"],
+
+                # diagnostics
+                "monitor": output["monitor"],
                 "loss_history": output["loss_history"],
                 "val_history": output["val_history"],
             }
 
             torch.save(
                 ckpt,
-                os.path.join("demos", "model_vi", f"{run_id}_bgtm_vi_checkpoint.pth"),
+                os.path.join("demos", "models", f"{run_id}_bgtm_vi_checkpoint.pth"),
             )
