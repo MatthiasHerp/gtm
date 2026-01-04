@@ -114,7 +114,7 @@ def plot_metric_scatter(
                     axs[row, col].set_xticks([])  # Remove x-axis ticks
                     axs[row, col].set_yticks([])  # Remove y-axis ticks
 
-                if strength_value is not False:
+                if strength_value is not False and len(strength_value) > 0:
                     if after_marginal_transformation == False:
                         axs[row, col].set_title(
                             f"({a+1}) $Y_{i}$,$Y_{j}$ "
@@ -172,7 +172,7 @@ def plot_metric_scatter(
             ax.set_xlim(x_lim)
             ax.set_ylim(y_lim)
 
-        if strength_value is not False:
+        if strength_value is not False and len(strength_value) > 0:
             if after_marginal_transformation == False:
                 ax.set_title(
                     f"($Y_{0}$,$Y_{1}$)   "
