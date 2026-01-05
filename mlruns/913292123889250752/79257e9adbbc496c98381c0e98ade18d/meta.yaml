@@ -1,0 +1,15 @@
+artifact_uri: file:///Users/matthiasherp/Desktop/phd_github_repositories/gtm/mlruns/913292123889250752/79257e9adbbc496c98381c0e98ade18d/artifacts
+end_time: 1767633032634
+entry_point_name: ''
+experiment_id: '913292123889250752'
+lifecycle_stage: active
+run_id: 79257e9adbbc496c98381c0e98ade18d
+run_name: rine_5D_1000obs_seed_3
+run_uuid: 79257e9adbbc496c98381c0e98ade18d
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1767632995494
+status: 3
+tags: []
+user_id: matthiasherp
