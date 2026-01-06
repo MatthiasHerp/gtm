@@ -5,6 +5,7 @@ import pyvinecopulib as pv
 # Helpers to generate specfific vines and analyze there conditional independencies
 from demos.pyvinecopulib_simulation_helpers import *
 from simulation_studies.generate_synthetic_vine_data import generate_synthetic_vine_data
+from simulation_studies.mlflow_plot_storage_helpers import log_mlflow_plot, create_temp_folder, clear_temp_folder
 
 # Other Stuff
 import mlflow as mlflow
@@ -13,6 +14,10 @@ import torch
 from torch.utils.data import DataLoader
 from demos.dataset_helpers import Generic_Dataset
 from sklearn.metrics import roc_auc_score
+
+import mlflow
+import torch
+import matplotlib.pyplot as plt
 
 def run_experiment(
     run_name,
@@ -49,7 +54,7 @@ def run_experiment(
     max_batches_per_iter=False,
     pretrained_transformation_layer=True,
     n_trials=30,
-    temp_folder=".",
+    temp_folder="./temp",
     study_name=None,
     # Evaluation of Conditional Independence parameters
     evaluation_data_type = "samples_from_model",
@@ -78,6 +83,8 @@ def run_experiment(
         - weight_decay (float): Weight decay for the optimizer.
         - patience (int): Patience for early stopping.
     """
+    
+    create_temp_folder(temp_folder)
     
     # Start run, name it, add to correct experiment and add tags which we define as the parameters of the data generation
     run = mlflow.start_run(
@@ -222,13 +229,26 @@ def run_experiment(
     _ = model.pretrain_transformation_layer(dataloader_train, iterations=iterations, max_batches_per_iter=max_batches_per_iter, penalty_splines_params=penalty_splines_params_chosen)
     
     # train the joint model
-    _ = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, iterations=iterations, optimizer=optimizer, learning_rate=learning_rate, patience=patience, min_delta=min_delta,
+    training_dict = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, iterations=iterations, optimizer=optimizer, learning_rate=learning_rate, patience=patience, min_delta=min_delta,
                 penalty_splines_params=penalty_splines_params_chosen, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, penalty_lasso_conditional_independence=penalty_lasso_conditional_independence_chosen, 
                 max_batches_per_iter=max_batches_per_iter)
     
+    # plot training curves
+    plt.plot(training_dict["loss_list_training"], label="Training Loss")
+    if "loss_list_validation" in training_dict:
+        plt.plot(training_dict["loss_list_validation"], label="Validation Loss")
+    plt.xlabel("Iteration")
+    plt.ylabel("Negative Log Likelihood")
+    plt.title("GTM Training Curve")
+    plt.legend()
+    fig_train = plt.gcf()
+    plt.close()
+    # log the plot as an mlflow artifact
+    log_mlflow_plot(fig_train, 'training_curves.png')
+    
     # Log trained model
     _ = mlflow.pytorch.log_model(model, "model")
-    # can be loaded (to cpu) via: model = mlflow.pytorch.load_model("runs:/{}/model".format(self.run_id), map_location=torch.device('cpu'))
+    # can be loaded (to cpu) via: model = mlflow.pytorch.load_model("runs:/{}/model".format(run_id), map_location=torch.device('cpu'))
     
     # store all trained parameters
     mlflow.log_param(key="penalty_decorrelation_ridge_param_chosen", value=penalty_decorrelation_ridge_param_chosen)
@@ -317,4 +337,6 @@ def run_experiment(
     mlflow.log_metric(key="auc_precision_matrix", value=auc_pmat)
 
     mlflow.end_run()
+    
+    clear_temp_folder(temp_folder)
     
