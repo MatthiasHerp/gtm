@@ -211,8 +211,13 @@ def run_experiment(
         penalty_lasso_conditional_independence_chosen = penalty_lasso_conditional_independence
     else:
         penalty_lasso_conditional_independence_chosen = study.best_params["penalty_lasso_conditional_independence"]
-        
     
+    # here we store the adaptive lasso weights matrix as an artifact
+    # the same way plots can also be stored for each run    
+    if adaptive_lasso_weights_matrix is not False:
+        np.save(temp_folder+"/adaptive_lasso_weights_matrix.npy", np.array(adaptive_lasso_weights_matrix.detach().cpu()))
+        mlflow.log_artifact(temp_folder+"/adaptive_lasso_weights_matrix.npy")
+
     # pretrain the marginal transformations
     _ = model.pretrain_transformation_layer(dataloader_train, iterations=iterations, max_batches_per_iter=max_batches_per_iter, penalty_splines_params=penalty_splines_params_chosen)
     
@@ -220,6 +225,10 @@ def run_experiment(
     _ = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, iterations=iterations, optimizer=optimizer, learning_rate=learning_rate, patience=patience, min_delta=min_delta,
                 penalty_splines_params=penalty_splines_params_chosen, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, penalty_lasso_conditional_independence=penalty_lasso_conditional_independence_chosen, 
                 max_batches_per_iter=max_batches_per_iter)
+    
+    # Log trained model
+    _ = mlflow.pytorch.log_model(model, "model")
+    # can be loaded (to cpu) via: model = mlflow.pytorch.load_model("runs:/{}/model".format(self.run_id), map_location=torch.device('cpu'))
     
     # store all trained parameters
     mlflow.log_param(key="penalty_decorrelation_ridge_param_chosen", value=penalty_decorrelation_ridge_param_chosen)
