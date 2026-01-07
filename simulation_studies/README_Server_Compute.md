@@ -8,6 +8,7 @@
 - Rebuild if you ever reconfigure the container Image (instructions).
 - Build with the following code which creates a container named "container_name":
 docker build -t container_name -f Dockerfile_gtm .
+- build the docker container in scratch by navigating there with "cd /scratch" and building there
 
 ### 3. Running python scripts in the container:
 - use the following command, adjust to your setting: 
