@@ -1,0 +1,28 @@
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10-dev \
+    python3-pip \
+    libffi-dev \
+    build-essential \
+    rsync
+
+
+WORKDIR /mnt
+
+
+RUN pip3 install mlflow
+RUN pip3 install numpy
+RUN pip3 install pandas
+RUN pip3 install matplotlib
+RUN pip3 install seaborn
+RUN pip3 install scipy
+RUN pip3 install scikit-learn
+RUN pip3 install torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121
+RUN pip3 install tqdm
+RUN pip3 install statsmodels
+RUN pip3 install optuna
+RUN pip3 install torch-ema
+RUN pip3 install networkx
+RUN pip3 install pingouin
+RUN pip3 install plotly
