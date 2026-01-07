@@ -34,3 +34,14 @@ rsync -av /scratch/mhe/gtm/mlruns/*  /sybig/home/mhe/gtm/mlruns
 rsync -arvz --delete -e 'ssh deepthought' /Users/matthiasherp/Desktop/phd_github_repositories/gtm/ :/sybig/home/mhe/gtm/.
 - rsync pull (run locally):
 rsync -arvz -e 'ssh hydra' :/sybig/home/mhe/mctm_pytorch/mlruns .
+
+## 6. Server housekeeping
+- erst htop checken (cpu)
+- erst nvtop checken welche grafikkarten benutzt sind (maximal 4 stück benutzen)
+- verlasse nvtop und htop mit "Q" taste
+- wenn rechnen dann in den matrix/element chat schreiben: rechne auf hydra mit ... gpus für ca. ... stunden
+- rechne am besten die "docker run ...." in screens (wie tmux):
+    - "screen" to start
+    - "screen -ls" to see screens active
+    - "screen -r ..." wieder rein (siehst die nummer in ls vorne)
+    - "screen killall" machst alle aus
