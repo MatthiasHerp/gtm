@@ -5,7 +5,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     libffi-dev \
     build-essential \
-    rsync
+    rsync \
+    graphviz libgl1 libglib2.0-0 libxrender1 libsm6 libxext6 \
+    && rm -rf /var/lib/apt/lists/*
 
 
 WORKDIR /mnt
@@ -18,7 +20,7 @@ RUN pip3 install matplotlib
 RUN pip3 install seaborn
 RUN pip3 install scipy
 RUN pip3 install scikit-learn
-RUN pip3 install torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 --index-url https://download.pytorch.org/whl/cu121
+RUN pip3 install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
 RUN pip3 install tqdm
 RUN pip3 install statsmodels
 RUN pip3 install optuna

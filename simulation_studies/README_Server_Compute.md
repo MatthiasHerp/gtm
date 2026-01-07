@@ -7,15 +7,16 @@
 - In essence the instructions show what to download. 
 - Rebuild if you ever reconfigure the container Image (instructions).
 - Build with the following code which creates a container named "container_name":
-docker build -t container_name -f Dockerfile_gtm .
+docker build -t container_name -f simulation_studies/Dockerfile_gtm .
 - build the docker container in scratch by navigating there with "cd /scratch" and building there
 
 ### 3. Running python scripts in the container:
 - use the following command, adjust to your setting: 
-docker run -it --rm --gpus \"device=1\" -v /scratch/mhe/gtm/:/mnt container_name python3 tests/run_experiment.py
+docker run -it --rm --gpus \"device=1\" -v /scratch/fcc/gtm/:/mnt container_name python3 tests/run_experiment.py
+
 - notice:
     - --gpus \"device=1\" --> we run with gpus on the gpu number 1
-    - -v /scratch/mhe/gtm/:/mnt --> we mount a directory to which the code in the container has access, we name it mnt for mount within the container so code in the container should reference mnt
+    - -v /scratch/fcc/gtm/:/mnt --> we mount a directory to which the code in the container has access, we name it mnt for mount within the container so code in the container should reference mnt
     - notice we mount from scratch, scratch is a faster directory always do this, more later
     - container_name --> need to state the container to use
     - python3 --> runs a python script with python3
