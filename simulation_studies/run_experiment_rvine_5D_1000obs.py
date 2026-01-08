@@ -1,5 +1,6 @@
 from simulation_studies.run_experiment import run_experiment
 import mlflow
+import torch
 import os
 
 if __name__ == "__main__":
@@ -17,7 +18,7 @@ if __name__ == "__main__":
         experiment_id = mlflow.create_experiment(experimental_name)
 
     
-    for seed in [1,2,3]:
+    for seed in range(10):
         
         run_experiment(
             run_name="rine_5D_1000obs_seed_{}".format(seed),
@@ -38,7 +39,7 @@ if __name__ == "__main__":
             spline_transformation = "bspline",
             spline_decorrelation = "bspline",
             transformation_spline_range = (-10, 10),
-            device = "cpu",
+            device = "cuda" if torch.cuda.is_available() else "cpu",
             penalty_decorrelation_ridge_param = None,
             penalty_decorrelation_ridge_first_difference = "sample",
             penalty_decorrelation_ridge_second_difference = "sample",

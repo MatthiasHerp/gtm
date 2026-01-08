@@ -45,6 +45,7 @@ def run_experiment(
     penalty_transformation_ridge_second_difference = None,
     penalty_lasso_conditional_independence = None,
     adaptive_lasso_weights_matrix=False,
+    inference='frequentist',
     optimizer="LBFGS",
     learning_rate=1,
     iterations=2000,
@@ -96,7 +97,8 @@ def run_experiment(
                   "vine_type": vine_type,
                   "N_train": N_train,
                   "N_validate": N_validate,
-                  "N_test": N_test})
+                  "N_test": N_test}
+            )
     
     
     synthetic_data_dict = generate_synthetic_vine_data(
@@ -112,11 +114,14 @@ def run_experiment(
     # Create dataset and DataLoader
     dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
     dataloader_train = DataLoader(dataset_train, batch_size=N_train)
-
+    dataloader_train_bgtm = DataLoader(dataset_train, batch_size=35, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True, prefetch_factor=4)
+    
+    
     dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
     dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
+    dataloader_validate_bgtm = DataLoader(dataset_validate, batch_size=35, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True, prefetch_factor=2)
     
-    # Run GTM Model Training
+    
     # first store all training parameters
     mlflow.log_param(key="number_transformation_layers", value=number_transformation_layers)
     mlflow.log_param(key="number_decorrelation_layers", value=number_decorrelation_layers)
@@ -133,6 +138,7 @@ def run_experiment(
     mlflow.log_param(key="penalty_lasso_conditional_independence", value=penalty_lasso_conditional_independence)
     mlflow.log_param(key="adaptive_lasso_weights_matrix", value=adaptive_lasso_weights_matrix)
     mlflow.log_param(key="optimizer", value=optimizer)
+    mlflow.log_param(key= "inference", value=inference)
     mlflow.log_param(key="learning_rate", value=learning_rate)
     mlflow.log_param(key="iterations", value=iterations)
     mlflow.log_param(key="patience", value=patience)
@@ -144,6 +150,9 @@ def run_experiment(
     mlflow.log_param(key="temp_folder", value=temp_folder)
     mlflow.log_param(key="study_name", value=study_name)   
     
+    
+    
+    # Define and initialize GTM Model
     model = GTM(
         number_variables = dimensionality,
         number_transformation_layers = number_transformation_layers,
@@ -154,84 +163,49 @@ def run_experiment(
         spline_decorrelation = spline_decorrelation,
         transformation_spline_range = transformation_spline_range,
         device = device)
-
-    study = model.hyperparameter_tune_penalties( 
-        train_dataloader = dataloader_train,
-        validate_dataloader = dataloader_validate,
-        penalty_decorrelation_ridge_param = penalty_decorrelation_ridge_param,
-        penalty_decorrelation_ridge_first_difference = penalty_decorrelation_ridge_first_difference,
-        penalty_decorrelation_ridge_second_difference = penalty_decorrelation_ridge_second_difference,
-        penalty_transformation_ridge_second_difference = penalty_transformation_ridge_second_difference,
-        penalty_lasso_conditional_independence = penalty_lasso_conditional_independence,
-        adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
-        optimizer=optimizer,
-        learning_rate=learning_rate,
-        iterations=iterations,
-        patience=patience,
-        min_delta=min_delta,
-        seperate_copula_training=seperate_copula_training,
-        max_batches_per_iter=max_batches_per_iter,
-        pretrained_transformation_layer=pretrained_transformation_layer,
-        n_trials=n_trials,
-        temp_folder=temp_folder,
-        study_name=study_name)
-        
-    # for every penalty if we pass a none the set penalty to zero
-    if penalty_decorrelation_ridge_param is None:
-        penalty_decorrelation_ridge_param_chosen = 0
-    elif penalty_decorrelation_ridge_param is float:
-        penalty_decorrelation_ridge_param_chosen = penalty_decorrelation_ridge_param
-    else:
-        penalty_decorrelation_ridge_param_chosen = study.best_params["penalty_decorrelation_ridge_param"]
-
-    if penalty_decorrelation_ridge_first_difference is None:
-        penalty_decorrelation_ridge_first_difference_chosen = 0
-    elif penalty_decorrelation_ridge_first_difference is float:
-        penalty_decorrelation_ridge_first_difference_chosen = penalty_decorrelation_ridge_first_difference
-    else:
-        penalty_decorrelation_ridge_first_difference_chosen = study.best_params["penalty_decorrelation_ridge_first_difference"]
-
-    if penalty_decorrelation_ridge_second_difference is None:
-        penalty_decorrelation_ridge_second_difference_chosen = 0
-    elif penalty_decorrelation_ridge_second_difference is float:
-        penalty_decorrelation_ridge_second_difference_chosen = penalty_decorrelation_ridge_second_difference
-    else:
-        penalty_decorrelation_ridge_second_difference_chosen = study.best_params["penalty_decorrelation_ridge_second_difference"]
     
-    if penalty_transformation_ridge_second_difference is None:
-        penalty_transformation_ridge_second_difference_chosen = 0
-    elif penalty_transformation_ridge_second_difference is float:
-        penalty_transformation_ridge_second_difference_chosen = penalty_transformation_ridge_second_difference
-    else:
-        penalty_transformation_ridge_second_difference_chosen = study.best_params["penalty_transformation_ridge_second_difference"]
-
-    penalty_splines_params_chosen=torch.FloatTensor([
-                                penalty_decorrelation_ridge_param_chosen,
-                                penalty_decorrelation_ridge_first_difference_chosen,
-                                penalty_decorrelation_ridge_second_difference_chosen,
-                                penalty_transformation_ridge_second_difference_chosen
-                                ])
+    model_bayes = GTM(
+        number_variables=dimensionality,
+        number_transformation_layers=number_transformation_layers,
+        number_decorrelation_layers=number_decorrelation_layers,
+        degree_transformations=degree_transformations,
+        degree_decorrelation=degree_decorrelation,
+        spline_transformation=spline_transformation,
+        spline_decorrelation=spline_transformation,
+        transformation_spline_range=transformation_spline_range,
+        device= device,
+        ## NEW ARGUMENTS ##
+        inference = 'bayesian',
+        hyperparameter=hyperparameters
+    )
     
-    if penalty_lasso_conditional_independence is None:
-        penalty_lasso_conditional_independence_chosen = False
-    elif penalty_lasso_conditional_independence is float:
-        penalty_lasso_conditional_independence_chosen = penalty_lasso_conditional_independence
-    else:
-        penalty_lasso_conditional_independence_chosen = study.best_params["penalty_lasso_conditional_independence"]
     
-    # here we store the adaptive lasso weights matrix as an artifact
-    # the same way plots can also be stored for each run    
-    if adaptive_lasso_weights_matrix is not False:
-        np.save(temp_folder+"/adaptive_lasso_weights_matrix.npy", np.array(adaptive_lasso_weights_matrix.detach().cpu()))
-        mlflow.log_artifact(temp_folder+"/adaptive_lasso_weights_matrix.npy")
-
-    # pretrain the marginal transformations
-    _ = model.pretrain_transformation_layer(dataloader_train, iterations=iterations, max_batches_per_iter=max_batches_per_iter, penalty_splines_params=penalty_splines_params_chosen)
     
-    # train the joint model
-    training_dict = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, iterations=iterations, optimizer=optimizer, learning_rate=learning_rate, patience=patience, min_delta=min_delta,
-                penalty_splines_params=penalty_splines_params_chosen, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, penalty_lasso_conditional_independence=penalty_lasso_conditional_independence_chosen, 
-                max_batches_per_iter=max_batches_per_iter)
+    # Run GTM Model Training
+    (
+        penalty_decorrelation_ridge_param_chosen, 
+        penalty_decorrelation_ridge_first_difference_chosen, 
+        penalty_decorrelation_ridge_second_difference_chosen,
+        penalty_transformation_ridge_second_difference_chosen, 
+        penalty_lasso_conditional_independence_chosen, 
+        training_dict
+        ) = train_freq_gtm_model(
+            penalty_decorrelation_ridge_param,
+            penalty_decorrelation_ridge_first_difference,
+            penalty_decorrelation_ridge_second_difference,
+            penalty_transformation_ridge_second_difference,
+            penalty_lasso_conditional_independence,
+            adaptive_lasso_weights_matrix,
+            optimizer,
+            learning_rate,
+            iterations,
+            patience,
+            min_delta,
+            seperate_copula_training,
+            max_batches_per_iter,
+            pretrained_transformation_layer,
+            n_trials,
+            temp_folder, study_name, dataloader_train, dataloader_validate, model)
     
     # plot training curves
     plt.plot(training_dict["loss_list_training"], label="Training Loss")
@@ -339,4 +313,85 @@ def run_experiment(
     mlflow.end_run()
     
     clear_temp_folder(temp_folder)
+
+def train_freq_gtm_model(penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference, penalty_transformation_ridge_second_difference, penalty_lasso_conditional_independence, adaptive_lasso_weights_matrix, optimizer, learning_rate, iterations, patience, min_delta, seperate_copula_training, max_batches_per_iter, pretrained_transformation_layer, n_trials, temp_folder, study_name, dataloader_train, dataloader_validate, model):
+    study = model.hyperparameter_tune_penalties( 
+        train_dataloader = dataloader_train,
+        validate_dataloader = dataloader_validate,
+        penalty_decorrelation_ridge_param = penalty_decorrelation_ridge_param,
+        penalty_decorrelation_ridge_first_difference = penalty_decorrelation_ridge_first_difference,
+        penalty_decorrelation_ridge_second_difference = penalty_decorrelation_ridge_second_difference,
+        penalty_transformation_ridge_second_difference = penalty_transformation_ridge_second_difference,
+        penalty_lasso_conditional_independence = penalty_lasso_conditional_independence,
+        adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+        optimizer=optimizer,
+        learning_rate=learning_rate,
+        iterations=iterations,
+        patience=patience,
+        min_delta=min_delta,
+        seperate_copula_training=seperate_copula_training,
+        max_batches_per_iter=max_batches_per_iter,
+        pretrained_transformation_layer=pretrained_transformation_layer,
+        n_trials=n_trials,
+        temp_folder=temp_folder,
+        study_name=study_name)
+        
+    # for every penalty if we pass a none the set penalty to zero
+    if penalty_decorrelation_ridge_param is None:
+        penalty_decorrelation_ridge_param_chosen = 0
+    elif penalty_decorrelation_ridge_param is float:
+        penalty_decorrelation_ridge_param_chosen = penalty_decorrelation_ridge_param
+    else:
+        penalty_decorrelation_ridge_param_chosen = study.best_params["penalty_decorrelation_ridge_param"]
+
+    if penalty_decorrelation_ridge_first_difference is None:
+        penalty_decorrelation_ridge_first_difference_chosen = 0
+    elif penalty_decorrelation_ridge_first_difference is float:
+        penalty_decorrelation_ridge_first_difference_chosen = penalty_decorrelation_ridge_first_difference
+    else:
+        penalty_decorrelation_ridge_first_difference_chosen = study.best_params["penalty_decorrelation_ridge_first_difference"]
+
+    if penalty_decorrelation_ridge_second_difference is None:
+        penalty_decorrelation_ridge_second_difference_chosen = 0
+    elif penalty_decorrelation_ridge_second_difference is float:
+        penalty_decorrelation_ridge_second_difference_chosen = penalty_decorrelation_ridge_second_difference
+    else:
+        penalty_decorrelation_ridge_second_difference_chosen = study.best_params["penalty_decorrelation_ridge_second_difference"]
+    
+    if penalty_transformation_ridge_second_difference is None:
+        penalty_transformation_ridge_second_difference_chosen = 0
+    elif penalty_transformation_ridge_second_difference is float:
+        penalty_transformation_ridge_second_difference_chosen = penalty_transformation_ridge_second_difference
+    else:
+        penalty_transformation_ridge_second_difference_chosen = study.best_params["penalty_transformation_ridge_second_difference"]
+
+    penalty_splines_params_chosen=torch.FloatTensor([
+                                penalty_decorrelation_ridge_param_chosen,
+                                penalty_decorrelation_ridge_first_difference_chosen,
+                                penalty_decorrelation_ridge_second_difference_chosen,
+                                penalty_transformation_ridge_second_difference_chosen
+                                ])
+    
+    if penalty_lasso_conditional_independence is None:
+        penalty_lasso_conditional_independence_chosen = False
+    elif penalty_lasso_conditional_independence is float:
+        penalty_lasso_conditional_independence_chosen = penalty_lasso_conditional_independence
+    else:
+        penalty_lasso_conditional_independence_chosen = study.best_params["penalty_lasso_conditional_independence"]
+    
+    # here we store the adaptive lasso weights matrix as an artifact
+    # the same way plots can also be stored for each run    
+    if adaptive_lasso_weights_matrix is not False:
+        np.save(temp_folder+"/adaptive_lasso_weights_matrix.npy", np.array(adaptive_lasso_weights_matrix.detach().cpu()))
+        mlflow.log_artifact(temp_folder+"/adaptive_lasso_weights_matrix.npy")
+
+    # pretrain the marginal transformations
+    _ = model.pretrain_transformation_layer(dataloader_train, iterations=iterations, max_batches_per_iter=max_batches_per_iter, penalty_splines_params=penalty_splines_params_chosen)
+    
+    # train the joint model
+    training_dict = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, iterations=iterations, optimizer=optimizer, learning_rate=learning_rate, patience=patience, min_delta=min_delta,
+                penalty_splines_params=penalty_splines_params_chosen, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, penalty_lasso_conditional_independence=penalty_lasso_conditional_independence_chosen, 
+                max_batches_per_iter=max_batches_per_iter)
+                
+    return penalty_decorrelation_ridge_param_chosen,penalty_decorrelation_ridge_first_difference_chosen,penalty_decorrelation_ridge_second_difference_chosen,penalty_transformation_ridge_second_difference_chosen,penalty_lasso_conditional_independence_chosen,training_dict
     
