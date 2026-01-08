@@ -58,6 +58,14 @@ def run_experiment(
     n_trials=30,
     temp_folder="./temp",
     study_name=None,
+    # Evaluation of Conditional Independence parameters
+    num_processes=4,
+    sample_size = 5000,
+    num_points_quad=15,
+    copula_only=False,
+    min_val=-6,
+    max_val=6,
+    bootstrap_warpspeed=False,
     # Evaluation of Conditional Independence parameters GTM
     evaluation_data_type_gtm = "samples_from_model",
     num_processes_gtm=4,
@@ -80,7 +88,7 @@ def run_experiment(
     
     #bgtm Model Model seeting
     mu_init="from_freq_gtm",
-    tau_init="from_freq_gtm",
+    tau_init="from_freq_gtm",  # Default value for tau_init
     optimizer_bgtm="Adam",
     lr_mu = 1e-3,
     lr_cholesky = 5e-5,
@@ -115,13 +123,11 @@ def run_experiment(
     conv_tol = 0.01, #0.001,      # absolute ELBO change per-obs
     conv_min_epochs = 50,   # don't stop too early
     conv_ema_beta = 0.9,  # if conv_use_ema=True
-    conv_use_ema = True ,
+    conv_use_ema = True,
     
     ## Posterior Sampling 
-    
-    vi_predective_sampling = 10000,
-       
-):
+    vi_predective_sampling = 10000
+    ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
 
@@ -155,14 +161,9 @@ def run_experiment(
                   "N_validate": N_validate,
                   "N_test": N_test}
             )
-    
     print("tracking:", mlflow.get_tracking_uri())
     print("artifact :", mlflow.get_artifact_uri())
-    
     try:
-    
-        
-        
         synthetic_data_dict = generate_synthetic_vine_data(
             seed_value=seed_value,
             dimensionality=dimensionality,
@@ -178,16 +179,37 @@ def run_experiment(
         synthetic_data_dict["df_true_structure"].to_csv(truth_csv, index=False)
         mlflow.log_artifact(truth_csv, artifact_path="truth")
         
-        # Create dataset and DataLoader
-        dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
-        dataloader_train = DataLoader(dataset_train, batch_size=N_train)
-        dataloader_train_bgtm = DataLoader(dataset_train, batch_size=35, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True, prefetch_factor=4)
-        
-        
-        dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
-        dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
-        
-        
+        # Create dataset and DataLoader, if bootstrapped note that
+        if bootstrap_warpspeed:
+            #merge train and validate data for warpspeed bootstrap
+            combined_data = torch.cat((synthetic_data_dict['train_data'], synthetic_data_dict['validate_data']), dim=0)
+            
+            # bootstrap sample with replacement
+            indices = torch.randint(0, combined_data.size(0), (N_train + N_validate,))
+            bootstrapped_data = combined_data[indices]
+            
+            # save bootstrapp indices for easy reproducibility
+            np.save(temp_folder+"/bootstrap_indices.npy", np.array(indices.detach().cpu()))
+            mlflow.log_artifact(temp_folder+"/bootstrap_indices.npy")
+            
+            # Split back into train and validate sets
+            synthetic_data_dict['train_data'] = bootstrapped_data[:N_train]
+            synthetic_data_dict['validate_data'] = bootstrapped_data[N_train:]
+            
+                # Create dataset and DataLoader
+            dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
+            dataloader_train = DataLoader(dataset_train, batch_size=N_train)
+            dataloader_train_bgtm = DataLoader(dataset_train, batch_size=35, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True, prefetch_factor=4)
+            
+            
+            dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
+            dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
+        else:
+            dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
+            dataloader_train = DataLoader(dataset_train, batch_size=N_train)
+            dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
+            dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
+
         # first store all training parameters
         mlflow.log_param(key="number_transformation_layers", value=number_transformation_layers)
         mlflow.log_param(key="number_decorrelation_layers", value=number_decorrelation_layers)
@@ -201,7 +223,6 @@ def run_experiment(
         mlflow.log_param(key="penalty_decorrelation_ridge_first_difference", value=penalty_decorrelation_ridge_first_difference)
         mlflow.log_param(key="penalty_decorrelation_ridge_second_difference", value=penalty_decorrelation_ridge_second_difference)
         mlflow.log_param(key="penalty_transformation_ridge_second_difference", value=penalty_transformation_ridge_second_difference)
-        
         mlflow.log_param(key="penalty_decorrelation_ridge_first_difference_bgtm", 
                         value=(
                             penalty_decorrelation_ridge_first_difference
@@ -222,10 +243,7 @@ def run_experiment(
                             if penalty_transformation_ridge_second_difference is not None 
                             else 0.1
                             )
-                        )
-        
-
-                        
+                        )                
         mlflow.log_param(key="tau_init", value=tau_init)
         mlflow.log_param(key="optimizer_bgtm", value=optimizer_bgtm)
         mlflow.log_param(key="lr_mu", value=lr_mu)
@@ -462,14 +480,6 @@ def run_experiment(
         torch.save(model.state_dict(), f"{temp_folder}/freq_gtm_mu_init_state_dict.pt")
         mlflow.log_artifact(f"{temp_folder}/freq_gtm_mu_init_state_dict.pt", artifact_path="gtm_bayes/init")
 
-        #torch.save(tau_nodes, f"{temp_folder}/tau_init.pt")
-        #mlflow.log_artifact(f"{temp_folder}/tau_init.pt")
-
-        # --- log summary metrics ---
-        #mu_vals = torch.cat([v.flatten() for v in model.state_dict().values()])
-        #mlflow.log_metric("mu_init_mean", mu_vals.mean().item())
-        #mlflow.log_metric("mu_init_std", mu_vals.std().item())
-
         
         
         # Run BGTM Model Training (starting from the frequentist GTM parameters)
@@ -673,7 +683,29 @@ def gamma_from_mean_cv(mean, cv=1.0, eps = 0.0001):
     b = a / max(mean, eps)
     return float(a), float(b)
 
-def train_freq_gtm_model(penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference, penalty_transformation_ridge_second_difference, penalty_lasso_conditional_independence, adaptive_lasso_weights_matrix, optimizer, learning_rate, iterations, patience, min_delta, seperate_copula_training, max_batches_per_iter, pretrained_transformation_layer, n_trials, temp_folder, study_name, dataloader_train, dataloader_validate, model):
+def train_freq_gtm_model(
+    penalty_decorrelation_ridge_param,
+    penalty_decorrelation_ridge_first_difference,
+    penalty_decorrelation_ridge_second_difference,
+    penalty_transformation_ridge_second_difference,
+    penalty_lasso_conditional_independence,
+    adaptive_lasso_weights_matrix,
+    optimizer,
+    learning_rate,
+    iterations,
+    patience,
+    min_delta,
+    seperate_copula_training,
+    max_batches_per_iter,
+    pretrained_transformation_layer,
+    n_trials,
+    temp_folder,
+    study_name,
+    dataloader_train,
+    dataloader_validate,
+    model
+    ):
+    
     
     study = model.hyperparameter_tune_penalties( 
         train_dataloader = dataloader_train,
@@ -769,6 +801,6 @@ def train_freq_gtm_model(penalty_decorrelation_ridge_param, penalty_decorrelatio
     training_dict = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, iterations=iterations, optimizer=optimizer, learning_rate=learning_rate, patience=patience, min_delta=min_delta,
                 penalty_splines_params=penalty_splines_params_chosen, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, penalty_lasso_conditional_independence=penalty_lasso_conditional_independence_chosen, 
                 max_batches_per_iter=max_batches_per_iter)
-                
-    return penalty_decorrelation_ridge_param_chosen,penalty_decorrelation_ridge_first_difference_chosen,penalty_decorrelation_ridge_second_difference_chosen,penalty_transformation_ridge_second_difference_chosen,penalty_lasso_conditional_independence_chosen,training_dict
     
+    
+    return  penalty_decorrelation_ridge_param_chosen, penalty_decorrelation_ridge_first_difference_chosen, penalty_decorrelation_ridge_second_difference_chosen, penalty_transformation_ridge_second_difference_chosen, penalty_lasso_conditional_independence_chosen, training_dict
