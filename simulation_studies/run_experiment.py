@@ -57,13 +57,14 @@ def run_experiment(
     temp_folder="./temp",
     study_name=None,
     # Evaluation of Conditional Independence parameters
-    evaluation_data_type = "samples_from_model",
+    #evaluation_data_type = "samples_from_model",
     num_processes=4,
     sample_size = 5000,
     num_points_quad=15,
     copula_only=False,
     min_val=-6,
-    max_val=6
+    max_val=6,
+    bootstrap_warpspeed=False
 ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
@@ -109,13 +110,36 @@ def run_experiment(
         N_test=N_test
     )
     
-    # Create dataset and DataLoader
-    dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
-    dataloader_train = DataLoader(dataset_train, batch_size=N_train)
+    # Create dataset and DataLoader, if bootstrapped note that
+    if bootstrap_warpspeed:
+        #merge train and validate data for warpspeed bootstrap
+        combined_data = torch.cat((synthetic_data_dict['train_data'], synthetic_data_dict['validate_data']), dim=0)
+        
+        # bootstrap sample with replacement
+        indices = torch.randint(0, combined_data.size(0), (N_train + N_validate,))
+        bootstrapped_data = combined_data[indices]
+        
+        # save bootstrapp indices for easy reproducibility
+        np.save(temp_folder+"/bootstrap_indices.npy", np.array(indices.detach().cpu()))
+        mlflow.log_artifact(temp_folder+"/bootstrap_indices.npy")
+        
+        # Split back into train and validate sets
+        synthetic_data_dict['train_data'] = bootstrapped_data[:N_train]
+        synthetic_data_dict['validate_data'] = bootstrapped_data[N_train:]
+        
+        # Create dataset and DataLoader
+        dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
+        dataloader_train = DataLoader(dataset_train, batch_size=N_train)
 
-    dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
-    dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
-    
+        dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
+        dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
+    else:
+        dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
+        dataloader_train = DataLoader(dataset_train, batch_size=N_train)
+
+        dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
+        dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
+        
     # Run GTM Model Training
     # first store all training parameters
     mlflow.log_param(key="number_transformation_layers", value=number_transformation_layers)
@@ -299,7 +323,7 @@ def run_experiment(
     # To Do so we start by evaluate the conditional indepenedence_relationships. By computing the table we compute pseudo correlation matrix based conditional independence metrics 
     # and likelihood based conditional independence metrics such as the iae and the kld. For more details on these see the paper. This computation may take some time as it computes quadratures under the hood, see the algorithm 1 in the paper.
     
-    mlflow.log_param(key="evaluation_data_type", value=evaluation_data_type)
+    #mlflow.log_param(key="evaluation_data_type", value=evaluation_data_type)
     mlflow.log_param(key="num_processes", value=num_processes)
     mlflow.log_param(key="sample_size", value=sample_size)
     mlflow.log_param(key="num_points_quad", value=num_points_quad)
@@ -307,34 +331,71 @@ def run_experiment(
     mlflow.log_param(key="min_val", value=min_val)
     mlflow.log_param(key="max_val", value=max_val)
 
-    conditional_independence_table = model.compute_conditional_independence_table(
-                                            y = None,
-                                            evaluation_data_type = evaluation_data_type,
-                                            num_processes=num_processes,
-                                            sample_size = sample_size,
-                                            num_points_quad=num_points_quad,
-                                            copula_only=copula_only,
-                                            min_val=min_val,
-                                            max_val=max_val)
+
+    conditional_independence_table_samples = model.compute_conditional_independence_table(
+                                         y = None,
+                                         evaluation_data_type = "samples_from_model",
+                                         num_processes=num_processes,
+                                         sample_size = sample_size,
+                                         num_points_quad=num_points_quad,
+                                         copula_only=copula_only,
+                                         min_val=min_val,
+                                         max_val=max_val)
     
-    ### 6. Identifying the Conditional Independence Graph
+
+    combined_data = torch.cat((synthetic_data_dict['train_data'], synthetic_data_dict['validate_data']), dim=0).detach()
+    conditional_independence_table_data = model.compute_conditional_independence_table(
+                                        y = combined_data,
+                                        evaluation_data_type = "data",
+                                        num_processes=num_processes,
+                                        sample_size = sample_size,
+                                        num_points_quad=num_points_quad,
+                                        copula_only=copula_only,
+                                        min_val=min_val,
+                                        max_val=max_val)
+    
+    ### 6. Identifying the Conditional Independence Graph 
     # We compare the true known conditional independence Graph to the one learned by the GTM. To do so we first merge the true structure table with our learned one.
     
-    merged_ci_tables = pd.merge(
-        conditional_independence_table,
+    merged_ci_tables_samples = pd.merge(
+        conditional_independence_table_samples,
         synthetic_data_dict["df_true_structure"],
         on=["var_row", "var_col"]
     )
+
+    merged_ci_tables_data = pd.merge(
+        conditional_independence_table_data,
+        synthetic_data_dict["df_true_structure"],
+        on=["var_row", "var_col"]
+    )
+    # the iae makes no sense when using the true data, and the kld is the log likelihood ratio so we del iae and rename kld into ll_diff
+    del merged_ci_tables_data["iae"]
+    merged_ci_tables_data["ll_diff"] = merged_ci_tables_data["kld"]
+    del merged_ci_tables_data["kld"]
     
-    auc_iae = roc_auc_score(merged_ci_tables["dependence"], merged_ci_tables["iae"])
-    auc_kld = roc_auc_score(merged_ci_tables["dependence"], merged_ci_tables["kld"])
-    auc_corr = roc_auc_score(merged_ci_tables["dependence"], merged_ci_tables["cond_correlation_abs_mean"])
-    auc_pmat = roc_auc_score(merged_ci_tables["dependence"], merged_ci_tables["precision_abs_mean"])
+    # store the merged table as an artifact
+    merged_ci_tables_samples.to_csv(temp_folder+"/conditional_independence_table_model_samples.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_model_samples.csv")   
+    
+    conditional_independence_table_data.to_csv(temp_folder+"/conditional_independence_table_data.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_data.csv")   
+
+    # Store metrics based on synthetic samples
+    auc_iae = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["iae"])
+    auc_kld = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["kld"])
+    auc_corr = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["cond_correlation_abs_mean"])
+    auc_pmat = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["precision_abs_mean"])
 
     mlflow.log_metric(key="auc_iae", value=auc_iae)
     mlflow.log_metric(key="auc_kld", value=auc_kld)
     mlflow.log_metric(key="auc_cond_corr", value=auc_corr)
     mlflow.log_metric(key="auc_precision_matrix", value=auc_pmat)
+
+    # Store metrics based on true data
+    auc_ll_diff = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["ll_diff"])
+
+    mlflow.log_metric(key="auc_loglik_diff", value=auc_ll_diff)
+    
 
     mlflow.end_run()
     
