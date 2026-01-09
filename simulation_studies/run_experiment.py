@@ -45,7 +45,7 @@ def run_experiment(
     penalty_transformation_ridge_second_difference = None,
     penalty_lasso_conditional_independence = None,
     adaptive_lasso_weights_matrix=False,
-    inference='frequentist',
+    cv=1,
     optimizer="LBFGS",
     learning_rate=1,
     iterations=2000,
@@ -119,7 +119,6 @@ def run_experiment(
     
     dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
     dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
-    dataloader_validate_bgtm = DataLoader(dataset_validate, batch_size=35, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True, prefetch_factor=2)
     
     
     # first store all training parameters
@@ -138,7 +137,8 @@ def run_experiment(
     mlflow.log_param(key="penalty_lasso_conditional_independence", value=penalty_lasso_conditional_independence)
     mlflow.log_param(key="adaptive_lasso_weights_matrix", value=adaptive_lasso_weights_matrix)
     mlflow.log_param(key="optimizer", value=optimizer)
-    mlflow.log_param(key= "inference", value=inference)
+    #mlflow.log_param(key= "inference", value=inference)
+    mlflow.log_param(key= "cv", value=cv)
     mlflow.log_param(key="learning_rate", value=learning_rate)
     mlflow.log_param(key="iterations", value=iterations)
     mlflow.log_param(key="patience", value=patience)
@@ -152,7 +152,7 @@ def run_experiment(
     
     
     
-    # Define and initialize GTM Model
+    # Define and initialize GTM and BGTM
     model = GTM(
         number_variables = dimensionality,
         number_transformation_layers = number_transformation_layers,
@@ -163,23 +163,6 @@ def run_experiment(
         spline_decorrelation = spline_decorrelation,
         transformation_spline_range = transformation_spline_range,
         device = device)
-    
-    model_bayes = GTM(
-        number_variables=dimensionality,
-        number_transformation_layers=number_transformation_layers,
-        number_decorrelation_layers=number_decorrelation_layers,
-        degree_transformations=degree_transformations,
-        degree_decorrelation=degree_decorrelation,
-        spline_transformation=spline_transformation,
-        spline_decorrelation=spline_transformation,
-        transformation_spline_range=transformation_spline_range,
-        device= device,
-        ## NEW ARGUMENTS ##
-        inference = 'bayesian',
-        hyperparameter=hyperparameters
-    )
-    
-    
     
     # Run GTM Model Training
     (
@@ -206,6 +189,73 @@ def run_experiment(
             pretrained_transformation_layer,
             n_trials,
             temp_folder, study_name, dataloader_train, dataloader_validate, model)
+    
+    # Run BGTM Model Training (starting from the frequentist GTM parameters)
+    
+    hyperparameters = define_hyperparameters(
+        tau_2=penalty_decorrelation_ridge_second_difference_chosen,
+        tau_1=penalty_decorrelation_ridge_first_difference_chosen,
+        tau_4=penalty_transformation_ridge_second_difference_chosen,
+        cv=cv)
+    
+    model_bayes = GTM(
+        number_variables=dimensionality,
+        number_transformation_layers=number_transformation_layers,
+        number_decorrelation_layers=number_decorrelation_layers,
+        degree_transformations=degree_transformations,
+        degree_decorrelation=degree_decorrelation,
+        spline_transformation=spline_transformation,
+        spline_decorrelation=spline_transformation,
+        transformation_spline_range=transformation_spline_range,
+        device= device,
+        ## NEW ARGUMENTS ##
+        inference = 'bayesian',
+        hyperparameter=hyperparameters
+    )
+        
+    model_bayes.train(
+                train_dataloader=dataloader_train_bgtm,
+                validate_dataloader=None,
+                hyperparameters=None,
+                iterations=800,
+                mu_init=model.state_dict(),
+                optimizer="Adam",
+                lr_mu = 1e-3,
+                lr_cholesky = 1e-4,
+                lr_rho = 3e-4,
+                lr_tau = 1.5e-3,
+                mcmc_sample_train=8,            # will ramp
+                mcmc_sample_val=32,             # fixed & larger for stable eval
+                mc_ramp_every=20,               # 4→8→16→32 at epochs 25/50/75
+                mc_ramp_max=64,
+                
+                patience=10,                # early-stop patience
+                min_delta=0.00001, #with val data set 0.00001,                   # ~0.1% absolute of your loss scale
+                
+                sched_factor=0.5, 
+                sched_patience=10, 
+                sched_threshold=1e-4,
+                sched_min_lr=[5e-5, 1e-5, 5e-5],
+                #WARMING
+                warm_tau_epochs = 15,
+                warm_sigma_epochs = 15,  # try 5–10
+                
+                #Optimization method
+                beta_kl_start=0.5,    # try 1.5–3.0
+                beta_kl_anneal_epochs = 30,  # how fast to decay to 1.0
+                
+                # --- τ-VI toggles (key difference) ---
+                tau_vi_mode = "always", #"off" | "after_warm" | "always"
+                tau_kl_beta =0.2,
+                tau_vi_sigma_init = 0.05,
+                
+                # --- VI convergence (no-val) ---
+                conv_use_ema= True,
+                conv_window_size = 50,   # used if conv_use_ema=False
+                conv_tol = 0.001, #0.001,      # absolute ELBO change per-obs
+                conv_min_epochs = 50,   # don't stop too early
+                conv_ema_beta = 0.9,  # if conv_use_ema=True
+    )
     
     # plot training curves
     plt.plot(training_dict["loss_list_training"], label="Training Loss")
@@ -313,6 +363,30 @@ def run_experiment(
     mlflow.end_run()
     
     clear_temp_folder(temp_folder)
+
+def define_hyperparameters(tau_1, tau_2, tau_4, cv):
+    a4, b4 = gamma_from_mean_cv(float(tau_4), cv=cv)
+    a1, b1 = gamma_from_mean_cv(float(tau_1), cv=cv)
+    a2, b2 = gamma_from_mean_cv(float(tau_2), cv=cv)
+    
+    
+    return {
+        "transformation": {
+            "sigma_a": 1.0, "sigma_b": 1.0,
+            "RW2": {"tau_a": a4, "tau_b": b4},
+            "RW1": {"tau_a": 1.0, "tau_b": 1.0}
+            },
+        "decorrelation": {
+            "sigma_a": 1.0, "sigma_b": 1.0,
+            "RW2": {"tau_a": a2, "tau_b": b2},
+            "RW1": {"tau_a": a1, "tau_b": b1}
+            }
+        }
+    
+def gamma_from_mean_cv(mean, cv=1.0):
+    a = 1.0 / (cv ** 2)
+    b = a / mean
+    return float(a), float(b)
 
 def train_freq_gtm_model(penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference, penalty_transformation_ridge_second_difference, penalty_lasso_conditional_independence, adaptive_lasso_weights_matrix, optimizer, learning_rate, iterations, patience, min_delta, seperate_copula_training, max_batches_per_iter, pretrained_transformation_layer, n_trials, temp_folder, study_name, dataloader_train, dataloader_validate, model):
     study = model.hyperparameter_tune_penalties( 

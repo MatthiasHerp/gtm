@@ -172,15 +172,8 @@ def train_bayes(
     # --- KL annealing ---------------------------------------------------
     beta_kl_start: float = 2.5,
     beta_kl_anneal_epochs: int = 25,
-
-    # --- τ hyper-prior / EB vs VI --------------------------------------
-    use_empirical_bayes: bool = False,
-    eb_warm_then_cavi: bool = True,
-    band_tau4: float = 0.20,
-    band_decor: float = 0.15,
-
+    
     # --- τ VI toggles ---------------------------------------------------
-    tau_vi_mode: str = "after_warm",  # "off" | "after_warm" | "always"
     tau_kl_beta: float = 1.0,
     tau_vi_sigma_init: float = 0.25,
 
@@ -199,6 +192,15 @@ def train_bayes(
       - ELPD-based early stopping (if val set) or ELBO convergence
     """
 
+    tau_vi_mode: str = "always"  # "off" | "after_warm" | "always"
+    
+    # --- τ hyper-prior / EB vs VI --------------------------------------
+    band_tau4: float = 0.20,
+    band_decor: float = 0.15,
+    use_empirical_bayes: bool = False
+    eb_warm_then_cavi: bool = True
+    
+    
     # floors for τ
     TAU4_FLOOR = 1e-3
     TAU1_FLOOR = 1e-2

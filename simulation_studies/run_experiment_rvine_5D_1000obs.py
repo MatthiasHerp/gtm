@@ -47,6 +47,7 @@ if __name__ == "__main__":
             penalty_lasso_conditional_independence = None,
             adaptive_lasso_weights_matrix=False,
             optimizer="LBFGS",
+            cv=1,
             learning_rate=1,
             iterations=2000,
             patience=5,
