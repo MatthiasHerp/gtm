@@ -18,3 +18,4 @@ demo.py
 .vscode/launch.json
 setup.py
 .gitignore
+mlruns/
