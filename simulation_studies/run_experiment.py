@@ -102,7 +102,12 @@ def run_experiment(
     conv_tol = 0.01, #0.001,      # absolute ELBO change per-obs
     conv_min_epochs = 50,   # don't stop too early
     conv_ema_beta = 0.9,  # if conv_use_ema=True
-    conv_use_ema = True    
+    conv_use_ema = True ,
+    
+    ## Posterior Sampling 
+    
+    vi_predective_sampling = 10000,
+       
 ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
@@ -401,15 +406,7 @@ def run_experiment(
     mlflow.log_metric(key="auc_precision_matrix", value=auc_pmat)
     
     
-    
-    
-    
-    
-    
-    
-    
     # Run BGTM Model Training (starting from the frequentist GTM parameters)
-    
     hyperparameters = define_hyperparameters(
         tau_2=penalty_decorrelation_ridge_second_difference_chosen if penalty_decorrelation_ridge_second_difference_chosen is not None else 5,
         tau_1=penalty_decorrelation_ridge_first_difference_chosen if penalty_decorrelation_ridge_first_difference_chosen is not None else 4,
@@ -459,6 +456,56 @@ def run_experiment(
         conv_ema_beta = conv_use_ema
     )
     
+    
+    VI        = output_train["vi_model"]
+    tau_nodes = output_train["tau_nodes"]
+    hyper_T   = model_bayes.hyperparameter["transformation"]
+    hyper_D   = model_bayes.hyperparameter["decorrelation"]
+
+    # BGTM predictive log-likelihoods (Bayesian mixture over θ, τ)
+    log_likelihood_train_bgtm = VI.predictive_log_prob(
+        y=synthetic_data_dict['train_data'],
+        model=model,
+        hyperparameter_transformation=hyper_T,
+        hyperparameter_decorrelation=hyper_D,
+        tau_nodes=tau_nodes,
+        S=32,
+    )
+
+    log_likelihood_test_bgtm = VI.predictive_log_prob(
+        y=synthetic_data_dict['train_data'],
+        model=model,
+        hyperparameter_transformation=hyper_T,
+        hyperparameter_decorrelation=hyper_D,
+        tau_nodes=tau_nodes,
+        S=32,
+    )
+    
+    
+    kld_bgtm_train = np.round(torch.mean(synthetic_data_dict["loglik_true_train"] - log_likelihood_train_bgtm).item(),4)
+    rel_kld_bgtm_train = np.round((kld_bgtm_train - kld_vine_oracle_train) / (kld_gaussian_train - kld_vine_oracle_train),4)
+   
+    kld_bgtm_test = np.round(torch.mean(synthetic_data_dict["loglik_true_test"] - log_likelihood_test_bgtm).item(),4)
+    rel_kld_bgtm_test = np.round((kld_bgtm_test - kld_vine_oracle_test) / (kld_gaussian_test - kld_vine_oracle_test),4)
+    
+    # store log likelihood metrics for BGTM
+    mlflow.log_metric(key="kld_bgtm_train", value=kld_bgtm_train)
+    mlflow.log_metric(key="relative_kld_bgtm_train", value=rel_kld_bgtm_train)
+
+    mlflow.log_metric(key="kld_bgtm_test", value=kld_bgtm_test)
+    mlflow.log_metric(key="relative_kld_bgtm_test", value=rel_kld_bgtm_test)
+    
+    conditional_independence_table = model.compute_conditional_independence_table(
+        vi_model=VI,
+        y=simulated_data_train,
+        sample_size = 5000,
+        evaluation_data_type="data",
+        S_posterior=32,
+        cred_level=0.90,
+        copula_only=False,
+        min_val=-6,
+        max_val=6
+)
 
     mlflow.end_run()
     

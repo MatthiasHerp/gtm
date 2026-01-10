@@ -268,6 +268,7 @@ def compute_conditional_independence_kld_bayesian(
     y=None,
     evaluation_data_type="data",
     num_processes=1,          # Not Used, tbignored
+    tau_nodes: Optional["TauPack"] = None,
     sample_size=1000,
     num_points_quad=20,
     optimized=False,
@@ -276,6 +277,7 @@ def compute_conditional_independence_kld_bayesian(
     max_val=5.0,
     likelihood_based_metrics=True,
     S_posterior: int = 32,
+    S_posterior_predictive_sampling: int = 32,
     cred_level: float = 0.95,
 ):
     """
@@ -291,7 +293,19 @@ def compute_conditional_independence_kld_bayesian(
     progress_every = 1
 
     # evaluation data (same for all posterior draws)
-    evaluation_data = get_evaluation_data(self, y, evaluation_data_type, sample_size, copula_only, min_val, max_val, device)
+    evaluation_data = get_evaluation_data(
+        self,
+        vi_model,
+        y,
+        evaluation_data_type,
+        sample_size,
+        copula_only,
+        min_val,
+        max_val,
+        tau_nodes=tau_nodes,
+        VI_predective_sampling=S_posterior_predictive_sampling,
+        device=device
+        )
     
     old_num_trans_layers = None
     if copula_only:
@@ -619,7 +633,21 @@ def sample_tau_vectors(self: "GTM", vi_model: "VI_Model", tau_nodes, S_posterior
             tau2_vec = torch.zeros((S_posterior,), device=device)
     return tau4_vec,tau1_vec,tau2_vec
 
-def get_evaluation_data(self: "GTM", y, evaluation_data_type, sample_size, copula_only, min_val, max_val, device):
+def get_evaluation_data(
+    self: "GTM",
+    VI_Model: "VI_Model",
+    y,
+    evaluation_data_type,
+    sample_size,
+    copula_only,
+    min_val,
+    max_val,
+    tau_nodes,
+    VI_predective_sampling,
+    device
+    ):
+    
+    
     if evaluation_data_type == "data":
         if y is None:
             raise ValueError("y must be provided when evaluation_data_type='data'")
@@ -633,9 +661,15 @@ def get_evaluation_data(self: "GTM", y, evaluation_data_type, sample_size, copul
         ).to(device)
 
     elif evaluation_data_type == "samples_from_model":
-        evaluation_data = self.sample(sample_size).to(device)
-        if copula_only:
-            evaluation_data = self.after_transformation(evaluation_data)
+        
+        evaluation_data = VI_Model.predictive_sample(
+            model=self,
+            hyperparameter_decorrelation=self.hyperparameter["decorrelation"],
+            hyperparameter_transformation=self.hyperparameter["transformation"],
+            n_samples=sample_size,
+            tau_nodes=tau_nodes,
+            S=VI_predective_sampling
+            )
     else:
         raise ValueError(f"evaluation_data_type {evaluation_data_type} not understood.")
     return evaluation_data

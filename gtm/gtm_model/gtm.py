@@ -1867,6 +1867,7 @@ class GTM(nn.Module):
         vi_model: Optional[torch.nn.Module] = None,
         S_posterior: int = 100,
         cred_level: float = 0.95,
+        S_posterior_predictive_sampling: float= 10000
     ):
         """
         Computes a table of pairwise conditional dependence statistics (e.g., KLD, IAE, pseudo precision matrix, and pseudo conditional correlation)
@@ -1968,6 +1969,7 @@ class GTM(nn.Module):
                 likelihood_based_metrics=likelihood_based_metrics,
                 S_posterior=S_posterior,
                 cred_level=cred_level,
+                S_posterior_predictive_sampling=S_posterior_predictive_sampling
             )
         else:
             raise ValueError(f"Inference type {self.inference} not understood or implemented.")
