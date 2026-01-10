@@ -297,67 +297,7 @@ def run_experiment(
             n_trials,
             temp_folder, study_name, dataloader_train, dataloader_validate, model)
     
-    # Run BGTM Model Training (starting from the frequentist GTM parameters)
-    
-    hyperparameters = define_hyperparameters(
-        tau_2=penalty_decorrelation_ridge_second_difference_chosen if penalty_decorrelation_ridge_second_difference_chosen is not None else 5,
-        tau_1=penalty_decorrelation_ridge_first_difference_chosen if penalty_decorrelation_ridge_first_difference_chosen is not None else 4,
-        tau_4=penalty_transformation_ridge_second_difference_chosen if penalty_transformation_ridge_second_difference_chosen is not None else 0.1,
-        cv=cv)
-    
-    model_bayes = GTM(
-        number_variables=dimensionality,
-        number_transformation_layers=number_transformation_layers,
-        number_decorrelation_layers=number_decorrelation_layers,
-        degree_transformations=degree_transformations,
-        degree_decorrelation=degree_decorrelation,
-        spline_transformation=spline_transformation,
-        spline_decorrelation=spline_transformation,
-        transformation_spline_range=transformation_spline_range,
-        device= device,
-        ## NEW ARGUMENTS ##
-        inference = 'bayesian',
-        hyperparameter=hyperparameters
-    )
-    
-    model_bayes.train(
-                train_dataloader=dataloader_train_bgtm,
-                iterations=iterations,
-                mu_init=model.state_dict() if mu_init=="from_freq_gtm" else None,
-                optimizer=optimizer_bgtm,
-                lr_mu = lr_mu,
-                lr_cholesky = lr_cholesky,
-                lr_rho = lr_rho,
-                lr_tau = lr_tau,
-                
-                sample_train=sample_train,  
-                
-                train_sample_ramp_every=train_sample_ramp_every,
-                train_sample_ramp_max=train_sample_ramp_max,
-                
-                sched_factor=sched_factor, 
-                sched_patience=sched_patience, 
-                sched_threshold=sched_threshold,
-                sched_min_lr=sched_min_lr,
-                
-                #WARMING
-                warm_tau_epochs = warm_tau_epochs,
-                warm_sigma_epochs = warm_sigma_epochs,
-                
-                #Optimization method
-                beta_kl_start=beta_kl_start,
-                beta_kl_anneal_epochs = beta_kl_anneal_epochs,
-                
-                tau_kl_beta =tau_kl_beta,
-                tau_vi_sigma_init = tau_vi_sigma_init,
-                
-                conv_use_ema= conv_use_ema,
-                conv_tol = conv_tol,
-                conv_min_epochs = conv_min_epochs,
-                conv_ema_beta = conv_use_ema
-    )
-    
-    # plot training curves
+        # plot training curves
     plt.plot(training_dict["loss_list_training"], label="Training Loss")
     if "loss_list_validation" in training_dict:
         plt.plot(training_dict["loss_list_validation"], label="Validation Loss")
@@ -459,6 +399,66 @@ def run_experiment(
     mlflow.log_metric(key="auc_kld", value=auc_kld)
     mlflow.log_metric(key="auc_cond_corr", value=auc_corr)
     mlflow.log_metric(key="auc_precision_matrix", value=auc_pmat)
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    # Run BGTM Model Training (starting from the frequentist GTM parameters)
+    
+    hyperparameters = define_hyperparameters(
+        tau_2=penalty_decorrelation_ridge_second_difference_chosen if penalty_decorrelation_ridge_second_difference_chosen is not None else 5,
+        tau_1=penalty_decorrelation_ridge_first_difference_chosen if penalty_decorrelation_ridge_first_difference_chosen is not None else 4,
+        tau_4=penalty_transformation_ridge_second_difference_chosen if penalty_transformation_ridge_second_difference_chosen is not None else 0.1,
+        cv=cv)
+    
+    model_bayes = GTM(
+        number_variables=dimensionality,
+        number_transformation_layers=number_transformation_layers,
+        number_decorrelation_layers=number_decorrelation_layers,
+        degree_transformations=degree_transformations,
+        degree_decorrelation=degree_decorrelation,
+        spline_transformation=spline_transformation,
+        spline_decorrelation=spline_transformation,
+        transformation_spline_range=transformation_spline_range,
+        device= device,
+        ## NEW ARGUMENTS ##
+        inference = 'bayesian',
+        hyperparameter=hyperparameters
+    )
+    
+    output_train = model_bayes.train(
+        train_dataloader=dataloader_train_bgtm,
+        iterations=iterations,
+        mu_init=model.state_dict() if mu_init=="from_freq_gtm" else None,
+        optimizer=optimizer_bgtm,
+        lr_mu = lr_mu,
+        lr_cholesky = lr_cholesky,
+        lr_rho = lr_rho,
+        lr_tau = lr_tau,
+        sample_train=sample_train,          
+        train_sample_ramp_every=train_sample_ramp_every,
+        train_sample_ramp_max=train_sample_ramp_max,        
+        sched_factor=sched_factor, 
+        sched_patience=sched_patience, 
+        sched_threshold=sched_threshold,
+        sched_min_lr=sched_min_lr,        
+        warm_tau_epochs = warm_tau_epochs,
+        warm_sigma_epochs = warm_sigma_epochs,        
+        beta_kl_start=beta_kl_start,
+        beta_kl_anneal_epochs = beta_kl_anneal_epochs,        
+        tau_kl_beta =tau_kl_beta,
+        tau_vi_sigma_init = tau_vi_sigma_init,
+        conv_use_ema= conv_use_ema,
+        conv_tol = conv_tol,
+        conv_min_epochs = conv_min_epochs,
+        conv_ema_beta = conv_use_ema
+    )
+    
 
     mlflow.end_run()
     
