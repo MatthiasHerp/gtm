@@ -45,9 +45,8 @@ def run_experiment(
     penalty_transformation_ridge_second_difference = None,
     penalty_lasso_conditional_independence = None,
     adaptive_lasso_weights_matrix=False,
-    cv=1,
-    optimizer="LBFGS",
-    learning_rate=1,
+    optimizer_gtm="LBFGS",
+    learning_rate_gtm=1,
     iterations=2000,
     patience=5,
     min_delta=1e-7,
@@ -64,7 +63,46 @@ def run_experiment(
     num_points_quad=15,
     copula_only=False,
     min_val=-6,
-    max_val=6
+    max_val=6,
+    
+    #bgtm Model Model seeting
+    mu_init="from_freq_gtm",
+    tau_init="from_freq_gtm",
+    optimizer_bgtm="Adam",
+    lr_mu = 1e-3,
+    lr_cholesky = 1e-4,
+    lr_rho = 3e-4,
+    lr_tau = 1.5e-3,
+    sample_train=8,
+    train_sample_ramp_every=20,
+    train_sample_ramp_max=64,
+    
+    #Hyperparameter confidence
+    cv=1,
+    
+    #Scheduler
+    sched_factor=0.5,
+    sched_patience=10, 
+    sched_threshold=1e-4,
+    sched_min_lr=[5e-5, 1e-5, 5e-5],
+    
+    #WARMING
+    warm_tau_epochs = 15,
+    warm_sigma_epochs = 15,  # try 5–10
+                
+    #Optimization method
+    beta_kl_start=0.5,    # try 1.5–3.0
+    beta_kl_anneal_epochs = 30,  # how fast to decay to 1.0
+                
+    # --- τ-VI toggles (key difference) ---
+    tau_kl_beta =0.2,
+    tau_vi_sigma_init = 0.05,
+                
+    # --- VI convergence (no-val) ---
+    conv_tol = 0.01, #0.001,      # absolute ELBO change per-obs
+    conv_min_epochs = 50,   # don't stop too early
+    conv_ema_beta = 0.9,  # if conv_use_ema=True
+    conv_use_ema = True    
 ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
@@ -134,12 +172,81 @@ def run_experiment(
     mlflow.log_param(key="penalty_decorrelation_ridge_first_difference", value=penalty_decorrelation_ridge_first_difference)
     mlflow.log_param(key="penalty_decorrelation_ridge_second_difference", value=penalty_decorrelation_ridge_second_difference)
     mlflow.log_param(key="penalty_transformation_ridge_second_difference", value=penalty_transformation_ridge_second_difference)
+    
+    mlflow.log_param(key="penalty_decorrelation_ridge_first_difference_bgtm", 
+                     value=(
+                         penalty_decorrelation_ridge_first_difference
+                         if penalty_decorrelation_ridge_first_difference is not None 
+                         else 4
+                         )
+                     )
+    mlflow.log_param(key="penalty_decorrelation_ridge_second_difference_bgtm", 
+                     value=(
+                         penalty_decorrelation_ridge_second_difference
+                         if penalty_decorrelation_ridge_second_difference is not None
+                         else 5
+                         )
+                     )
+    mlflow.log_param(key="penalty_transformation_ridge_second_difference_bgtm", 
+                     value=(
+                         penalty_transformation_ridge_second_difference
+                         if penalty_transformation_ridge_second_difference is not None 
+                         else 0.1
+                         )
+                     )
+    
+    mlflow.log_param(key="mu_init", value=(
+        mu_init 
+        if mu_init!="from_freq_gtm" 
+        else "from_freq_gtm"
+        )
+                     )
+    mlflow.log_param(key="tau_init", value=tau_init)
+    mlflow.log_param(key="optimizer_bgtm", value=optimizer_bgtm)
+    mlflow.log_param(key="lr_mu", value=lr_mu)
+    mlflow.log_param(key="lr_cholesky", value=lr_cholesky)
+    mlflow.log_param(key="lr_rho", value=lr_rho)
+    mlflow.log_param(key="lr_tau", value=lr_tau)
+    mlflow.log_param(key="sample_train", value=sample_train)
+    mlflow.log_param(key="train_sample_ramp_every", value=train_sample_ramp_every)
+    mlflow.log_param(key="train_sample_ramp_max", value=train_sample_ramp_max)
+    
+    #Hyperparameter confidence
+    mlflow.log_param(key="cv", value=cv)
+    
+    #Scheduler
+    mlflow.log_param(key="sched_factor", value=sched_factor)
+    mlflow.log_param(key="sched_patience", value=sched_patience)
+    mlflow.log_param(key="sched_threshold", value=sched_threshold)
+    mlflow.log_param(key="sched_min_lr", value=sched_min_lr)
+    
+    #WARMING
+    mlflow.log_param(key="warm_tau_epochs", value=warm_tau_epochs)
+    mlflow.log_param(key="warm_sigma_epochs", value=warm_sigma_epochs)
+    
+    #Optimization method
+    mlflow.log_param(key="beta_kl_start", value=beta_kl_start)
+    mlflow.log_param(key="beta_kl_anneal_epochs", value=beta_kl_anneal_epochs)
+                
+    # --- τ-VI toggles (key difference) ---
+    mlflow.log_param(key="tau_kl_beta", value=tau_kl_beta)
+    mlflow.log_param(key="tau_vi_sigma_init", value=tau_vi_sigma_init)
+                
+    # --- VI convergence (no-val) ---
+    
+    mlflow.log_param(key="conv_use_ema", value= conv_use_ema)
+    mlflow.log_param(key="conv_tol", value=conv_tol)
+    mlflow.log_param(key="conv_min_epochs", value=conv_min_epochs)
+    mlflow.log_param(key="conv_ema_beta", value=conv_ema_beta)
+    
+    
+    
     mlflow.log_param(key="penalty_lasso_conditional_independence", value=penalty_lasso_conditional_independence)
     mlflow.log_param(key="adaptive_lasso_weights_matrix", value=adaptive_lasso_weights_matrix)
-    mlflow.log_param(key="optimizer", value=optimizer)
-    #mlflow.log_param(key= "inference", value=inference)
-    mlflow.log_param(key= "cv", value=cv)
-    mlflow.log_param(key="learning_rate", value=learning_rate)
+    mlflow.log_param(key="optimazer_gtm", value=optimizer_gtm)
+    mlflow.log_param(key= "inference_gtm", value="frequentist")
+    mlflow.log_param(key= "inference_bgtm", value="bayesian")
+    mlflow.log_param(key="learning_rate_gtm", value=learning_rate_gtm)
     mlflow.log_param(key="iterations", value=iterations)
     mlflow.log_param(key="patience", value=patience)
     mlflow.log_param(key="min_delta", value=min_delta)
@@ -179,8 +286,8 @@ def run_experiment(
             penalty_transformation_ridge_second_difference,
             penalty_lasso_conditional_independence,
             adaptive_lasso_weights_matrix,
-            optimizer,
-            learning_rate,
+            optimizer_gtm,
+            learning_rate_gtm,
             iterations,
             patience,
             min_delta,
@@ -193,9 +300,9 @@ def run_experiment(
     # Run BGTM Model Training (starting from the frequentist GTM parameters)
     
     hyperparameters = define_hyperparameters(
-        tau_2=penalty_decorrelation_ridge_second_difference_chosen,
-        tau_1=penalty_decorrelation_ridge_first_difference_chosen,
-        tau_4=penalty_transformation_ridge_second_difference_chosen,
+        tau_2=penalty_decorrelation_ridge_second_difference_chosen if penalty_decorrelation_ridge_second_difference_chosen is not None else 5,
+        tau_1=penalty_decorrelation_ridge_first_difference_chosen if penalty_decorrelation_ridge_first_difference_chosen is not None else 4,
+        tau_4=penalty_transformation_ridge_second_difference_chosen if penalty_transformation_ridge_second_difference_chosen is not None else 0.1,
         cv=cv)
     
     model_bayes = GTM(
@@ -212,49 +319,42 @@ def run_experiment(
         inference = 'bayesian',
         hyperparameter=hyperparameters
     )
-        
+    
     model_bayes.train(
                 train_dataloader=dataloader_train_bgtm,
-                validate_dataloader=None,
-                hyperparameters=None,
-                iterations=800,
-                mu_init=model.state_dict(),
-                optimizer="Adam",
-                lr_mu = 1e-3,
-                lr_cholesky = 1e-4,
-                lr_rho = 3e-4,
-                lr_tau = 1.5e-3,
-                mcmc_sample_train=8,            # will ramp
-                mcmc_sample_val=32,             # fixed & larger for stable eval
-                mc_ramp_every=20,               # 4→8→16→32 at epochs 25/50/75
-                mc_ramp_max=64,
+                iterations=iterations,
+                mu_init=model.state_dict() if mu_init=="from_freq_gtm" else None,
+                optimizer=optimizer_bgtm,
+                lr_mu = lr_mu,
+                lr_cholesky = lr_cholesky,
+                lr_rho = lr_rho,
+                lr_tau = lr_tau,
                 
-                patience=10,                # early-stop patience
-                min_delta=0.00001, #with val data set 0.00001,                   # ~0.1% absolute of your loss scale
+                sample_train=sample_train,  
                 
-                sched_factor=0.5, 
-                sched_patience=10, 
-                sched_threshold=1e-4,
-                sched_min_lr=[5e-5, 1e-5, 5e-5],
+                train_sample_ramp_every=train_sample_ramp_every,
+                train_sample_ramp_max=train_sample_ramp_max,
+                
+                sched_factor=sched_factor, 
+                sched_patience=sched_patience, 
+                sched_threshold=sched_threshold,
+                sched_min_lr=sched_min_lr,
+                
                 #WARMING
-                warm_tau_epochs = 15,
-                warm_sigma_epochs = 15,  # try 5–10
+                warm_tau_epochs = warm_tau_epochs,
+                warm_sigma_epochs = warm_sigma_epochs,
                 
                 #Optimization method
-                beta_kl_start=0.5,    # try 1.5–3.0
-                beta_kl_anneal_epochs = 30,  # how fast to decay to 1.0
+                beta_kl_start=beta_kl_start,
+                beta_kl_anneal_epochs = beta_kl_anneal_epochs,
                 
-                # --- τ-VI toggles (key difference) ---
-                tau_vi_mode = "always", #"off" | "after_warm" | "always"
-                tau_kl_beta =0.2,
-                tau_vi_sigma_init = 0.05,
+                tau_kl_beta =tau_kl_beta,
+                tau_vi_sigma_init = tau_vi_sigma_init,
                 
-                # --- VI convergence (no-val) ---
-                conv_use_ema= True,
-                conv_window_size = 50,   # used if conv_use_ema=False
-                conv_tol = 0.001, #0.001,      # absolute ELBO change per-obs
-                conv_min_epochs = 50,   # don't stop too early
-                conv_ema_beta = 0.9,  # if conv_use_ema=True
+                conv_use_ema= conv_use_ema,
+                conv_tol = conv_tol,
+                conv_min_epochs = conv_min_epochs,
+                conv_ema_beta = conv_use_ema
     )
     
     # plot training curves
@@ -365,6 +465,7 @@ def run_experiment(
     clear_temp_folder(temp_folder)
 
 def define_hyperparameters(tau_1, tau_2, tau_4, cv):
+    
     a4, b4 = gamma_from_mean_cv(float(tau_4), cv=cv)
     a1, b1 = gamma_from_mean_cv(float(tau_1), cv=cv)
     a2, b2 = gamma_from_mean_cv(float(tau_2), cv=cv)
@@ -383,12 +484,13 @@ def define_hyperparameters(tau_1, tau_2, tau_4, cv):
             }
         }
     
-def gamma_from_mean_cv(mean, cv=1.0):
+def gamma_from_mean_cv(mean, cv=1.0, eps = 0.0001):
     a = 1.0 / (cv ** 2)
-    b = a / mean
+    b = a / max(mean, eps)
     return float(a), float(b)
 
 def train_freq_gtm_model(penalty_decorrelation_ridge_param, penalty_decorrelation_ridge_first_difference, penalty_decorrelation_ridge_second_difference, penalty_transformation_ridge_second_difference, penalty_lasso_conditional_independence, adaptive_lasso_weights_matrix, optimizer, learning_rate, iterations, patience, min_delta, seperate_copula_training, max_batches_per_iter, pretrained_transformation_layer, n_trials, temp_folder, study_name, dataloader_train, dataloader_validate, model):
+    
     study = model.hyperparameter_tune_penalties( 
         train_dataloader = dataloader_train,
         validate_dataloader = dataloader_validate,
@@ -412,17 +514,27 @@ def train_freq_gtm_model(penalty_decorrelation_ridge_param, penalty_decorrelatio
         
     # for every penalty if we pass a none the set penalty to zero
     if penalty_decorrelation_ridge_param is None:
+        
         penalty_decorrelation_ridge_param_chosen = 0
+        
     elif penalty_decorrelation_ridge_param is float:
+        
         penalty_decorrelation_ridge_param_chosen = penalty_decorrelation_ridge_param
+        
     else:
+        
         penalty_decorrelation_ridge_param_chosen = study.best_params["penalty_decorrelation_ridge_param"]
 
     if penalty_decorrelation_ridge_first_difference is None:
+        
         penalty_decorrelation_ridge_first_difference_chosen = 0
+        
     elif penalty_decorrelation_ridge_first_difference is float:
+        
         penalty_decorrelation_ridge_first_difference_chosen = penalty_decorrelation_ridge_first_difference
+        
     else:
+        
         penalty_decorrelation_ridge_first_difference_chosen = study.best_params["penalty_decorrelation_ridge_first_difference"]
 
     if penalty_decorrelation_ridge_second_difference is None:

@@ -745,10 +745,10 @@ class GTM(nn.Module):
         #BAYES VI
         hyperparameters=None,
         mu_init: Tensor|None = None,
-        mcmc_sample_train=4,
-        mcmc_sample_val=16,
-        mc_ramp_every=25,
-        mc_ramp_max=32,
+        sample_train=4,
+        sample_val=None,
+        train_sample_ramp_every=25,
+        train_sample_ramp_max=32,
         sched_factor=0.5,
         sched_patience=6,
         sched_threshold=1.e-4,
@@ -768,8 +768,7 @@ class GTM(nn.Module):
         lr_rho: float = 3e-4,
         lr_tau: float = 1.5e-3,
         sched_cooldown: int = 1,
-        sched_min_lr: float = 5e-5,
-        global_seed: int = 0,
+        sched_min_lr: float = 5e-5
     ) -> dict[str, Tensor]:
         """
         Trains the GTM iteratively using gradient-based optimization.
@@ -896,11 +895,10 @@ class GTM(nn.Module):
                 hyperparameters=hyperparameters,
                 verbose=verbose,
                 max_batches_per_iter=max_batches_per_iter,
-                mcmc_sample_train=mcmc_sample_train,
-                mcmc_sample_val=mcmc_sample_val,
-                mc_ramp_every=mc_ramp_every,
-                mc_ramp_max=mc_ramp_max,
-                global_seed=global_seed,
+                mcmc_sample_train=sample_train,
+                mcmc_sample_val=sample_val,
+                mc_ramp_every=train_sample_ramp_every,
+                mc_ramp_max=train_sample_ramp_max,
                 patience_val=patience,
                 min_delta=min_delta,
                 lr_mu=lr_mu,

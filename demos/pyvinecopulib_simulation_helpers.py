@@ -71,7 +71,9 @@ def sample_random_pair_copulas(D, Independence_tree=2):
                     bicop = pv.Bicop(
                         family=fam,
                         rotation=rotation,
-                        parameters=np.stack([np.array([neg * tau])]),
+                        parameters=bicop.tau_to_parameters(
+                            float(neg * tau)
+                            )#np.stack([np.array([neg * tau])]),
                     )
                 elif fam == pv.BicopFamily.frank:
                     bicop = pv.Bicop(family=fam, rotation=rotation)
@@ -79,7 +81,8 @@ def sample_random_pair_copulas(D, Independence_tree=2):
                         family=fam,
                         rotation=rotation,
                         parameters=bicop.tau_to_parameters(
-                            np.stack([np.array([neg * tau])])
+                            #np.stack([np.array([neg * tau])])
+                            float(neg * tau)
                         ),
                     )
                 else:
@@ -87,7 +90,10 @@ def sample_random_pair_copulas(D, Independence_tree=2):
                     bicop = pv.Bicop(
                         family=fam,
                         rotation=rotation,
-                        parameters=bicop.tau_to_parameters(np.array([tau])),
+                        parameters=bicop.tau_to_parameters(
+                            float(tau)
+                            #np.array([tau])
+                            ),
                     )
 
                 bicop_list.append(bicop)

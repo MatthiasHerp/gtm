@@ -139,15 +139,12 @@ def train_bayes(
 
     # --- MC sampling ----------------------------------------------------
     mcmc_sample_train: int = 4,
-    mcmc_sample_val: int = 8,
+    mcmc_sample_val: int = None,
     mc_ramp_every: int | None = 20,
-    mc_ramp_max: int = 32,
+    mc_ramp_max: int = 64,
     
     # --- Init Params ----------------------------------------------------
     mu_init: torch.Tensor | None = None,
-
-    # --- randomness -----------------------------------------------------
-    global_seed: int = 0,
 
     # --- early stopping (val-based) ------------------------------------
     patience_val: int = 10,
@@ -198,8 +195,11 @@ def train_bayes(
     band_tau4: float = 0.20,
     band_decor: float = 0.15,
     use_empirical_bayes: bool = False
-    eb_warm_then_cavi: bool = True
+    eb_warm_then_cavi: bool = False
     
+    
+    # --- randomness -----------------------------------------------------
+    global_seed: int = 0 ## FOR VI APPROXIMATION INTERNAL USAGE
     
     # floors for τ
     TAU4_FLOOR = 1e-3
@@ -334,7 +334,7 @@ def train_bayes(
     )
 
     # Convergence tracker when no validation set
-    if validate_dataloader is None:
+    if validate_dataloader in (None, False):
         conv_tracker = _ELBOConvergence(
             use_ema=conv_use_ema,
             window_size=conv_window_size,
@@ -441,7 +441,7 @@ def train_bayes(
         # ----------------------------------------------------------------
         # 6a. Validation OR ELBO convergence
         # ----------------------------------------------------------------
-        if validate_dataloader is not None:
+        if validate_dataloader not in (None, False):
             val_elpd = _evaluate_epoch(
                 VI,
                 model,
@@ -710,9 +710,9 @@ def train_bayes(
         # ----------------------------------------------------------------
         # 6e. Verbose logging
         # ----------------------------------------------------------------
-        if verbose and ((epoch + 1) % 5 == 0 or (validate_dataloader is not None and improved)):
+        if verbose and ((epoch + 1) % 5 == 0 or ((validate_dataloader not in (None, False)) and improved)):
             val_str = f"  val_ELPD={val_elpd:.4f}" if val_elpd is not None else ""
-            if validate_dataloader is None:
+            if validate_dataloader in (None, False):
                 track = f"[ELBO] per-obs={elbo_per_obs:.6f}"
             else:
                 track = (
@@ -739,7 +739,7 @@ def train_bayes(
             )
 
         # early stop with validation
-        if (validate_dataloader is not None) and (no_improve >= patience_val):
+        if (validate_dataloader not in (None, False)) and (no_improve >= patience_val):
             print(f"Early stop @ epoch {epoch + 1}: no val improvement for {patience_val} epochs.")
             break
 
