@@ -3,7 +3,7 @@ from gtm import *
 # Sample Copulas Package
 import pyvinecopulib as pv
 # Helpers to generate specfific vines and analyze there conditional independencies
-from pyvinecopulib_simulation_helpers import *
+from demos.pyvinecopulib_simulation_helpers import *
 # Other Stuff
 import numpy as np
 import torch
