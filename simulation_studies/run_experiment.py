@@ -72,7 +72,7 @@ def run_experiment(
     copula_only_bgtm=False,
     min_val_bgtm=-6,
     max_val_bgtm=6,
-    posterior_sampling_size_bgtm=10000,
+    posterior_sampling_size_bgtm=2**7,
     cred_leve_bgtm=0.90,
     
     
@@ -502,7 +502,7 @@ def run_experiment(
         )
 
         log_likelihood_test_bgtm = VI.predictive_log_prob(
-            y=synthetic_data_dict['train_data'],
+            y=synthetic_data_dict['test_data'],
             model=model_bayes,
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
