@@ -1,29 +1,31 @@
 from simulation_studies.run_experiment import run_experiment
 import mlflow
+from mlflow.tracking import MlflowClient
 import torch
 import os
 
 if __name__ == "__main__":
-    
+
     # change the working directory to root of the project
     os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    
-    experimental_name = "rine_5D_1000obs"
-    
-    # chekc if experiment exists
-    experiment = mlflow.get_experiment_by_name(experimental_name)
-    if experiment is not None:
-        experiment_id = experiment.experiment_id
-    else:
-        experiment_id = mlflow.create_experiment(experimental_name)
 
-    
+    experimental_name = "rine_5D_1000obs"
+
+    client = MlflowClient()
+
+    experiment = mlflow.get_experiment_by_name(experimental_name)
+
+    if experiment is None:
+        experiment_id = mlflow.create_experiment(experimental_name)
+    else:
+        experiment_id = experiment.experiment_id
+        if experiment.lifecycle_stage != "active":
+            client.restore_experiment(experiment_id)
+
     for seed in range(10):
-        
         run_experiment(
-            run_name="rine_5D_1000obs_seed_{}".format(seed),
+            run_name=f"rine_5D_1000obs_seed_{seed}",
             experiment_id=experiment_id,
-            # Tags
             seed_value=seed,
             dimensionality=5,
             Independence_tree=3,
@@ -31,7 +33,6 @@ if __name__ == "__main__":
             N_train=667,
             N_validate=333,
             N_test=20000,
-            # Parameters,
             number_transformation_layers=1,
             number_decorrelation_layers=3,
             degree_transformations=10,
@@ -46,10 +47,8 @@ if __name__ == "__main__":
             penalty_transformation_ridge_second_difference=None,
             penalty_lasso_conditional_independence=None,
             adaptive_lasso_weights_matrix=False,
-
             optimizer_gtm="LBFGS",
             learning_rate_gtm=1,
-
             cv=1,
             iterations=2000,
             patience=5,
