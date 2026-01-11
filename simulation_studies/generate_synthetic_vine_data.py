@@ -15,7 +15,8 @@ def generate_synthetic_vine_data(seed_value=1,
                                  vine_type="R-Vine",
                                  N_train=2000, 
                                  N_validate=2000, 
-                                 N_test=20000):
+                                 N_test=20000,
+                                 device="cpu"):
     """
     Generate Synthetic Data from a Randomly Sampled Vine Copula with Gaussian Marginals.
 
@@ -119,11 +120,11 @@ def generate_synthetic_vine_data(seed_value=1,
         "train_data": simulated_data_train,
         "validate_data": simulated_data_validate,
         "test_data": simulated_data_test,
-        "loglik_true_train": loglik_true_train,
-        "loglik_true_validate": loglik_true_validate,
-        "loglik_true_test": loglik_true_test,
-        "loglik_true_est_train": loglik_true_est_train,
-        "loglik_true_est_validate": loglik_true_est_validate,
-        "loglik_true_est_test": loglik_true_est_test,
-        "df_true_structure": df_true_structure_sub   
+        "loglik_true_train": loglik_true_train.to(device),
+        "loglik_true_validate": loglik_true_validate.to(device),
+        "loglik_true_test": loglik_true_test.to(device),
+        "loglik_true_est_train": loglik_true_est_train.to(device),
+        "loglik_true_est_validate": loglik_true_est_validate.to(device),
+        "loglik_true_est_test": loglik_true_est_test.to(device),
+        "df_true_structure": df_true_structure_sub
     }

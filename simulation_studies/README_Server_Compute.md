@@ -26,7 +26,7 @@ docker run -it --rm --gpus \"device=1\" -v /scratch/fcc/gtm/:/mnt container_name
 - scratch is a faster to acess and write directory on the sever
 - push everything to scratch, mount it and compute there, then pull scratch back after finishing computations
 - pushing stuff to scratch via rsync command:
-rsync -av --delete gtm/* /scratch/mhe/gtm/
+rsync -av --delete gtm/* /scratch/fcc/gtm/
 - pulling stuff from scratch (only need mlflow in our case):
 rsync -av /scratch/mhe/gtm/mlruns/*  /sybig/home/mhe/gtm/mlruns
 

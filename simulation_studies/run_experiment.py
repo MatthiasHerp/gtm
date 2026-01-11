@@ -81,9 +81,9 @@ def run_experiment(
     tau_init="from_freq_gtm",
     optimizer_bgtm="Adam",
     lr_mu = 1e-3,
-    lr_cholesky = 1e-4,
-    lr_rho = 3e-4,
-    lr_tau = 1.5e-3,
+    lr_cholesky = 5e-5,
+    lr_rho = 5e-5,
+    lr_tau = 1e-4,
     sample_train=8,
     train_sample_ramp_every=20,
     train_sample_ramp_max=64,
@@ -165,7 +165,8 @@ def run_experiment(
             vine_type=vine_type,
             N_train=N_train,
             N_validate=N_validate,
-            N_test=N_test
+            N_test=N_test,
+            device=device
         )
         
         # Create dataset and DataLoader
@@ -348,9 +349,9 @@ def run_experiment(
         mean_mvn_model = synthetic_data_dict['train_data'].mean(0)
         cov_mvn_model = synthetic_data_dict['train_data'].T.cov()
         mvn_model = torch.distributions.MultivariateNormal(loc=mean_mvn_model, covariance_matrix=cov_mvn_model)
-        log_likelihood_train_gaussian = mvn_model.log_prob(synthetic_data_dict['train_data'])
-        log_likelihood_validate_gaussian = mvn_model.log_prob(synthetic_data_dict['validate_data'])
-        log_likelihood_test_gaussian = mvn_model.log_prob(synthetic_data_dict['test_data'])
+        log_likelihood_train_gaussian = mvn_model.log_prob(synthetic_data_dict['train_data']).to(device)
+        log_likelihood_validate_gaussian = mvn_model.log_prob(synthetic_data_dict['validate_data']).to(device)
+        log_likelihood_test_gaussian = mvn_model.log_prob(synthetic_data_dict['test_data']).to(device)
 
         kld_gtm_train = np.round(torch.mean(synthetic_data_dict["loglik_true_train"] - log_likelihood_train_gtm).item(),4)
         kld_gaussian_train = np.round(torch.mean(synthetic_data_dict["loglik_true_train"] - log_likelihood_train_gaussian).item(),4)
@@ -423,13 +424,13 @@ def run_experiment(
         torch.save(model.state_dict(), f"{temp_folder}/mu_init.pt")
         mlflow.log_artifact(f"{temp_folder}/mu_init.pt")
 
-        torch.save(tau_nodes, f"{temp_folder}/tau_init.pt")
-        mlflow.log_artifact(f"{temp_folder}/tau_init.pt")
+        #torch.save(tau_nodes, f"{temp_folder}/tau_init.pt")
+        #mlflow.log_artifact(f"{temp_folder}/tau_init.pt")
 
         # --- log summary metrics ---
-        mu_vals = torch.cat([v.flatten() for v in model.state_dict().values()])
-        mlflow.log_metric("mu_init_mean", mu_vals.mean().item())
-        mlflow.log_metric("mu_init_std", mu_vals.std().item())
+        #mu_vals = torch.cat([v.flatten() for v in model.state_dict().values()])
+        #mlflow.log_metric("mu_init_mean", mu_vals.mean().item())
+        #mlflow.log_metric("mu_init_std", mu_vals.std().item())
 
         
         
@@ -492,7 +493,7 @@ def run_experiment(
 
         # BGTM predictive log-likelihoods (Bayesian mixture over θ, τ)
         log_likelihood_train_bgtm = VI.predictive_log_prob(
-            y=synthetic_data_dict['test_data'],
+            y=synthetic_data_dict['train_data'],
             model=model_bayes,
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
@@ -501,7 +502,7 @@ def run_experiment(
         )
 
         log_likelihood_test_bgtm = VI.predictive_log_prob(
-            y=synthetic_data_dict['test_data'],
+            y=synthetic_data_dict['train_data'],
             model=model_bayes,
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
