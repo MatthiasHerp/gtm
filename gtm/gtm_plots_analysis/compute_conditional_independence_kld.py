@@ -660,7 +660,7 @@ def get_evaluation_data(
             [sample_size, self.y_train.size(1)]
         ).to(device)
 
-    elif evaluation_data_type == "samples_from_model":
+    elif evaluation_data_type == "samples_from_model": ### TOBE FIXED
         
         evaluation_data = VI_Model.predictive_sample(
             model=self,
