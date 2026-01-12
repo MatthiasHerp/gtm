@@ -340,7 +340,8 @@ def run_experiment(
                 "penalty_decorrelation_ridge_first_difference_chosen": penalty_decorrelation_ridge_first_difference_chosen,
                 "penalty_decorrelation_ridge_second_difference_chosen": penalty_decorrelation_ridge_second_difference_chosen,
                 "penalty_transformation_ridge_second_difference_chosen": penalty_transformation_ridge_second_difference_chosen,
-            }
+            },
+            log_mlflow_model=True
         )
         # can be loaded (to cpu) via: model = mlflow.pytorch.load_model("runs:/{}/model".format(run_id), map_location=torch.device('cpu'))
         
@@ -521,6 +522,7 @@ def run_experiment(
                 "tau_kl_beta": tau_kl_beta,
                 # add anything else you want to reconstruct/debug
             },
+            log_mlflow_model=True
         )
 
         # BGTM predictive log-likelihoods (Bayesian mixture over θ, τ)

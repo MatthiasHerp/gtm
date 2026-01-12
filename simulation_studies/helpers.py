@@ -20,43 +20,49 @@ def _json_save_and_log(obj, local_path, artifact_path=None):
 def log_gtm_and_vi_bundle(
     *,
     temp_folder: str,
-    bundle_name: str,          # e.g. "gtm_freq" or "gtm_bayes"
-    model,                     # GTM (torch.nn.Module)
-    VI=None,                   # your VI_Model (torch.nn.Module-like)
-    tau_nodes=None,            # TauPack
+    bundle_name: str,          # "gtm_freq" or "gtm_bayes"
+    model,
+    VI=None,
+    tau_nodes=None,
     extra_meta: dict | None = None,
+    model_init_kwargs: dict | None = None,
+    training_output: dict | None = None,
+    log_mlflow_model: bool = False,   # <-- NEW: default OFF to avoid MLflow name rules
 ):
     """
-    Logs:
-      - model as mlflow pytorch model
-      - model.state_dict() as artifact
-      - VI tensors as artifact (mu/rho/L + optional schema)
-      - tau_nodes params (mu/log_sigma per node) as artifact
-      - metadata json
+    Logs a reproducible bundle under artifacts/{bundle_name}/...
     """
-    # ---------- 1) log the GTM torch model ----------
-    mlflow.pytorch.log_model(model, artifact_path=f"{bundle_name}/gtm_model")
 
-    # also log raw state_dict (often handy)
+    meta = {} if extra_meta is None else dict(extra_meta)
+
+    # (A) init kwargs
+    if model_init_kwargs is not None:
+        _json_save_and_log(
+            model_init_kwargs,
+            os.path.join(temp_folder, f"{bundle_name}_init.json"),
+            artifact_path=f"{bundle_name}/init",
+        )
+
+    # (B) ALWAYS log raw state_dict (most robust)
     _torch_save_and_log(
         model.state_dict(),
         os.path.join(temp_folder, f"{bundle_name}_gtm_state_dict.pt"),
         artifact_path=f"{bundle_name}/state",
     )
 
-    meta = {} if extra_meta is None else dict(extra_meta)
+    # (C) OPTIONAL: log as MLflow model with a FLAT name (no '/')
+    if log_mlflow_model:
+        # name must not contain / : . % " '
+        safe_name = f"{bundle_name}_gtm_model".replace("/", "_").replace(".", "_")
+        mlflow.pytorch.log_model(model, name=safe_name)
 
-    # ---------- 2) log VI state (robust minimal set) ----------
+    # (D) VI tensors
     if VI is not None:
-        # if VI is an nn.Module, you *can* also log it as a model,
-        # but I still recommend logging minimal tensors for robustness.
         vi_state = {
             "vi_mu": VI.mu.detach().cpu(),
             "vi_rho": VI.rho.detach().cpu(),
             "vi_L_unconstrained": VI.L_unconstrained.detach().cpu(),
         }
-
-        # optional: store schema/blocks if present (only if it exists)
         if hasattr(VI, "_schema"):
             try:
                 vi_state["schema_keys"] = [k for k, _ in VI._schema]
@@ -74,7 +80,6 @@ def log_gtm_and_vi_bundle(
             artifact_path=f"{bundle_name}/vi",
         )
 
-        # If you still want the full VI state_dict too:
         if hasattr(VI, "state_dict"):
             _torch_save_and_log(
                 VI.state_dict(),
@@ -82,14 +87,13 @@ def log_gtm_and_vi_bundle(
                 artifact_path=f"{bundle_name}/vi",
             )
 
-    # ---------- 3) log tau_nodes state (variational parameters) ----------
+    # (E) tau nodes
     if tau_nodes is not None:
         tau_state = {}
         for node_name in ["node4", "node1", "node2"]:
             node = getattr(tau_nodes, node_name, None)
             if node is None:
                 continue
-            # GammaTauNode has mu/log_sigma in your code
             tau_state[node_name] = {
                 "mu": node.mu.detach().cpu(),
                 "log_sigma": node.log_sigma.detach().cpu(),
@@ -100,7 +104,26 @@ def log_gtm_and_vi_bundle(
             artifact_path=f"{bundle_name}/tau_nodes",
         )
 
-    # ---------- 4) log metadata ----------
+    # (F) training output (optional)
+    if training_output is not None:
+        summary = {}
+        for k in ["training_time", "epochs_run", "best_val", "decor_present"]:
+            if k in training_output:
+                summary[k] = training_output[k]
+        _json_save_and_log(
+            summary,
+            os.path.join(temp_folder, f"{bundle_name}_train_summary.json"),
+            artifact_path=f"{bundle_name}/train",
+        )
+        for k in ["monitor", "loss_history", "val_history"]:
+            if k in training_output and training_output[k] is not None:
+                _torch_save_and_log(
+                    training_output[k],
+                    os.path.join(temp_folder, f"{bundle_name}_{k}.pt"),
+                    artifact_path=f"{bundle_name}/train",
+                )
+
+    # (G) meta
     _json_save_and_log(
         meta,
         os.path.join(temp_folder, f"{bundle_name}_meta.json"),

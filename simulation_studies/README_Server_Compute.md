@@ -28,14 +28,14 @@ docker run -it --rm --gpus \"device=1\" -v /scratch/fcc/gtm/:/mnt container_name
 - pushing stuff to scratch via rsync command:
 rsync -av --delete gtm/* /scratch/fcc/gtm/
 - pulling stuff from scratch (only need mlflow in our case):
-rsync -av /scratch/mhe/gtm/mlruns/*  /sybig/home/mhe/gtm/mlruns
+rsync -av /scratch/fcc/gtm/mlruns/*  /sybig/home/fcc/gtm/mlruns
 
 ## 5. Push and Pull Server to local
 - either via github syncing or with rsync commands
 - rsync push (run locally):
-rsync -arvz --delete -e 'ssh deepthought' /Users/matthiasherp/Desktop/phd_github_repositories/gtm/ :/sybig/home/mhe/gtm/.
+rsync -arvz --delete -e 'ssh deepthought' /Users/franciscocapunay/Downloads/gtm_server_copy :/sybig/home/fcc/gtm/.
 - rsync pull (run locally):
-rsync -arvz -e 'ssh hydra' :/sybig/home/mhe/mctm_pytorch/mlruns .
+rsync -arvz -e 'ssh hydra' :/sybig/home/fcc/gtm/mlruns .
 
 ## 6. Server housekeeping
 - erst htop checken (cpu)
