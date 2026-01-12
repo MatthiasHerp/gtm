@@ -6,6 +6,7 @@ import pyvinecopulib as pv
 from demos.pyvinecopulib_simulation_helpers import *
 from simulation_studies.generate_synthetic_vine_data import generate_synthetic_vine_data
 from simulation_studies.mlflow_plot_storage_helpers import log_mlflow_plot, create_temp_folder, clear_temp_folder
+from helpers import log_gtm_and_vi_bundle
 
 # Other Stuff
 import mlflow as mlflow
@@ -327,7 +328,20 @@ def run_experiment(
         log_mlflow_plot(fig_train, 'training_curves.png')
         
         # Log trained model
-        _ = mlflow.pytorch.log_model(model, "model")
+        log_gtm_and_vi_bundle(
+            temp_folder=temp_folder,
+            bundle_name="gtm_freq",
+            model=model,
+            VI=None,
+            tau_nodes=None,
+            extra_meta={
+                "inference": "frequentist",
+                "penalty_decorrelation_ridge_param_chosen": penalty_decorrelation_ridge_param_chosen,
+                "penalty_decorrelation_ridge_first_difference_chosen": penalty_decorrelation_ridge_first_difference_chosen,
+                "penalty_decorrelation_ridge_second_difference_chosen": penalty_decorrelation_ridge_second_difference_chosen,
+                "penalty_transformation_ridge_second_difference_chosen": penalty_transformation_ridge_second_difference_chosen,
+            }
+        )
         # can be loaded (to cpu) via: model = mlflow.pytorch.load_model("runs:/{}/model".format(run_id), map_location=torch.device('cpu'))
         
         # store all trained parameters
@@ -421,8 +435,8 @@ def run_experiment(
         mlflow.log_param("tau_init_type", tau_init)
 
         # --- log full initializations ---
-        torch.save(model.state_dict(), f"{temp_folder}/mu_init.pt")
-        mlflow.log_artifact(f"{temp_folder}/mu_init.pt")
+        torch.save(model.state_dict(), f"{temp_folder}/freq_gtm_mu_init_state_dict.pt")
+        mlflow.log_artifact(f"{temp_folder}/freq_gtm_mu_init_state_dict.pt", artifact_path="gtm_bayes/init")
 
         #torch.save(tau_nodes, f"{temp_folder}/tau_init.pt")
         #mlflow.log_artifact(f"{temp_folder}/tau_init.pt")
@@ -490,6 +504,24 @@ def run_experiment(
         tau_nodes = output_train["tau_nodes"]
         hyper_T   = model_bayes.hyperparameter["transformation"]
         hyper_D   = model_bayes.hyperparameter["decorrelation"]
+        
+        
+        log_gtm_and_vi_bundle(
+            temp_folder=temp_folder,
+            bundle_name="gtm_bayes",
+            model=model_bayes,
+            VI=VI,
+            tau_nodes=tau_nodes,
+            extra_meta={
+                "inference": "bayesian_vi",
+                "hyper_T": hyper_T,
+                "hyper_D": hyper_D,
+                "cv": cv,
+                "tau_vi_sigma_init": tau_vi_sigma_init,
+                "tau_kl_beta": tau_kl_beta,
+                # add anything else you want to reconstruct/debug
+            },
+        )
 
         # BGTM predictive log-likelihoods (Bayesian mixture over θ, τ)
         log_likelihood_train_bgtm = VI.predictive_log_prob(
@@ -669,7 +701,7 @@ def train_freq_gtm_model(penalty_decorrelation_ridge_param, penalty_decorrelatio
     
     if penalty_lasso_conditional_independence is None:
         penalty_lasso_conditional_independence_chosen = False
-    elif penalty_lasso_conditional_independence is float:
+    elif isinstance(penalty_lasso_conditional_independence, (float, int)):
         penalty_lasso_conditional_independence_chosen = penalty_lasso_conditional_independence
     else:
         penalty_lasso_conditional_independence_chosen = study.best_params["penalty_lasso_conditional_independence"]

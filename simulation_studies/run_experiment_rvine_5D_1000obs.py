@@ -22,7 +22,7 @@ if __name__ == "__main__":
         if experiment.lifecycle_stage != "active":
             client.restore_experiment(experiment_id)
 
-    for seed in range(10):
+    for seed in range(3):
         run_experiment(
             run_name=f"rine_5D_1000obs_seed_{seed}",
             experiment_id=experiment_id,
