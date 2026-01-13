@@ -53,8 +53,7 @@ def log_gtm_and_vi_bundle(
     # (C) OPTIONAL: log as MLflow model with a FLAT name (no '/')
     if log_mlflow_model:
         # name must not contain / : . % " '
-        safe_name = f"{bundle_name}_gtm_model".replace("/", "_").replace(".", "_")
-        mlflow.pytorch.log_model(model, name=safe_name)
+        mlflow.pytorch.log_model(model, artifact_path=f"{bundle_name}/mlflow_model")
 
     # (D) VI tensors
     if VI is not None:

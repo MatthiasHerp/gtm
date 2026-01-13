@@ -575,8 +575,21 @@ def compute_conditional_independence_kld_bayesian(
     if copula_only and old_num_trans_layers is not None:
         self.num_trans_layers = old_num_trans_layers
 
+    raw = {
+    "precision_abs": metrics_precision_abs.detach().cpu().numpy(),  # [S, n_pairs]
+    "precision_sq":  metrics_precision_sq.detach().cpu().numpy(),
+    "corr_abs":      metrics_corr_abs.detach().cpu().numpy(),
+    "corr_sq":       metrics_corr_sq.detach().cpu().numpy(),
+}
+
+    if likelihood_based_metrics:
+        raw["kld"] = metrics_kld.detach().cpu().numpy()   # [S, n_pairs]
+        raw["iae"] = metrics_iae.detach().cpu().numpy()
+    
+    raw["pair_index"] = precision_summary[["var_row","var_col"]].to_numpy(dtype=np.int64)
+    
     df.reset_index(inplace=True)
-    return df
+    return df, raw
 
 def compute_precision_and_correlation(self, vi_model, evaluation_data, theta_s):
     params_s = vi_model._theta_to_state_dict(theta_s)

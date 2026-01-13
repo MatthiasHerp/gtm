@@ -19,6 +19,7 @@ from sklearn.metrics import roc_auc_score
 import mlflow
 import torch
 import matplotlib.pyplot as plt
+import os
 
 def run_experiment(
     run_name,
@@ -154,6 +155,9 @@ def run_experiment(
                   "N_validate": N_validate,
                   "N_test": N_test}
             )
+    
+    print("tracking:", mlflow.get_tracking_uri())
+    print("artifact :", mlflow.get_artifact_uri())
     
     try:
     
@@ -322,10 +326,20 @@ def run_experiment(
         plt.ylabel("Negative Log Likelihood")
         plt.title("GTM Training Curve")
         plt.legend()
+
         fig_train = plt.gcf()
-        plt.close()
-        # log the plot as an mlflow artifact
-        log_mlflow_plot(fig_train, 'training_curves.png')
+
+        # log the plot as an mlflow artifact (this saves + logs)
+        log_mlflow_plot(fig_train, "training_curves.png", temporary_storage_directory=temp_folder)
+
+        plot_path = os.path.join(temp_folder, "training_curves.png")
+        assert os.path.exists(plot_path), f"Plot not found at {plot_path}"
+
+        # OPTIONAL: only keep this if you *want* it logged twice (once by log_mlflow_plot)
+        # If not, remove this line.
+        mlflow.log_artifact(plot_path)
+
+        plt.close(fig_train)
         
         # Log trained model
         log_gtm_and_vi_bundle(
@@ -341,7 +355,7 @@ def run_experiment(
                 "penalty_decorrelation_ridge_second_difference_chosen": penalty_decorrelation_ridge_second_difference_chosen,
                 "penalty_transformation_ridge_second_difference_chosen": penalty_transformation_ridge_second_difference_chosen,
             },
-            log_mlflow_model=True
+            log_mlflow_model=False
         )
         # can be loaded (to cpu) via: model = mlflow.pytorch.load_model("runs:/{}/model".format(run_id), map_location=torch.device('cpu'))
         
@@ -506,6 +520,22 @@ def run_experiment(
         hyper_T   = model_bayes.hyperparameter["transformation"]
         hyper_D   = model_bayes.hyperparameter["decorrelation"]
         
+        elbo_values = output_train["loss_history"]
+
+        # normalize type
+        if isinstance(elbo_values, torch.Tensor):
+            elbo_values = elbo_values.detach().cpu().numpy()
+        else:
+            elbo_values = np.asarray(elbo_values)
+
+        npz_path = os.path.join(temp_folder, "elbo_loss.npz")
+        np.savez_compressed(npz_path, elbo=elbo_values)
+
+        assert os.path.exists(npz_path), f"NPZ not created: {npz_path}"
+        print("ELBO length:", len(elbo_values))
+        print("NPZ size (bytes):", os.path.getsize(npz_path))
+
+        mlflow.log_artifact(npz_path, artifact_path="gtm_bayes/training")
         
         log_gtm_and_vi_bundle(
             temp_folder=temp_folder,
@@ -522,7 +552,7 @@ def run_experiment(
                 "tau_kl_beta": tau_kl_beta,
                 # add anything else you want to reconstruct/debug
             },
-            log_mlflow_model=True
+            log_mlflow_model=False
         )
 
         # BGTM predictive log-likelihoods (Bayesian mixture over θ, τ)
@@ -568,7 +598,7 @@ def run_experiment(
         mlflow.log_param(key="posterior_sampling_size_bgtm", value=posterior_sampling_size_bgtm)
         mlflow.log_param(key="cred_leve_bgtm", value=cred_leve_bgtm)    
         
-        conditional_independence_table_bgtm = model_bayes.compute_conditional_independence_table(
+        conditional_independence_table_bgtm, raw_ci_bgtm = model_bayes.compute_conditional_independence_table(
             vi_model=VI,
             y=synthetic_data_dict['test_data'],
             sample_size = sample_size_bgtm,
@@ -591,6 +621,15 @@ def run_experiment(
         auc_corr_bgtm = roc_auc_score(merged_ci_tables_bgtm["dependence"], merged_ci_tables_bgtm["cond_correlation_abs_mean"])
         auc_pmat_bgtm = roc_auc_score(merged_ci_tables_bgtm["dependence"], merged_ci_tables_bgtm["precision_abs_mean"])
 
+        # save raw arrays so you can compute AUC distribution later
+        npz_path = os.path.join(temp_folder, "bgtm_ci_raw_arrays.npz")
+        np.savez_compressed(npz_path, **raw_ci_bgtm)
+        assert os.path.exists(npz_path), f"NPZ not created: {npz_path}"
+        print("NPZ size (bytes):", os.path.getsize(npz_path))
+
+        mlflow.log_artifact(npz_path, artifact_path="gtm_bayes/ci_raw")
+        
+        
         mlflow.log_metric(key="auc_iae_bgtm", value=auc_iae_bgtm)
         mlflow.log_metric(key="auc_kld_bgtm", value=auc_kld_bgtm)
         mlflow.log_metric(key="auc_cond_corr_bgtm", value=auc_corr_bgtm)

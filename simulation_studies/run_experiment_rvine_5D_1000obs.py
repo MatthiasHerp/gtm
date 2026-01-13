@@ -6,22 +6,25 @@ import os
 
 if __name__ == "__main__":
 
-    # change the working directory to root of the project
-    os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    experimental_name = "rine_5D_1000obs"
-
+    # always track to the mounted persistent dir
+    TRACKING = "/mnt/mlruns"   # inside container
+    mlflow.set_tracking_uri(f"file:{TRACKING}")
     client = MlflowClient()
-
+    
+    experimental_name = "rine_5D_1000obs_bgtm_test_1"
     experiment = mlflow.get_experiment_by_name(experimental_name)
-
     if experiment is None:
-        experiment_id = mlflow.create_experiment(experimental_name)
+        experiment_id = mlflow.create_experiment(
+            experimental_name,
+            artifact_location=f"file:{TRACKING}/{experimental_name}"
+            )
     else:
         experiment_id = experiment.experiment_id
-        if experiment.lifecycle_stage != "active":
-            client.restore_experiment(experiment_id)
 
+    print("Tracking URI:", mlflow.get_tracking_uri())
+    print("Experiment artifact_location:", client.get_experiment(experiment_id).artifact_location)
+
+    
     for seed in range(3):
         run_experiment(
             run_name=f"rine_5D_1000obs_seed_{seed}",
@@ -60,3 +63,5 @@ if __name__ == "__main__":
             temp_folder="./temp",
             study_name=None,
         )
+    print("Tracking URI:", mlflow.get_tracking_uri())
+    print("Experiment artifact_location:", client.get_experiment(experiment_id).artifact_location)
