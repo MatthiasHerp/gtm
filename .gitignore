@@ -19,3 +19,4 @@ demo.py
 setup.py
 .gitignore
 mlruns/
+bgtm_kld_eval/
