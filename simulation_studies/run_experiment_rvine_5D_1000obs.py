@@ -31,7 +31,7 @@ if __name__ == "__main__":
             experiment_id=experiment_id,
             seed_value=seed,
             dimensionality=5,
-            Independence_tree=3,
+            Independence_tree=2,
             vine_type="R-Vine",
             N_train=667,
             N_validate=333,
@@ -62,6 +62,7 @@ if __name__ == "__main__":
             n_trials=4,
             temp_folder="./temp",
             study_name=None,
+            posterior_sampling_size_bgtm=1000
         )
     print("Tracking URI:", mlflow.get_tracking_uri())
     print("Experiment artifact_location:", client.get_experiment(experiment_id).artifact_location)

@@ -174,6 +174,10 @@ def run_experiment(
             device=device
         )
         
+        truth_csv = os.path.join(temp_folder, "true_structure.csv")
+        synthetic_data_dict["df_true_structure"].to_csv(truth_csv, index=False)
+        mlflow.log_artifact(truth_csv, artifact_path="truth")
+        
         # Create dataset and DataLoader
         dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
         dataloader_train = DataLoader(dataset_train, batch_size=N_train)
@@ -435,6 +439,11 @@ def run_experiment(
             on=["var_row", "var_col"]
         )
         
+        # after computing conditional_independence_table_gtm
+        gtm_csv = os.path.join(temp_folder, "ci_table_gtm.csv")
+        conditional_independence_table_gtm.to_csv(gtm_csv, index=False)
+        mlflow.log_artifact(gtm_csv, artifact_path="gtm_freq/ci_tables")
+        
         auc_iae_gtm = roc_auc_score(merged_ci_tables_gtm["dependence"], merged_ci_tables_gtm["iae"])
         auc_kld_gtm = roc_auc_score(merged_ci_tables_gtm["dependence"], merged_ci_tables_gtm["kld"])
         auc_corr_gtm = roc_auc_score(merged_ci_tables_gtm["dependence"], merged_ci_tables_gtm["cond_correlation_abs_mean"])
@@ -648,12 +657,12 @@ def define_hyperparameters(tau_1, tau_2, tau_4, cv):
     
     return {
         "transformation": {
-            "sigma_a": 1.0, "sigma_b": 1.0,
+            "sigma_a": 1.0, "sigma_b": 1.0, ###
             "RW2": {"tau_a": a4, "tau_b": b4},
-            "RW1": {"tau_a": 1.0, "tau_b": 1.0}
+            "RW1": {"tau_a": 1.0, "tau_b": 1.0} ###
             },
         "decorrelation": {
-            "sigma_a": 1.0, "sigma_b": 1.0,
+            "sigma_a": 1.0, "sigma_b": 1.0, ###
             "RW2": {"tau_a": a2, "tau_b": b2},
             "RW1": {"tau_a": a1, "tau_b": b1}
             }
