@@ -11,7 +11,7 @@ if __name__ == "__main__":
     mlflow.set_tracking_uri(f"file:{TRACKING}")
     client = MlflowClient()
     
-    experimental_name = "rvine_5D_1000obs_bgtm"
+    experimental_name = "cvine_5D_1000obs_bgtm"
     experiment = mlflow.get_experiment_by_name(experimental_name)
     if experiment is None:
         experiment_id = mlflow.create_experiment(
