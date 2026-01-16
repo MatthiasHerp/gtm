@@ -1,0 +1,4 @@
+experiment,run_id,seed,n_pairs,kld_mean_over_pairs,frac_pairs_zero_in_ci,mean_p_kld_le_eps,npz_path
+rine_5D_1000obs_bgtm_test_1,29534ee3c4d045468871a3de15bee2bd,1,10,0.05768046776190098,0.3,0.2529,/Users/franciscocapunay/Downloads/gtm_server_copy/mlruns/rine_5D_1000obs_bgtm_test_1/29534ee3c4d045468871a3de15bee2bd/artifacts/gtm_bayes/ci_raw/bgtm_ci_raw_arrays.npz
+rine_5D_1000obs_bgtm_test_1,880b6fca551947e6b0e8b64c4aff7c86,0,10,0.06712839026377077,0.1,0.2311,/Users/franciscocapunay/Downloads/gtm_server_copy/mlruns/rine_5D_1000obs_bgtm_test_1/880b6fca551947e6b0e8b64c4aff7c86/artifacts/gtm_bayes/ci_raw/bgtm_ci_raw_arrays.npz
+rine_5D_1000obs_bgtm_test_1,d20e3c75b91c4fc7ae78d9d9efda1c94,2,10,0.13762953981739767,0.1,0.2956,/Users/franciscocapunay/Downloads/gtm_server_copy/mlruns/rine_5D_1000obs_bgtm_test_1/d20e3c75b91c4fc7ae78d9d9efda1c94/artifacts/gtm_bayes/ci_raw/bgtm_ci_raw_arrays.npz

@@ -1,0 +1,10 @@
+artifact_location: file:///Users/matthiasherp/Desktop/phd_github_repositories/gtm/mlruns/524509613731457688/models/m-4ed7d8f158284a8480cfab8ed1fb0474/artifacts
+creation_timestamp: 1767879485693
+experiment_id: '524509613731457688'
+last_updated_timestamp: 1767879492537
+model_id: m-4ed7d8f158284a8480cfab8ed1fb0474
+model_type: null
+name: model
+source_run_id: 7d570f0226fd4b4ea025b9689d41f5d9
+status: 2
+status_message: null

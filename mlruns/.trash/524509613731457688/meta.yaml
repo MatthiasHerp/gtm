@@ -1,0 +1,8 @@
+artifact_location: file:///Users/matthiasherp/Desktop/phd_github_repositories/gtm/mlruns/524509613731457688
+creation_time: 1767717901862
+experiment_id: '524509613731457688'
+last_update_time: 1767889261050
+lifecycle_stage: deleted
+name: rine_5D_1000obs
+tags:
+  mlflow.experimentKind: custom_model_development

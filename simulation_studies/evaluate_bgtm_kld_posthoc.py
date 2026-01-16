@@ -324,6 +324,56 @@ def ensure_dir(p: Path) -> Path:
 # PLOTTING
 # =============================================================================
 
+def plot_scatter_pairs_with_ci(df_all: pd.DataFrame, outpath: Path, eps: float) -> None:
+    """
+    Scatter of posterior mean KLD per (seed,pair) WITH credible interval error bars.
+    Requires columns: pair, kld_mean, kld_lo, kld_hi (and optionally dependence).
+    """
+    df = df_all.copy()
+    df["pair"] = df["pair"].astype(str)
+
+    pairs_sorted = sorted(df["pair"].unique())
+    pair_to_x = {p: i for i, p in enumerate(pairs_sorted)}
+    df["x"] = df["pair"].map(pair_to_x)
+
+    # error bars: asymmetric
+    y = df["kld_mean"].to_numpy()
+    yerr_low = (df["kld_mean"] - df["kld_lo"]).to_numpy()
+    yerr_high = (df["kld_hi"] - df["kld_mean"]).to_numpy()
+    yerr = np.vstack([yerr_low, yerr_high])
+
+    plt.figure(figsize=(12, 4))
+
+    # null band around 0 (optional but very helpful)
+    if eps is not None and eps > 0:
+        plt.axhspan(-eps, eps, alpha=0.15)
+        plt.axhline(0.0, linewidth=1.0)
+
+    if "dependence" in df.columns:
+        for val, name in [(0, "independent"), (1, "dependent"), (-1, "unknown")]:
+            sub = df.loc[df["dependence"].fillna(-1).astype(int) == val]
+            if sub.empty:
+                continue
+            xs = sub["x"].to_numpy()
+            ys = sub["kld_mean"].to_numpy()
+            low = (sub["kld_mean"] - sub["kld_lo"]).to_numpy()
+            high = (sub["kld_hi"] - sub["kld_mean"]).to_numpy()
+            yerr_sub = np.vstack([low, high])
+
+            plt.errorbar(xs, ys, yerr=yerr_sub, fmt="o", markersize=4, capsize=2, alpha=0.7, label=name)
+
+        plt.legend()
+    else:
+        plt.errorbar(df["x"], df["kld_mean"], yerr=yerr, fmt="o", markersize=4, capsize=2, alpha=0.7)
+
+    plt.xticks(range(len(pairs_sorted)), pairs_sorted, rotation=90)
+    plt.ylabel("KLD mean (per run)")
+    plt.title("Pairwise KLD means across seeds (with posterior CI)")
+    plt.tight_layout()
+    plt.savefig(outpath, dpi=200)
+    plt.close()
+
+
 def plot_heatmap_from_pairs(df_pairs: pd.DataFrame, title: str, outpath: Path) -> None:
     d = int(max(df_pairs["var_row"].max(), df_pairs["var_col"].max()) + 1)
     mat = np.full((d, d), np.nan)
@@ -539,6 +589,10 @@ def main() -> None:
             "experiment": exp,
             "run_id": run_id,
         })
+        
+        df_pairs["kld_ci_width"] = df_pairs["kld_hi"] - df_pairs["kld_lo"]
+        df_pairs["kld_pos_prob"] = (kld > 0).mean(axis=0)  # posterior P(KLD>0) per pair, debug
+
 
         if truth_path.exists():
             try:
@@ -626,6 +680,7 @@ def main() -> None:
     # Plots across seeds
     plot_boxplot_across_seeds(df_all, plots_dir / "boxplot_kld_per_pair_across_seeds.png")
     plot_scatter_pairs(df_all, plots_dir / "scatter_kld_pairs_across_seeds.png")
+    plot_scatter_pairs_with_ci(df_all, plots_dir / "scatter_kld_pairs_across_seeds_with_ci.png", eps=cfg.eps)
 
     # Run-level boxplot
     if df_runs["seed"].notna().any():

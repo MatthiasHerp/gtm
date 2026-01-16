@@ -1,0 +1,14 @@
+artifact_uri: file:///mnt/mlruns/rine_5D_1000obs_bgtm_test_1/d20e3c75b91c4fc7ae78d9d9efda1c94/artifacts
+end_time: 1768510463063
+entry_point_name: ''
+experiment_id: '451390700912718500'
+lifecycle_stage: active
+run_id: d20e3c75b91c4fc7ae78d9d9efda1c94
+run_name: rine_5D_1000obs_seed_2
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1768505024051
+status: 3
+tags: []
+user_id: root
