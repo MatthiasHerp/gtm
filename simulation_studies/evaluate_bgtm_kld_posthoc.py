@@ -46,21 +46,6 @@ class Config:
     max_runs: int | None = None
 
 
-CONFIG = Config(
-    # Example hard-code (uncomment and set if you want explicit paths):
-    # mlruns_path="/Users/franciscocapunay/Downloads/gtm_server_copy/mlruns",
-    # outdir="/Users/franciscocapunay/Downloads/gtm_server_copy/bgtm_kld_eval",
-
-    mlruns_path="/Users/franciscocapunay/Downloads/gtm_server_copy/mlruns",
-    outdir="/Users/franciscocapunay/Downloads/gtm_server_copy/bgtm_kld_eval",
-    experiment_name="rine_5D_1000obs_bgtm_test_1",
-    cred_level=0.90,
-    eps=1e-3,
-    verbose=True,
-    max_runs=None,
-)
-
-
 # =============================================================================
 # PATH DISCOVERY
 # =============================================================================
@@ -82,8 +67,34 @@ def find_project_mlruns(start: Path, mlruns_dirname: str = "mlruns", max_up: int
     )
 
 
-def default_outdir(project_root: Path) -> Path:
-    return project_root / "bgtm_kld_eval"
+def default_outdir(project_root: Path, cfg: Config) -> Path:
+    # format cred level nicely (e.g. 0.9 -> "0p90")
+    cred_str = f"{cfg.cred_level:.2f}".replace(".", "p")
+    out = project_root / "bgtm_kld_eval" / str(cfg.experiment_name) / cred_str
+    return out
+
+
+def clear_dir_contents(dir_path: Path, verbose: bool = False) -> None:
+    """
+    Deletes all files/folders inside dir_path, but keeps dir_path itself.
+    """
+    if not dir_path.exists():
+        return
+    for child in dir_path.iterdir():
+        try:
+            if child.is_file() or child.is_symlink():
+                child.unlink()
+                if verbose:
+                    print(f"[CLEAN] removed file: {child}")
+            elif child.is_dir():
+                # recursive delete
+                import shutil
+                shutil.rmtree(child)
+                if verbose:
+                    print(f"[CLEAN] removed dir : {child}")
+        except Exception as e:
+            print(f"[WARN] Could not delete {child}: {e}")
+
 
 
 # =============================================================================
@@ -298,16 +309,19 @@ def summarize_kld_samples(kld_samples: np.ndarray, cred_level: float, eps: float
     mean = np.nanmean(kld_samples, axis=0)
     lo = np.nanquantile(kld_samples, lo_q, axis=0)
     hi = np.nanquantile(kld_samples, hi_q, axis=0)
+
+    # posterior mass near 0
     p_le_eps = np.mean(kld_samples <= eps, axis=0)
 
-    zero_in_ci = (lo <= 0.0) & (0.0 <= hi)
+    # KLD-based CI decision (more meaningful than "0 in CI")
+    lo_le_eps = (lo <= eps).astype(int)
 
     return {
         "kld_mean": mean,
         "kld_lo": lo,
         "kld_hi": hi,
         "p_kld_le_eps": p_le_eps,
-        "zero_in_ci": zero_in_ci.astype(int),
+        "lo_le_eps": lo_le_eps,
     }
 
 
@@ -323,6 +337,65 @@ def ensure_dir(p: Path) -> Path:
 # =============================================================================
 # PLOTTING
 # =============================================================================
+
+def find_training_npz(run_dir: Path) -> Path | None:
+    """
+    Looks for ELBO training artifact in:
+      <run_dir>/artifacts/gtm_bayes/training/*.npz
+    Returns first npz found (sorted).
+    """
+    candidates = [
+        run_dir / "artifacts" / "gtm_bayes" / "training",
+        run_dir / "gtm_bayes" / "training",
+    ]
+    for folder in candidates:
+        if folder.exists() and folder.is_dir():
+            files = sorted([p for p in folder.iterdir() if p.suffix == ".npz"])
+            if len(files) > 0:
+                return files[0]
+    return None
+
+
+def load_elbo_from_npz(npz_path: Path) -> np.ndarray | None:
+    try:
+        z = np.load(npz_path, allow_pickle=False)
+    except Exception:
+        return None
+    if "elbo" not in z.files:
+        return None
+    elbo = np.asarray(z["elbo"], dtype=float)
+    if elbo.ndim != 1 or elbo.size == 0:
+        return None
+    return elbo
+
+
+def summarize_elbo(elbo: np.ndarray, tail_window: int = 50) -> dict[str, float]:
+    """
+    Basic convergence diagnostics.
+    """
+    n = int(elbo.size)
+    w = int(min(tail_window, n))
+    tail = elbo[-w:]
+    first = float(elbo[0])
+    last = float(elbo[-1])
+    tail_mean = float(np.nanmean(tail))
+    tail_std = float(np.nanstd(tail))
+    # last improvement compared to previous window mean (if exists)
+    if n >= 2*w:
+        prev = elbo[-2*w:-w]
+        delta_tail = float(np.nanmean(tail) - np.nanmean(prev))
+    else:
+        delta_tail = float("nan")
+    return {
+        "elbo_len": float(n),
+        "elbo_first": first,
+        "elbo_last": last,
+        "elbo_gain": float(last - first),
+        "elbo_tail_mean": tail_mean,
+        "elbo_tail_std": tail_std,
+        "elbo_delta_tail_mean": delta_tail,
+    }
+
 
 def plot_scatter_pairs_with_ci(df_all: pd.DataFrame, outpath: Path, eps: float) -> None:
     """
@@ -372,19 +445,22 @@ def plot_scatter_pairs_with_ci(df_all: pd.DataFrame, outpath: Path, eps: float) 
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
     plt.close()
-
-
-def plot_heatmap_from_pairs(df_pairs: pd.DataFrame, title: str, outpath: Path) -> None:
+    
+def plot_heatmap_prob_from_pairs(df_pairs: pd.DataFrame, title: str, outpath: Path, col: str, vmin=None, vmax=None) -> None:
+    """
+    Heatmap for a probability-like column in [0,1], e.g. p_kld_le_eps.
+    df_pairs must have: var_row, var_col, and `col`.
+    """
     d = int(max(df_pairs["var_row"].max(), df_pairs["var_col"].max()) + 1)
     mat = np.full((d, d), np.nan)
     for _, r in df_pairs.iterrows():
         i, j = int(r["var_row"]), int(r["var_col"])
-        mat[i, j] = r["kld_mean"]
-        mat[j, i] = r["kld_mean"]
+        mat[i, j] = r[col]
+        mat[j, i] = r[col]
 
     plt.figure()
-    plt.imshow(mat, aspect="equal")
-    plt.colorbar(label="KLD mean")
+    plt.imshow(mat, aspect="equal", vmin=vmin, vmax=vmax)
+    plt.colorbar(label=col)
     plt.title(title)
     plt.xlabel("var")
     plt.ylabel("var")
@@ -392,48 +468,76 @@ def plot_heatmap_from_pairs(df_pairs: pd.DataFrame, title: str, outpath: Path) -
     plt.savefig(outpath, dpi=200)
     plt.close()
 
-
-def plot_boxplot_across_seeds(df_all: pd.DataFrame, outpath: Path) -> None:
+def plot_boxplot_across_seeds(df_all: pd.DataFrame, outpath: Path, col: str) -> None:
     df = df_all.copy()
     df["pair"] = df["pair"].astype(str)
 
     pairs_sorted = sorted(df["pair"].unique())
-    data = [df.loc[df["pair"] == p, "kld_mean"].values for p in pairs_sorted]
+    data = [df.loc[df["pair"] == p, col].values for p in pairs_sorted]
 
     plt.figure(figsize=(max(10, len(pairs_sorted) * 0.5), 5))
     plt.boxplot(data, labels=pairs_sorted, showfliers=False)
+    if col == "p_kld_le_eps": plt.ylim(-0.05, 1.05)
     plt.xticks(rotation=90)
-    plt.ylabel("KLD mean (per run)")
-    plt.title("KLD per pair across seeds")
+    plt.ylabel(
+        ("KLD mean (per run)" if col == "kld_mean" else "p(KLD <= eps)") 
+        )
+    plt.title(
+        ("KLD per pair across seeds" if col == "kld_mean" else "Posterior independence probability per pair across seeds")
+        )
+    
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
     plt.close()
 
-
-def plot_scatter_pairs(df_all: pd.DataFrame, outpath: Path) -> None:
+def plot_scatter_pairs(df_all: pd.DataFrame, outpath: Path, col: str, *, thr: float = 0.95) -> None:
     df = df_all.copy()
     df["pair"] = df["pair"].astype(str)
 
-    pairs_sorted = sorted(df["pair"].unique())
-    pair_to_x = {p: i for i, p in enumerate(pairs_sorted)}
+    order = (
+        df.groupby("pair")[col].mean()
+        .sort_values(ascending=True)
+        .index.tolist()
+    )
+    pair_to_x = {p: i for i, p in enumerate(order)}
     df["x"] = df["pair"].map(pair_to_x)
 
     plt.figure(figsize=(12, 4))
+
+    rng = np.random.default_rng(0)
+    xj = df["x"].to_numpy(dtype=float) + rng.uniform(-0.08, 0.08, size=len(df))
+
     if "dependence" in df.columns:
         for val, name in [(0, "independent"), (1, "dependent"), (-1, "unknown")]:
             sub = df.loc[df["dependence"].fillna(-1).astype(int) == val]
-            plt.scatter(sub["x"], sub["kld_mean"], s=14, alpha=0.6, label=name)
+            xsub = sub["x"].to_numpy(dtype=float) + rng.uniform(-0.08, 0.08, size=len(sub))
+            plt.scatter(xsub, sub[col], s=18, alpha=0.7, label=name)
         plt.legend()
     else:
-        plt.scatter(df["x"], df["kld_mean"], s=14, alpha=0.6)
+        plt.scatter(xj, df[col], s=18, alpha=0.7)
 
-    plt.xticks(range(len(pairs_sorted)), pairs_sorted, rotation=90)
-    plt.ylabel("KLD mean (per run)")
-    plt.title("Pairwise KLD means across seeds (points)")
+    plt.xticks(range(len(order)), order, rotation=90)
+
+    if col == "kld_mean":
+        plt.ylabel("KLD mean (per run)")
+        plt.title("Pairwise KLD means across seeds (points)")
+    else:
+        plt.ylabel("p(KLD ≤ eps)")
+        plt.title("Posterior independence probability per pair across seeds (points)")
+        plt.ylim(-0.05, 1.05)
+
+        lo_thr = 1.0 - thr
+
+        # thresholds
+        plt.axhline(thr, linewidth=1.2)                      # "confident independent"
+        plt.axhline(lo_thr, linewidth=1.2, linestyle="--")   # "confident dependent"
+
+        # optional midline for reference
+        plt.axhline(0.5, linewidth=0.8, linestyle=":", alpha=0.7)
+
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
     plt.close()
-
 
 # =============================================================================
 # CLI OVERRIDES (OPTIONAL)
@@ -477,11 +581,7 @@ def merge_config(cfg: Config, args: argparse.Namespace) -> Config:
 # MAIN
 # =============================================================================
 
-def main() -> None:
-    args = parse_args_optional()
-    cfg = merge_config(CONFIG, args)
-
-    script_dir = Path(__file__).resolve().parent
+def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> None:
 
     # Resolve mlruns root
     if cfg.mlruns_path is None:
@@ -493,13 +593,21 @@ def main() -> None:
             raise FileNotFoundError(f"mlruns path does not exist: {mlruns_root}")
         project_root = mlruns_root.parent
 
-    # Resolve output dir
+    # Resolve output directory
     if cfg.outdir is None:
-        outdir = default_outdir(project_root)
+        out_root = project_root / "bgtm_kld_eval"
     else:
-        outdir = Path(cfg.outdir).expanduser().resolve()
+        out_root = Path(cfg.outdir).expanduser().resolve()
+
+    # Final output folder: out_root/experiment/cred_level/
+    outdir = default_outdir(out_root.parent, cfg) if cfg.outdir is None else (
+        out_root / str(cfg.experiment_name) / f"{cfg.cred_level:.2f}".replace(".", "p")
+    )
 
     outdir = ensure_dir(outdir)
+    # Clean previous results in that folder
+    clear_dir_contents(outdir, verbose=cfg.verbose)
+
     plots_dir = ensure_dir(outdir / "plots")
 
     if cfg.verbose:
@@ -531,6 +639,9 @@ def main() -> None:
     processed = 0
     
     trash_dir = (mlruns_root / ".trash").resolve()
+    
+    elbo_traces = {}  # run_id -> dict(seed=?, exp=?, elbo=np.array)
+
 
     for run_dir in sorted(run_dirs):
         #npz_path = run_dir / "artifacts" / "gtm_bayes" / "ci_raw" / "bgtm_ci_raw_arrays.npz"
@@ -584,7 +695,7 @@ def main() -> None:
             "kld_lo": summ["kld_lo"],
             "kld_hi": summ["kld_hi"],
             "p_kld_le_eps": summ["p_kld_le_eps"],
-            "zero_in_ci": summ["zero_in_ci"],
+            "lo_le_eps": summ["lo_le_eps"],
             "seed": seed,
             "experiment": exp,
             "run_id": run_id,
@@ -593,6 +704,12 @@ def main() -> None:
         df_pairs["kld_ci_width"] = df_pairs["kld_hi"] - df_pairs["kld_lo"]
         df_pairs["kld_pos_prob"] = (kld > 0).mean(axis=0)  # posterior P(KLD>0) per pair, debug
 
+        thr_hi = cfg.cred_level
+        thr_lo = 1.0 - cfg.cred_level
+
+        df_pairs["pred_ci"] = "uncertain"
+        df_pairs.loc[df_pairs["p_kld_le_eps"] >= thr_hi, "pred_ci"] = "independent"
+        df_pairs.loc[df_pairs["p_kld_le_eps"] <= thr_lo, "pred_ci"] = "dependent"
 
         if truth_path.exists():
             try:
@@ -604,6 +721,15 @@ def main() -> None:
                     on=["var_row", "var_col"],
                     how="left",
                 )
+                if "dependence" in df_pairs.columns and df_pairs["dependence"].notna().any():
+                    df_pairs["true_ci"] = np.where(df_pairs["dependence"] == 0, "independent", "dependent")
+                    df_pairs["is_decided"] = df_pairs["pred_ci"] != "uncertain"
+                    df_pairs["is_correct"] = (df_pairs["pred_ci"] == df_pairs["true_ci"]) & df_pairs["is_decided"]
+                else:
+                    df_pairs["true_ci"] = np.nan
+                    df_pairs["is_decided"] = df_pairs["pred_ci"] != "uncertain"
+                    df_pairs["is_correct"] = np.nan
+                    
                 if cfg.verbose:
                     print(f"      merged truth    : YES ({truth_path})")
             except Exception as e:
@@ -613,8 +739,17 @@ def main() -> None:
                 print("      merged truth    : NO (truth file missing)")
 
         run_kld_mean_over_pairs = float(np.nanmean(df_pairs["kld_mean"].values))
-        run_frac_zero_in_ci = float(np.mean(df_pairs["zero_in_ci"].values))
+        run_frac_lo_le_eps = float(np.mean(df_pairs["lo_le_eps"].values))
         run_mean_p_le_eps = float(np.nanmean(df_pairs["p_kld_le_eps"].values))
+        
+        # --- ELBO: load training trace (optional) ---
+        elbo_npz = find_training_npz(run_dir)
+        elbo = load_elbo_from_npz(elbo_npz) if elbo_npz is not None else None
+
+        elbo_stats = {}
+        if elbo is not None:
+            elbo_stats = summarize_elbo(elbo, tail_window=50)
+
 
         rows_run_summary.append({
             "experiment": exp,
@@ -622,21 +757,50 @@ def main() -> None:
             "seed": seed,
             "n_pairs": int(df_pairs.shape[0]),
             "kld_mean_over_pairs": run_kld_mean_over_pairs,
-            "frac_pairs_zero_in_ci": run_frac_zero_in_ci,
+            "frac_pairs_lo_le_eps": run_frac_lo_le_eps,
             "mean_p_kld_le_eps": run_mean_p_le_eps,
             "npz_path": str(npz_path),
+            
+            "elbo_npz_path": str(elbo_npz) if elbo_npz is not None else None,
+            "has_elbo": bool(elbo is not None),
+            **elbo_stats,
         })
+        
+        if elbo is not None:
+            elbo_traces[run_id] = {"seed": seed, "experiment": exp, "elbo": elbo}
+
 
         rows_all.append(df_pairs)
 
         # per-run heatmap
         if seed is not None:
             heat_out = plots_dir / f"heatmap_kld_mean_seed_{seed}_run_{run_id[:8]}.png"
-            plot_heatmap_from_pairs(
+            plot_heatmap_prob_from_pairs(
                 df_pairs,
                 title=f"KLD mean heatmap | exp={exp} | seed={seed} | run={run_id[:8]}",
-                outpath=heat_out
-            )
+                outpath=heat_out,
+                col="kld_mean",
+                )
+            
+            prob_out = plots_dir / f"heatmap_p_kld_le_eps_seed_{seed}_run_{run_id[:8]}.png"
+            plot_heatmap_prob_from_pairs(
+                df_pairs,
+                title=f"p(KLD<=eps) heatmap | exp={exp} | seed={seed} | run={run_id[:8]} | eps={cfg.eps}",
+                outpath=prob_out,
+                col="p_kld_le_eps",
+                vmin=0.0,
+                vmax=1.0
+                )
+            
+            bin_out = plots_dir / f"heatmap_lo_le_eps_seed_{seed}_run_{run_id[:8]}.png"
+            plot_heatmap_prob_from_pairs(
+                df_pairs,
+                title=f"CI decision: 1{chr(61)}(kld_lo<=eps) | exp={exp} | seed={seed} | run={run_id[:8]}",
+                outpath=bin_out,
+                col="lo_le_eps",
+                vmin=0.0,
+                vmax=1.0
+                )
 
         processed += 1
         if cfg.max_runs is not None and processed >= cfg.max_runs:
@@ -651,7 +815,108 @@ def main() -> None:
         )
 
     df_all = pd.concat(rows_all, ignore_index=True)
+    
+    if "dependence" in df_all.columns and df_all["dependence"].notna().any():
+        # build true_ci everywhere
+        df_all["true_ci"] = np.where(df_all["dependence"] == 0, "independent", "dependent")
+        
+
+        # per-seed metrics
+        df_seed_metrics = (
+            df_all.groupby(["experiment", "seed"])
+            .apply(lambda g: pd.Series({
+                "n_pairs": len(g),
+                "coverage_decided": (g["pred_ci"] != "uncertain").mean(),
+
+                # accuracy among decided only
+                "accuracy_on_decided": (
+                    (g.loc[g["pred_ci"] != "uncertain", "pred_ci"] == g.loc[g["pred_ci"] != "uncertain", "true_ci"]).mean()
+                    if (g["pred_ci"] != "uncertain").any() else np.nan
+                ),
+
+                # hit-rate with abstentions treated as wrong (optional but useful)
+                "accuracy_with_abstain_as_wrong": (g["pred_ci"] == g["true_ci"]).mean(),
+
+                # recalls among decided only
+                "indep_recall_decided": (
+                    (g.loc[(g["true_ci"]=="independent") & (g["pred_ci"]!="uncertain"), "pred_ci"] == "independent").mean()
+                    if ((g["true_ci"]=="independent") & (g["pred_ci"]!="uncertain")).any() else np.nan
+                ),
+                "dep_recall_decided": (
+                    (g.loc[(g["true_ci"]=="dependent") & (g["pred_ci"]!="uncertain"), "pred_ci"] == "dependent").mean()
+                    if ((g["true_ci"]=="dependent") & (g["pred_ci"]!="uncertain")).any() else np.nan
+                ),
+
+                # abstentions
+                "frac_uncertain": (g["pred_ci"] == "uncertain").mean(),
+            }))
+            .reset_index()
+        )
+
+        df_seed_metrics.to_csv(outdir / "seed_level_truth_comparison.csv", index=False)
+        
+        decided = df_all[df_all["pred_ci"] != "uncertain"].copy()
+
+        cm = (
+            decided.groupby(["experiment", "seed", "true_ci", "pred_ci"])
+            .size()
+            .reset_index(name="count")
+        )
+        cm.to_csv(outdir / "seed_level_confusion_counts.csv", index=False)
+        
+        pred_counts = (
+            df_all.groupby(["experiment","seed","pred_ci"])
+            .size().reset_index(name="count")
+        )
+        pred_counts.to_csv(outdir / "seed_level_prediction_counts.csv", index=False)
+
+    
     df_runs = pd.DataFrame(rows_run_summary)
+    
+    
+    # Save ELBO run summary CSV (if any ELBO exists)
+    if "has_elbo" in df_runs.columns and df_runs["has_elbo"].any():
+        df_runs.to_csv(outdir / "bgtm_kld_run_summaries_with_elbo.csv", index=False)
+
+        # --- Plot: all runs overlay ---
+        plt.figure()
+        for rid, rec in elbo_traces.items():
+            plt.plot(rec["elbo"], alpha=0.7)
+        plt.xlabel("Iteration")
+        plt.ylabel("ELBO")
+        plt.title(f"ELBO Convergence (all runs) | exp={cfg.experiment_name}")
+        plt.tight_layout()
+        plt.savefig(plots_dir / "elbo_convergence_all_runs.png", dpi=200)
+        plt.close()
+
+        # --- Plot: by seed (overlay traces per seed) ---
+        seeds_present = sorted({rec["seed"] for rec in elbo_traces.values() if rec["seed"] is not None})
+        for s in seeds_present:
+            plt.figure()
+            for rid, rec in elbo_traces.items():
+                if rec["seed"] == s:
+                    plt.plot(rec["elbo"], alpha=0.7)
+            plt.xlabel("Iteration")
+            plt.ylabel("ELBO")
+            plt.title(f"ELBO Convergence | seed={s} | exp={cfg.experiment_name}")
+            plt.tight_layout()
+            plt.savefig(plots_dir / f"elbo_convergence_seed_{s}.png", dpi=200)
+            plt.close()
+
+        # Optional: per-run plots (can be many files)
+        # for rid, rec in elbo_traces.items():
+        #     plt.figure()
+        #     plt.plot(rec["elbo"])
+        #     plt.xlabel("Iteration")
+        #     plt.ylabel("ELBO")
+        #     plt.title(f"ELBO | run={rid[:8]} | seed={rec['seed']}")
+        #     plt.tight_layout()
+        #     plt.savefig(plots_dir / f"elbo_convergence_run_{rid[:8]}.png", dpi=200)
+        #     plt.close()
+    else:
+        if cfg.verbose:
+            print("[INFO] No ELBO traces found in training artifacts (gtm_bayes/training/*.npz).")
+
 
     # Save CSVs
     df_all.to_csv(outdir / "bgtm_kld_per_pair_per_run.csv", index=False)
@@ -669,7 +934,7 @@ def main() -> None:
             kld_mean_across_seeds=("kld_mean", "mean"),
             kld_sd_across_seeds=("kld_mean", "std"),
             kld_med_across_seeds=("kld_mean", "median"),
-            frac_zero_in_ci=("zero_in_ci", "mean"),
+            frac_lo_le_eps=("lo_le_eps", "mean"),
             mean_p_kld_le_eps=("p_kld_le_eps", "mean"),
             n_runs=("kld_mean", "count"),
         )
@@ -678,8 +943,10 @@ def main() -> None:
     df_pair_across.to_csv(outdir / "bgtm_kld_per_pair_across_seeds.csv", index=False)
 
     # Plots across seeds
-    plot_boxplot_across_seeds(df_all, plots_dir / "boxplot_kld_per_pair_across_seeds.png")
-    plot_scatter_pairs(df_all, plots_dir / "scatter_kld_pairs_across_seeds.png")
+    plot_boxplot_across_seeds(df_all, plots_dir / "boxplot_kld_per_pair_across_seeds.png", col="kld_mean")
+    plot_boxplot_across_seeds(df_all, plots_dir / "boxplot_p_kld_le_eps_per_pair_across_seeds.png", col="p_kld_le_eps")
+    plot_scatter_pairs(df_all, plots_dir / "scatter_kld_pairs_across_seeds.png", col="kld_mean")
+    plot_scatter_pairs(df_all, plots_dir / "scatter_p_kld_le_eps_pairs_across_seeds.png", col="p_kld_le_eps", thr=cfg.cred_level)
     plot_scatter_pairs_with_ci(df_all, plots_dir / "scatter_kld_pairs_across_seeds_with_ci.png", eps=cfg.eps)
 
     # Run-level boxplot
@@ -701,4 +968,41 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+
+    BASE = Config(
+        mlruns_path="/Users/franciscocapunay/Downloads/gtm_server_copy/mlruns",
+        outdir="/Users/franciscocapunay/Downloads/gtm_server_copy/bgtm_kld_eval",  # root folder
+        eps=1e-3,
+        require_truth=True,
+        verbose=True,
+        max_runs=None
+    )
+
+    # your experiments
+    EXPERIMENTS = [
+        "rine_5D_1000obs_bgtm_test_1",
+        "rvine_5D_1000obs_bgtm",
+        "cvine_5D_1000obs_bgtm",
+        "dvine_5D_1000obs_bgtm",
+    ]
+
+    # your credibility levels
+    CRED_LEVELS = [0.90, 0.95, 0.99]  # extend as you want
+
+    # optional CLI overrides still work
+    args = parse_args_optional()
+
+    for exp_name in EXPERIMENTS:
+        for cred in CRED_LEVELS:
+            cfg = Config(**BASE.__dict__)
+            cfg.experiment_name = exp_name
+            cfg.cred_level = cred
+
+            cfg = merge_config(cfg, args)
+
+            print("\n" + "=" * 80)
+            print(f"[EVAL] experiment={cfg.experiment_name} | cred_level={cfg.cred_level}")
+            print("=" * 80)
+
+            main(cfg)
+
