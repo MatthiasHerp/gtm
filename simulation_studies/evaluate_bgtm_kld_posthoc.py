@@ -20,10 +20,14 @@ import sys
 import argparse
 from pathlib import Path
 from dataclasses import dataclass
+from collections import defaultdict
+
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+import textwrap
 
 
 # =============================================================================
@@ -459,6 +463,83 @@ def make_confusion_tables_from_counts(cm: pd.DataFrame) -> pd.DataFrame:
 
     return pd.DataFrame(out_rows)
 
+def confusion_across_experiment(df_all: pd.DataFrame, *, decided_only: bool = True) -> pd.DataFrame:
+    """
+    Returns per-experiment confusion counts.
+    - true_ci: independent/dependent
+    - pred_ci: independent/dependent/(uncertain)
+
+    If decided_only=True, drops uncertain predictions and returns 2x2 counts.
+    If decided_only=False, includes uncertain and returns 2x3 counts.
+    """
+    df = df_all.copy()
+
+    # ensure labels exist
+    if "true_ci" not in df.columns:
+        df["true_ci"] = np.where(df["dependence"] == 0, "independent", "dependent")
+
+    if decided_only:
+        df = df[df["pred_ci"] != "uncertain"].copy()
+
+    counts = (
+        df.groupby(["experiment", "true_ci", "pred_ci"])
+          .size()
+          .reset_index(name="count")
+    )
+    return counts
+
+
+def confusion_2x2_from_counts(counts: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert grouped counts to TN/FP/FN/TP per experiment (decided-only).
+    Convention:
+      positive class = dependent
+      negative class = independent
+    """
+    piv = (
+        counts.pivot_table(
+            index=["experiment", "true_ci"],
+            columns="pred_ci",
+            values="count",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .reset_index()
+    )
+    for c in ["dependent", "independent"]:
+        if c not in piv.columns:
+            piv[c] = 0
+
+    rows = []
+    for exp, g in piv.groupby("experiment"):
+        dep = g[g["true_ci"] == "dependent"]
+        indep = g[g["true_ci"] == "independent"]
+
+        TP = int(dep["dependent"].sum()) if not dep.empty else 0
+        FN = int(dep["independent"].sum()) if not dep.empty else 0
+        FP = int(indep["dependent"].sum()) if not indep.empty else 0
+        TN = int(indep["independent"].sum()) if not indep.empty else 0
+
+        total = TP + TN + FP + FN
+        acc = (TP + TN) / total if total else np.nan
+        tpr = TP / (TP + FN) if (TP + FN) else np.nan
+        tnr = TN / (TN + FP) if (TN + FP) else np.nan
+        bal = 0.5 * (tpr + tnr) if np.isfinite(tpr) and np.isfinite(tnr) else np.nan
+
+        rows.append({
+            "experiment": exp,
+            "TN": TN, "FP": FP, "FN": FN, "TP": TP,
+            "n_decided": total,
+            "accuracy": acc,
+            "recall_dependent": tpr,
+            "recall_independent": tnr,
+            "balanced_accuracy": bal,
+        })
+
+    return pd.DataFrame(rows)
+
+
+
 def pair_level_confusion(df_all: pd.DataFrame, thr: float) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Aggregate across seeds/runs to get ONE prediction per pair.
@@ -497,77 +578,328 @@ def pair_level_confusion(df_all: pd.DataFrame, thr: float) -> tuple[pd.DataFrame
     )
     return df_pair, cm_pair
 
-
-def plot_scatter_pairs_with_ci(df_all: pd.DataFrame, outpath: Path, eps: float) -> None:
+def confusion_3x3_counts_by_experiment(df_all: pd.DataFrame) -> pd.DataFrame:
     """
-    Scatter of posterior mean KLD per (seed,pair) WITH credible interval error bars.
-    Requires columns: pair, kld_mean, kld_lo, kld_hi (and optionally dependence).
+    Returns counts per experiment for:
+      true_ci_3 ∈ {independent, dependent, unknown}
+      pred_ci   ∈ {independent, dependent, uncertain}
+
+    Output columns: [experiment, true_ci_3, pred_ci, count]
     """
     df = df_all.copy()
-    df["pair"] = df["pair"].astype(str)
 
-    pairs_sorted = sorted(df["pair"].unique())
-    pair_to_x = {p: i for i, p in enumerate(pairs_sorted)}
-    df["x"] = df["pair"].map(pair_to_x)
+    # true labels
+    if "true_ci" not in df.columns:
+        if "dependence" in df.columns:
+            df["true_ci"] = np.where(df["dependence"] == 0, "independent", "dependent")
+        else:
+            df["true_ci"] = np.nan
 
-    # error bars: asymmetric
-    y = df["kld_mean"].to_numpy()
-    yerr_low = (df["kld_mean"] - df["kld_lo"]).to_numpy()
-    yerr_high = (df["kld_hi"] - df["kld_mean"]).to_numpy()
-    yerr = np.vstack([yerr_low, yerr_high])
+    df["true_ci_3"] = df["true_ci"].fillna("unknown")
 
-    plt.figure(figsize=(12, 4))
+    # prediction labels (already in your code)
+    if "pred_ci" not in df.columns:
+        raise ValueError("pred_ci not found in df_all. Compute it before confusion.")
 
-    # null band around 0 (optional but very helpful)
-    if eps is not None and eps > 0:
-        plt.axhspan(-eps, eps, alpha=0.15)
-        plt.axhline(0.0, linewidth=1.0)
+    # enforce a fixed category set (important so matrices align across experiments)
+    true_levels = ["independent", "dependent", "unknown"]
+    pred_levels = ["independent", "dependent", "uncertain"]
 
-    if "dependence" in df.columns:
-        for val, name in [(0, "independent"), (1, "dependent"), (-1, "unknown")]:
-            sub = df.loc[df["dependence"].fillna(-1).astype(int) == val]
-            if sub.empty:
-                continue
-            xs = sub["x"].to_numpy()
-            ys = sub["kld_mean"].to_numpy()
-            low = (sub["kld_mean"] - sub["kld_lo"]).to_numpy()
-            high = (sub["kld_hi"] - sub["kld_mean"]).to_numpy()
-            yerr_sub = np.vstack([low, high])
+    df["true_ci_3"] = pd.Categorical(df["true_ci_3"], categories=true_levels, ordered=True)
+    df["pred_ci"]   = pd.Categorical(df["pred_ci"], categories=pred_levels, ordered=True)
 
-            plt.errorbar(xs, ys, yerr=yerr_sub, fmt="o", markersize=4, capsize=2, alpha=0.7, label=name)
+    counts = (
+        df.groupby(["experiment", "true_ci_3", "pred_ci"], dropna=False)
+          .size()
+          .reset_index(name="count")
+    )
+    return counts
 
-        plt.legend()
+def confusion_counts_2x2_decided(df_all: pd.DataFrame) -> pd.DataFrame:
+    df = df_all.copy()
+    df["true_ci"] = np.where(df["dependence"] == 0, "independent", "dependent")
+    decided = df[df["pred_ci"] != "uncertain"].copy()
+
+    cm = (
+        decided.groupby(["experiment", "true_ci", "pred_ci"])
+        .size()
+        .reset_index(name="count")
+    )
+
+    # build TN/FP/FN/TP per experiment
+    out = []
+    for exp, g in cm.groupby("experiment"):
+        piv = g.pivot_table(index="true_ci", columns="pred_ci", values="count", aggfunc="sum", fill_value=0)
+        TN = int(piv.get("independent", pd.Series()).get("independent", 0))
+        FP = int(piv.get("dependent", pd.Series()).get("independent", 0))
+        FN = int(piv.get("independent", pd.Series()).get("dependent", 0))
+        TP = int(piv.get("dependent", pd.Series()).get("dependent", 0))
+
+        n = TN + FP + FN + TP
+        acc = (TP + TN) / n if n else np.nan
+        tpr = TP / (TP + FN) if (TP + FN) else np.nan
+        tnr = TN / (TN + FP) if (TN + FP) else np.nan
+        bal = 0.5 * (tpr + tnr) if np.isfinite(tpr) and np.isfinite(tnr) else np.nan
+
+        out.append(dict(experiment=exp, TN=TN, FP=FP, FN=FN, TP=TP, n_decided=n, accuracy=acc, balanced_accuracy=bal))
+    return pd.DataFrame(out).sort_values("experiment")
+
+
+def confusion_counts_3x3(df_all: pd.DataFrame) -> pd.DataFrame:
+    df = df_all.copy()
+    df["true3"] = np.where(df["dependence"] == 0, "indep", "dep")
+    df.loc[df["dependence"].isna(), "true3"] = "unk"
+
+    df["pred3"] = df["pred_ci"].map({"independent":"indep", "dependent":"dep", "uncertain":"uncertain"})
+    df["true3"] = df["true3"].fillna("unk")
+    df["pred3"] = df["pred3"].fillna("uncertain")
+
+    counts = (
+        df.groupby(["experiment", "true3", "pred3"])
+        .size()
+        .reset_index(name="count")
+    )
+    return counts
+
+def confusion_3x3_matrix_from_counts(counts_3x3: pd.DataFrame, exp: str) -> np.ndarray:
+    true_order = ["indep", "dep", "unk"]
+    pred_order = ["indep", "dep", "uncertain"]
+    g = counts_3x3[counts_3x3["experiment"] == exp]
+    mat = np.zeros((3, 3), dtype=int)
+    for _, r in g.iterrows():
+        i = true_order.index(r["true3"])
+        j = pred_order.index(r["pred3"])
+        mat[i, j] += int(r["count"])
+    return mat
+
+def _shorten_title(s: str, width: int = 28) -> str:
+    # wrap long experiment names onto 2 lines max
+    parts = textwrap.wrap(str(s), width=width)
+    if len(parts) <= 2:
+        return "\n".join(parts)
+    return "\n".join(parts[:2]) + "…"
+
+def _annotate_cells(ax, mat, *, fmt="{:d}", fontsize=11):
+    vmax = np.nanmax(mat) if np.isfinite(mat).any() else 0.0
+    thresh = 0.55 * vmax if vmax > 0 else 0.0
+    for (i, j), v in np.ndenumerate(mat):
+        v_int = int(v)
+        color = "white" if v >= thresh else "black"
+        ax.text(j, i, fmt.format(v_int), ha="center", va="center", fontsize=fontsize, color=color)
+        
+
+def plot_confusion_grid_3x3_pub(
+    counts_3x3: pd.DataFrame,
+    outpath,
+    *,
+    title: str,
+    true_levels=("true=indep", "true=dep", "true=unk"),
+    pred_levels=("pred=indep", "pred=dep", "pred=uncertain"),
+    ncols: int = 2,
+) -> None:
+    exps = sorted(counts_3x3["experiment"].unique().tolist())
+    k = len(exps)
+    if k == 0:
+        raise ValueError("counts_3x3 has no experiments to plot.")
+
+    ncols = min(ncols, k)
+    nrows = int(np.ceil(k / ncols))
+
+    # collect matrices first (for global color scale)
+    mats = [confusion_3x3_matrix_from_counts(counts_3x3, exp).astype(float) for exp in exps]
+    vmax = max(float(np.nanmax(m)) for m in mats) if mats else 1.0
+    vmax = max(vmax, 1.0)
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(4.8 * ncols, 4.6 * nrows),
+        constrained_layout=True,
+    )
+    axes = np.atleast_1d(axes).ravel()
+
+    im_last = None
+    for ax, exp, mat in zip(axes, exps, mats):
+        im_last = ax.imshow(mat, aspect="equal", vmin=0, vmax=vmax)
+
+        ax.set_title(_shorten_title(exp), fontsize=13, pad=8)
+
+        ax.set_xticks(range(3))
+        ax.set_yticks(range(3))
+
+        # Slightly smaller rotation + alignment helps readability and spacing
+        ax.set_xticklabels(pred_levels, rotation=20, ha="right", fontsize=10)
+        ax.set_yticklabels(true_levels, fontsize=10)
+
+        # add a touch of padding so ticks don't crowd the axes
+        ax.tick_params(axis="x", which="both", length=0, pad=6)
+        ax.tick_params(axis="y", which="both", length=0, pad=6)
+
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.0)
+
+        _annotate_cells(ax, mat, fontsize=12)
+
+        # ✅ footer INSIDE axes (bottom-right), no overlap with xticks
+        n_total = int(np.sum(mat))
+        ax.text(
+            0.98, 0.02,
+            f"n={n_total}",
+            transform=ax.transAxes,
+            ha="right", va="bottom",
+            fontsize=10,
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none", alpha=0.85),
+        )
+
+    # hide unused axes
+    for ax in axes[len(exps):]:
+        ax.axis("off")
+
+    # shared colorbar
+    if im_last is not None:
+        cbar = fig.colorbar(im_last, ax=axes[:len(exps)], shrink=0.95, pad=0.02)
+        cbar.set_label("count", fontsize=11)
+
+    fig.suptitle(title, fontsize=16, y=1.02)
+    fig.savefig(outpath, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+def plot_confusion_grid_2x2_pub(
+    cm_table: pd.DataFrame,
+    outpath,
+    *,
+    title: str,
+    ncols: int = 2,
+) -> None:
+    if cm_table.empty:
+        raise ValueError("cm_table is empty.")
+
+    exps = cm_table["experiment"].tolist()
+    k = len(exps)
+
+    ncols = min(ncols, k)
+    nrows = int(np.ceil(k / ncols))
+
+    mats = []
+    for exp in exps:
+        r = cm_table[cm_table["experiment"] == exp].iloc[0]
+        mat = np.array([[r["TN"], r["FP"]],
+                        [r["FN"], r["TP"]]], dtype=float)
+        mats.append(mat)
+
+    vmax = max(float(np.nanmax(m)) for m in mats) if mats else 1.0
+    vmax = max(vmax, 1.0)
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(4.6 * ncols, 4.3 * nrows),
+        constrained_layout=True
+    )
+    axes = np.atleast_1d(axes).ravel()
+
+    im_last = None
+    for ax, exp, mat in zip(axes, exps, mats):
+        im_last = ax.imshow(mat, aspect="equal", vmin=0, vmax=vmax)
+
+        ax.set_title(_shorten_title(exp), fontsize=13, pad=8)
+
+        ax.set_xticks([0, 1])
+        ax.set_yticks([0, 1])
+        ax.set_xticklabels(["pred=indep", "pred=dep"], rotation=15, ha="right", fontsize=10)
+        ax.set_yticklabels(["true=indep", "true=dep"], fontsize=10)
+
+        ax.tick_params(axis="both", which="both", length=0)
+        for spine in ax.spines.values():
+            spine.set_linewidth(1.0)
+
+        _annotate_cells(ax, mat, fontsize=13)
+
+        r = cm_table[cm_table["experiment"] == exp].iloc[0]
+        ax.text(
+            0.5, -0.20,
+            f"acc={r['accuracy']:.2f} • bal={r['balanced_accuracy']:.2f} • n={int(r['n_decided'])}",
+            transform=ax.transAxes,
+            ha="center", va="top", fontsize=10
+        )
+
+    for ax in axes[len(exps):]:
+        ax.axis("off")
+
+    if im_last is not None:
+        cbar = fig.colorbar(im_last, ax=axes[:len(exps)], shrink=0.95, pad=0.02)
+        cbar.set_label("count", fontsize=11)
+
+    fig.suptitle(title, fontsize=16, y=1.02)
+    fig.savefig(outpath, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+
+def plot_elbo_all_runs(cfg, outdir, plots_dir, elbo_traces, df_runs):
+    if "has_elbo" in df_runs.columns and df_runs["has_elbo"].any():
+        df_runs.to_csv(outdir / "bgtm_kld_run_summaries_with_elbo.csv", index=False)
+
+        # --- Plot: all runs overlay ---
+        plt.figure()
+        for rid, rec in elbo_traces.items():
+            plt.plot(rec["elbo"], alpha=0.7)
+        plt.xlabel("Iteration")
+        plt.ylabel("ELBO")
+        plt.title(f"ELBO Convergence (all runs) | exp={cfg.experiment_name}")
+        plt.tight_layout()
+        plt.savefig(plots_dir / "elbo_convergence_all_runs.png", dpi=200)
+        plt.close()
     else:
-        plt.errorbar(df["x"], df["kld_mean"], yerr=yerr, fmt="o", markersize=4, capsize=2, alpha=0.7)
+        if cfg.verbose:
+            print("[INFO] No ELBO traces found in training artifacts (gtm_bayes/training/*.npz).")
 
-    plt.xticks(range(len(pairs_sorted)), pairs_sorted, rotation=90)
-    plt.ylabel("KLD mean (per run)")
-    plt.title("Pairwise KLD means across seeds (with posterior CI)")
+def plot_pooled_posterior_kld_boxplot(
+    kld_pool_cat: dict[str, np.ndarray],
+    outpath: Path,
+    *,
+    eps: float,
+    cred_level: float,
+    title: str,
+) -> None:
+    # order pairs by pooled median (or mean) for readability
+    order = sorted(kld_pool_cat.keys(), key=lambda p: np.nanmedian(kld_pool_cat[p]))
+
+    data = [np.clip(kld_pool_cat[p], 1e-12, None) for p in order]
+
+    plt.figure(figsize=(max(10, len(order) * 0.55), 5))
+    plt.boxplot(data, labels=order, showfliers=False)
+
+    # reference lines
+    plt.axhline(0.0, linewidth=1.0)
+    plt.axhline(eps, linewidth=1.2, linestyle="--")
+    plt.axhline(max(eps, 1e-12), linewidth=1.2, linestyle="--")
+
+    plt.xticks(rotation=90)
+    plt.yscale("log")
+    plt.ylabel("Pooled posterior samples of KLD (log scale)")
+    plt.title(title + f" (pooled across seeds/runs; ε={eps:g}, CI={cred_level:.2f})")
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
     plt.close()
-    
-def plot_heatmap_prob_from_pairs(df_pairs: pd.DataFrame, title: str, outpath: Path, col: str, vmin=None, vmax=None) -> None:
-    """
-    Heatmap for a probability-like column in [0,1], e.g. p_kld_le_eps.
-    df_pairs must have: var_row, var_col, and `col`.
-    """
-    d = int(max(df_pairs["var_row"].max(), df_pairs["var_col"].max()) + 1)
-    mat = np.full((d, d), np.nan)
-    for _, r in df_pairs.iterrows():
-        i, j = int(r["var_row"]), int(r["var_col"])
-        mat[i, j] = r[col]
-        mat[j, i] = r[col]
 
-    plt.figure()
-    plt.imshow(mat, aspect="equal", vmin=vmin, vmax=vmax)
-    plt.colorbar(label=col)
+
+def plot_pooled_p_eps_bar(kld_pool_cat, outpath, *, eps, thr, title):
+    p_eps = {lab: float(np.mean(samples <= eps)) for lab, samples in kld_pool_cat.items()}
+    order = sorted(p_eps.keys(), key=lambda k: p_eps[k])
+    vals = [p_eps[k] for k in order]
+
+    plt.figure(figsize=(max(10, len(order) * 0.55), 4))
+    plt.bar(range(len(order)), vals)
+    plt.axhline(thr, linewidth=1.2)
+    plt.axhline(1.0 - thr, linewidth=1.2, linestyle="--")
+    plt.axhline(0.5, linewidth=0.8, linestyle=":", alpha=0.7)
+    plt.xticks(range(len(order)), order, rotation=90)
+    plt.ylim(0.0, 1.0)
+    plt.ylabel(r"$p_{\varepsilon}=\Pr(\mathrm{KLD} >= \varepsilon)$ (pooled)")
     plt.title(title)
-    plt.xlabel("var")
-    plt.ylabel("var")
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
     plt.close()
+
 
 def plot_boxplot_across_seeds(df_all: pd.DataFrame, outpath: Path, col: str) -> None:
     df = df_all.copy()
@@ -584,7 +916,9 @@ def plot_boxplot_across_seeds(df_all: pd.DataFrame, outpath: Path, col: str) -> 
         ("KLD mean (per run)" if col == "kld_mean" else "p(KLD <= eps)") 
         )
     plt.title(
-        ("KLD per pair across seeds" if col == "kld_mean" else "Posterior independence probability per pair across seeds")
+        ("Across-seed variability of posterior mean KLD" 
+         if col == "kld_mean" 
+         else "Posterior independence probability per pair across seeds")
         )
     
     plt.tight_layout()
@@ -687,11 +1021,16 @@ def plot_scatter_pairs(
     plt.ylim(-0.05, 1.05)
 
     plt.ylabel(
-        r"$p_{\varepsilon}(i,j)"
-        r"=$p_{\varepsilon}(\mathrm{KLD} \leq \varepsilon)$"
+        r"$p_{\varepsilon}(\mathrm{KLD}\leq \varepsilon)$" 
+        if col == "p_kld_le_eps" 
+        else "Posterior mean KLD"
     )
 
-    title = "Posterior practical-independence probability per pair across seeds"
+    title = (
+        "Posterior practical-independence probability per pair across seeds" 
+        if col == "p_kld_le_eps" else "Posterior mean KLD per pair across seeds"
+        )
+    
     if eps is not None:
         title += f" (ε={eps:g}, γ={thr:.2f})"
     plt.title(title)
@@ -699,22 +1038,182 @@ def plot_scatter_pairs(
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
     plt.close()
-    
-def plot_cm_2x2(TN, FP, FN, TP, title, outpath):
-    mat = np.array([[TN, FP],
-                    [FN, TP]], dtype=float)
 
-    plt.figure(figsize=(4, 3))
-    plt.imshow(mat, aspect="equal")
-    plt.xticks([0, 1], ["pred=indep", "pred=dep"])
-    plt.yticks([0, 1], ["true=indep", "true=dep"])
-    for (i, j), v in np.ndenumerate(mat):
-        plt.text(j, i, f"{int(v)}", ha="center", va="center")
-    plt.title(title)
-    plt.colorbar()
-    plt.tight_layout()
-    plt.savefig(outpath, dpi=200)
-    plt.close()
+def plot_scatter_pairs_faceted_by_seed(
+    df_all: pd.DataFrame,
+    outpath: Path,
+    *,
+    col: str = "p_kld_le_eps",
+    thr: float = 0.90,
+    eps: float | None = None,
+) -> None:
+    
+    df = df_all.copy()
+    df["pair"] = df["pair"].astype(str)
+
+    # global order so all seed-panels share x-axis meaning
+    order = (
+        df.groupby("pair")[col].mean()
+        .sort_values(ascending=True)
+        .index.tolist()
+    )
+    df["x"] = df["pair"].map(
+        {p: i for i, p in enumerate(order)}
+        )
+
+    seeds = sorted(df["seed"].dropna().unique())
+    n = len(seeds)
+
+    fig, axes = plt.subplots(n, 1, figsize=(12, 2.6 * n), sharex=True, sharey=True)
+    if n == 1:
+        axes = [axes]
+
+    rng = np.random.default_rng(0)
+
+    hi_thr = thr
+    lo_thr = 1.0 - thr
+
+    # -----------------------------
+    # STYLE = (truth, pred) -> (color, marker)
+    # This is chosen to match your "across-seeds" legend screenshot:
+    #  - independent / pred=independent : blue circle
+    #  - independent / pred=uncertain   : orange square
+    #  - dependent   / pred=dependent   : green x
+    #  - dependent   / pred=uncertain   : red square
+    # -----------------------------
+    combo_style = {
+        (0, "independent"): ("C0", "o"),
+        (0, "uncertain"):   ("C1", "s"),
+        (1, "dependent"):   ("C2", "x"),
+        (1, "uncertain"):   ("C3", "s"),
+    }
+
+    # Optional combos (if they happen, give them consistent styles too)
+    # (these won’t appear in legend unless they exist in data)
+    fallback_cycle = ["C4", "C5", "C6", "C7", "C8", "C9"]
+    def get_style(tval: int, pname: str):
+        if (tval, pname) in combo_style:
+            return combo_style[(tval, pname)]
+        # deterministic fallback so it doesn't jump around
+        idx = (hash((tval, pname)) % len(fallback_cycle))
+        color = fallback_cycle[idx]
+        marker = {"independent": "o", "dependent": "x", "uncertain": "s"}.get(pname, "o")
+        return color, marker
+
+    truth_name = {0: "independent", 1: "dependent", -1: "unknown"}
+
+    # legend order: match the across-seeds plot (and then add any extra combos if present)
+    legend_order = [
+        (0, "independent"),
+        (0, "uncertain"),
+        (1, "dependent"),
+        (1, "uncertain"),
+        (1, "independent"),   # if present in data
+        (0, "dependent"),     # if present in data
+        (-1, "independent"),
+        (-1, "dependent"),
+        (-1, "uncertain"),
+    ]
+
+    for ax, s in zip(axes, seeds):
+        g = df[df["seed"] == s].copy()
+
+        # background bands + thresholds
+        ax.axhspan(hi_thr, 1.0, alpha=0.08)
+        ax.axhspan(lo_thr, hi_thr, alpha=0.06)
+        ax.axhspan(0.0, lo_thr, alpha=0.08)
+        ax.axhline(hi_thr, linewidth=1.2)
+        ax.axhline(lo_thr, linewidth=1.2, linestyle="--")
+        ax.axhline(0.5, linewidth=0.8, linestyle=":", alpha=0.7)
+
+        # ---------- points: runs per seed (jittered) ----------
+        if "dependence" in g.columns and "pred_ci" in g.columns:
+            xbase = g["x"].to_numpy(float)
+            g["_xj"] = xbase + rng.uniform(-0.08, 0.08, size=len(g))
+
+            for tval, pname in legend_order:
+                sub = g[
+                    (g["dependence"].fillna(-1).astype(int) == tval)
+                    & (g["pred_ci"] == pname)
+                ]
+                if sub.empty:
+                    continue
+
+                color, marker = get_style(tval, pname)
+                ax.scatter(
+                    sub["_xj"].to_numpy(float),
+                    sub[col].to_numpy(float),
+                    s=28,
+                    alpha=0.75,
+                    marker=marker,
+                    color=color,
+                    zorder=2,
+                )
+        else:
+            xj = g["x"].to_numpy(float) + rng.uniform(-0.08, 0.08, size=len(g))
+            ax.scatter(xj, g[col], s=22, alpha=0.7, zorder=2)
+
+        ax.set_title(f"seed={int(s)}", fontsize=10)
+        ax.set_ylabel(r"$p_{\varepsilon}(\mathrm{KLD}\leq \varepsilon)$")
+        ax.set_ylim(-0.05, 1.05)
+
+    # ---------- shared x axis ----------
+    axes[-1].set_xticks(range(len(order)))
+    axes[-1].set_xticklabels(order, rotation=90)
+
+    # ---------- FIGURE-LEVEL LEGEND (same colors/markers as across-seeds) ----------
+    if "dependence" in df.columns and "pred_ci" in df.columns:
+        legend_handles = []
+        legend_labels = []
+
+        for tval, pname in legend_order:
+            exists = (
+                (df["dependence"].fillna(-1).astype(int) == tval)
+                & (df["pred_ci"] == pname)
+            ).any()
+            if not exists:
+                continue
+
+            tname = truth_name.get(tval, "unknown")
+            label = f"{tname} / pred={pname}"
+            color, marker = get_style(tval, pname)
+
+            legend_handles.append(
+                Line2D(
+                    [0], [0],
+                    marker=marker,
+                    linestyle="None",
+                    markersize=7,
+                    markerfacecolor=("none" if marker == "x" else color),
+                    markeredgecolor=color,
+                    color=color,
+                )
+            )
+            legend_labels.append(label)
+
+        fig.legend(
+            legend_handles,
+            legend_labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.02),
+            ncol=2,
+            fontsize=9,
+            frameon=True,
+        )
+
+    # ---------- title ----------
+    title = (
+        "Posterior practical-independence probability per pair (faceted by seed)"
+        if col == "p_kld_le_eps"
+        else "Posterior mean KLD per pair (faceted by seed)"
+    )
+    if eps is not None:
+        title += f" (ε={eps:g}, γ={thr:.2f})"
+    fig.suptitle(title, y=1.06)
+
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
 
 # =============================================================================
@@ -819,7 +1318,8 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
     trash_dir = (mlruns_root / ".trash").resolve()
     
     elbo_traces = {}  # run_id -> dict(seed=?, exp=?, elbo=np.array)
-
+    kld_pool = defaultdict(list)      # pair_label -> list of 1D arrays
+    pair_meta = {}                    # pair_label -> (var_row, var_col) optional
 
     for run_dir in sorted(run_dirs):
         #npz_path = run_dir / "artifacts" / "gtm_bayes" / "ci_raw" / "bgtm_ci_raw_arrays.npz"
@@ -862,7 +1362,17 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         if cfg.verbose:
             print(f"      kld shape      : {kld.shape}")
             print(f"      pair_index shape: {pair_index.shape}")
+        
+        pair_labels = [make_pair_label(a, b) for a, b in pair_index]
 
+        for j, lab in enumerate(pair_labels):
+            # store pooled posterior samples for this pair
+            kld_pool[lab].append(kld[:, j].astype(float))
+
+            # optional: keep meta once
+            if lab not in pair_meta:
+                pair_meta[lab] = (int(pair_index[j, 0]), int(pair_index[j, 1]))
+                
         summ = summarize_kld_samples(kld, cred_level=cfg.cred_level, eps=cfg.eps)
 
         df_pairs = pd.DataFrame({
@@ -949,37 +1459,7 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
 
 
         rows_all.append(df_pairs)
-
-        # per-run heatmap
-        #if seed is not None:
-        #    heat_out = plots_dir / f"heatmap_kld_mean_seed_{seed}_run_{run_id[:8]}.png"
-        #    plot_heatmap_prob_from_pairs(
-        #        df_pairs,
-        #        title=f"KLD mean heatmap | exp={exp} | seed={seed} | run={run_id[:8]}",
-        #        outpath=heat_out,
-        #        col="kld_mean",
-        #        )
-            
-        #    prob_out = plots_dir / f"heatmap_p_kld_le_eps_seed_{seed}_run_{run_id[:8]}.png"
-        #    plot_heatmap_prob_from_pairs(
-        #        df_pairs,
-        #        title=f"p(KLD<=eps) heatmap | exp={exp} | seed={seed} | run={run_id[:8]} | eps={cfg.eps}",
-        #        outpath=prob_out,
-        #        col="p_kld_le_eps",
-        #        vmin=0.0,
-        #        vmax=1.0
-        #        )
-            
-        #    bin_out = plots_dir / f"heatmap_lo_le_eps_seed_{seed}_run_{run_id[:8]}.png"
-        #    plot_heatmap_prob_from_pairs(
-        #        df_pairs,
-        #        title=f"CI decision: 1{chr(61)}(kld_lo<=eps) | exp={exp} | seed={seed} | run={run_id[:8]}",
-        #        outpath=bin_out,
-        #        col="lo_le_eps",
-        #        vmin=0.0,
-        #        vmax=1.0
-        #        )
-
+        
         processed += 1
         if cfg.max_runs is not None and processed >= cfg.max_runs:
             if cfg.verbose:
@@ -991,6 +1471,9 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
             "No runs with artifacts/gtm_bayes/ci_raw/bgtm_ci_raw_arrays.npz found.\n"
             "Check that mlruns_root is correct and that artifacts were copied."
         )
+
+    # concatenate across runs -> one pooled posterior per pair
+    kld_pool_cat = {lab: np.concatenate(chunks, axis=0) for lab, chunks in kld_pool.items()}
 
     df_all = pd.concat(rows_all, ignore_index=True)
     
@@ -1045,67 +1528,42 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         seed_cm_table = make_confusion_tables_from_counts(cm)
         seed_cm_table.to_csv(outdir / "seed_level_confusion_table_2x2.csv", index=False)
 
-        for _, r in seed_cm_table.iterrows():
-            plot_cm_2x2(
-                TN=r["TN_indep"], FP=r["FP_dep"], FN=r["FN_dep"], TP=r["TP_dep"],
-                title=f"Confusion (decided only) | {r['experiment']} | seed={int(r['seed'])}",
-                outpath=plots_dir / f"cm_decided_{r['experiment']}_seed_{int(r['seed'])}.png"
-            )
-
         
         pred_counts = (
             df_all.groupby(["experiment","seed","pred_ci"])
             .size().reset_index(name="count")
         )
         pred_counts.to_csv(outdir / "seed_level_prediction_counts.csv", index=False)
+        
+        
+        # decided-only confusion per experiment
+        cm_exp_counts = confusion_across_experiment(df_all, decided_only=True)
+        cm_exp_counts.to_csv(outdir / "experiment_level_confusion_counts_decided.csv", index=False)
 
-    
+        cm2 = confusion_counts_2x2_decided(df_all)
+        cm2.to_csv(outdir / "confusion_2x2_decided_by_experiment.csv", index=False)
+        plot_confusion_grid_2x2_pub(
+            cm2,
+            plots_dir / "confusion_2x2_decided_by_experiment.png",
+            title=f"Confusion matrices (decided-only) by experiment | eps={cfg.eps:g}, gamma={cfg.cred_level:.2f}",
+        )
+
+        # optional: include uncertain as a separate column (2x3)
+        cm_exp_counts_all = confusion_across_experiment(df_all, decided_only=False)
+        cm_exp_counts_all.to_csv(outdir / "experiment_level_confusion_counts_with_uncertain.csv", index=False)
+
+        
+
+        # 3x3 including uncertain across experiment
+        counts3 = confusion_counts_3x3(df_all)
+        counts3.to_csv(outdir / "confusion_3x3_by_experiment.csv", index=False)
+        plot_confusion_grid_3x3_pub(
+            counts3,
+            plots_dir / "confusion_3x3_by_experiment.png",
+            title=f"3×3 confusion (incl. uncertain) by experiment | eps={cfg.eps:g}, gamma={cfg.cred_level:.2f}",
+        )
+        
     df_runs = pd.DataFrame(rows_run_summary)
-    
-    
-    # Save ELBO run summary CSV (if any ELBO exists)
-    if "has_elbo" in df_runs.columns and df_runs["has_elbo"].any():
-        df_runs.to_csv(outdir / "bgtm_kld_run_summaries_with_elbo.csv", index=False)
-
-        # --- Plot: all runs overlay ---
-        plt.figure()
-        for rid, rec in elbo_traces.items():
-            plt.plot(rec["elbo"], alpha=0.7)
-        plt.xlabel("Iteration")
-        plt.ylabel("ELBO")
-        plt.title(f"ELBO Convergence (all runs) | exp={cfg.experiment_name}")
-        plt.tight_layout()
-        plt.savefig(plots_dir / "elbo_convergence_all_runs.png", dpi=200)
-        plt.close()
-
-        # --- Plot: by seed (overlay traces per seed) ---
-        #seeds_present = sorted({rec["seed"] for rec in elbo_traces.values() if rec["seed"] is not None})
-        #for s in seeds_present:
-        #    plt.figure()
-        #    for rid, rec in elbo_traces.items():
-        #        if rec["seed"] == s:
-        #            plt.plot(rec["elbo"], alpha=0.7)
-        #    plt.xlabel("Iteration")
-        #    plt.ylabel("ELBO")
-        #    plt.title(f"ELBO Convergence | seed={s} | exp={cfg.experiment_name}")
-        #    plt.tight_layout()
-        #    plt.savefig(plots_dir / f"elbo_convergence_seed_{s}.png", dpi=200)
-        #    plt.close()
-
-        # Optional: per-run plots (can be many files)
-        # for rid, rec in elbo_traces.items():
-        #     plt.figure()
-        #     plt.plot(rec["elbo"])
-        #     plt.xlabel("Iteration")
-        #     plt.ylabel("ELBO")
-        #     plt.title(f"ELBO | run={rid[:8]} | seed={rec['seed']}")
-        #     plt.tight_layout()
-        #     plt.savefig(plots_dir / f"elbo_convergence_run_{rid[:8]}.png", dpi=200)
-        #     plt.close()   
-    else:
-        if cfg.verbose:
-            print("[INFO] No ELBO traces found in training artifacts (gtm_bayes/training/*.npz).")
-
 
     if "dependence" in df_all.columns and df_all["dependence"].notna().any():
         df_pair, cm_pair = pair_level_confusion(df_all, thr=cfg.cred_level)
@@ -1137,21 +1595,31 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
     df_pair_across.to_csv(outdir / "bgtm_kld_per_pair_across_seeds.csv", index=False)
 
     # Plots across seeds
+    
+    if len(kld_pool_cat) > 0:
+        plot_pooled_posterior_kld_boxplot(
+            kld_pool_cat,
+            plots_dir / "posterior_kld_boxplot_pooled_across_seeds.png",
+            eps=cfg.eps,
+            cred_level=cfg.cred_level,
+            title=f"Posterior KLD per pair | exp={cfg.experiment_name}",
+        )
+        
+        plot_pooled_p_eps_bar(
+            kld_pool_cat,
+            plots_dir / "p_eps_pooled_across_seeds.png",
+            eps=cfg.eps,
+            thr=cfg.cred_level,
+            title=f"Pooled practical-independence prob per pair | exp={cfg.experiment_name} | eps={cfg.eps:g} | thr={cfg.cred_level:.2f}",
+        )
+
     plot_boxplot_across_seeds(df_all, plots_dir / "boxplot_kld_per_pair_across_seeds.png", col="kld_mean")
-    plot_boxplot_across_seeds(df_all, plots_dir / "boxplot_p_kld_le_eps_per_pair_across_seeds.png", col="p_kld_le_eps")
     plot_scatter_pairs(df_all, plots_dir / "scatter_kld_pairs_across_seeds.png", col="kld_mean")
     plot_scatter_pairs(df_all,plots_dir / "scatter_p_kld_le_eps_pairs_across_seeds.png",col="p_kld_le_eps", thr=cfg.cred_level,eps=cfg.eps)
-    plot_scatter_pairs_with_ci(df_all, plots_dir / "scatter_kld_pairs_across_seeds_with_ci.png", eps=cfg.eps)
-
-    # Run-level boxplot
-    if df_runs["seed"].notna().any():
-        plt.figure()
-        plt.boxplot(df_runs["kld_mean_over_pairs"].values, showfliers=False)
-        plt.ylabel("Mean KLD over pairs (per run)")
-        plt.title("Run-level mean KLD over pairs (across seeds)")
-        plt.tight_layout()
-        plt.savefig(plots_dir / "boxplot_run_level_kld_mean_over_pairs.png", dpi=200)
-        plt.close()
+    plot_scatter_pairs_faceted_by_seed(df_all, plots_dir / "scatter_p_kld_le_eps_faceted_by_seed.png", col="p_kld_le_eps", thr=cfg.cred_level, eps=cfg.eps)
+    plot_scatter_pairs_faceted_by_seed(df_all, plots_dir / "scatter_kld_pairs_faceted_by_seed.png", col="kld_mean", thr=cfg.cred_level, eps=cfg.eps)
+    
+    plot_elbo_all_runs(cfg, outdir, plots_dir, elbo_traces, df_runs)
 
     print("\n[OK] Done.")
     print(f"Outputs: {outdir}")
@@ -1160,13 +1628,13 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
     print(f"  - {outdir / 'bgtm_kld_per_pair_across_seeds.csv'}")
     print(f"  - plots in: {plots_dir}")
 
-
+# =============================================================================
 if __name__ == "__main__":
 
     BASE = Config(
         mlruns_path="/Users/franciscocapunay/Downloads/gtm_server_copy/mlruns",
         outdir="/Users/franciscocapunay/Downloads/gtm_server_copy/bgtm_kld_eval",  # root folder
-        eps=1e-1,
+        eps=1e-3,
         require_truth=True,
         verbose=True,
         max_runs=None
