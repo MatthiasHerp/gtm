@@ -32,7 +32,7 @@ if __name__ == "__main__":
             seed_value=seed,
             dimensionality=5,
             Independence_tree=2,
-            vine_type="R-Vine",
+            vine_type="D-Vine",
             N_train=667,
             N_validate=333,
             N_test=20000,
