@@ -115,7 +115,7 @@ def run_experiment(
         #merge train and validate data for warpspeed bootstrap
         combined_data = torch.cat((synthetic_data_dict['train_data'], synthetic_data_dict['validate_data']), dim=0)
         
-        # bootstrap sample with replacement
+        # bootstrap sample with replacement (mit zurücklegen)
         indices = torch.randint(0, combined_data.size(0), (N_train + N_validate,))
         bootstrapped_data = combined_data[indices]
         
