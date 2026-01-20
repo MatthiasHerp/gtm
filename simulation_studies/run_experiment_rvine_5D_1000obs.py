@@ -11,7 +11,9 @@ if __name__ == "__main__":
     mlflow.set_tracking_uri(f"file:{TRACKING}")
     client = MlflowClient()
     
-    experimental_name = "rvine_5D_1000obs_bgtm"
+    experimental_name = "rine_5D_1000obs"
+    
+    # chekc if experiment exists
     experiment = mlflow.get_experiment_by_name(experimental_name)
     if experiment is None:
         experiment_id = mlflow.create_experiment(
@@ -27,7 +29,7 @@ if __name__ == "__main__":
     
     for seed in range(10):
         run_experiment(
-            run_name=f"rine_5D_1000obs_seed_{seed}",
+            run_name="rine_5D_1000obs_seed_{}".format(seed),
             experiment_id=experiment_id,
             seed_value=seed,
             dimensionality=5,
@@ -62,7 +64,8 @@ if __name__ == "__main__":
             n_trials=4,
             temp_folder="./temp",
             study_name=None,
-            posterior_sampling_size_bgtm=1024
+            posterior_sampling_size_bgtm=1024,
+            bootstrap_warpspeed=True
         )
     print("Tracking URI:", mlflow.get_tracking_uri())
     print("Experiment artifact_location:", client.get_experiment(experiment_id).artifact_location)
