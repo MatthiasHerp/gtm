@@ -5,6 +5,7 @@ import optuna
 import scipy
 import torch
 from optuna.samplers import TPESampler
+from pathlib import Path
 from optuna.study import Study
 from torch import nn, Tensor, FloatTensor
 from torch.utils.data import DataLoader
@@ -927,7 +928,6 @@ class GTM(nn.Module):
                 conv_min_epochs=conv_min_epochs,
                 conv_ema_beta=conv_ema_beta,
                 mu_init=mu_init,
-                temp_folder=temp_folder,
             )
         else:
             raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')
@@ -1847,6 +1847,11 @@ class GTM(nn.Module):
             #        print(f"Train Batch Shape: {x.shape}, Labels: {y.shape}")
             #        break  # Just show one batch per fold
 
+            temp_dir = Path(temp_folder).resolve()
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            db_path = temp_dir / "hyperparameter_tuning_study.db"
+            storage = f"sqlite:////{db_path}"
+            
             study: Study = optuna.create_study(
                 sampler=TPESampler(
                     n_startup_trials=int(np.floor(n_trials / 2)),  # 7
@@ -1855,7 +1860,7 @@ class GTM(nn.Module):
                     prior_weight=0,  # 1.0, #default value 1.0 but then does not explore the space as good I think
                     multivariate=True,  # experimental but very useful here as our parameters are highly correlated
                 ),
-                storage = f"sqlite:///{temp_folder}/hyperparameter_tuning_study.db",
+                storage = storage,
                 # hyperparameter_tuning_study.db',
                 direction="maximize",
                 study_name=study_name,
