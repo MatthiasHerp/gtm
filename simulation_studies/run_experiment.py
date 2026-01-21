@@ -41,7 +41,7 @@ def run_experiment(
     spline_transformation = "bspline",
     spline_decorrelation = "bspline",
     transformation_spline_range = (-10, 10),
-    decorrelation_spline_range = (-10, 10),
+    decorrelation_spline_range = (-15, 15),
     device = "cpu",
     penalty_decorrelation_ridge_param = None,
     penalty_decorrelation_ridge_first_difference = "sample",
@@ -62,12 +62,6 @@ def run_experiment(
     study_name=None,
     # Evaluation of Conditional Independence parameters
     #evaluation_data_type = "samples_from_model",
-    num_processes=4,
-    sample_size = 5000,
-    num_points_quad=15,
-    copula_only=False,
-    min_val=-6,
-    max_val=6,
     bootstrap_warpspeed=False,
     # Evaluation of Conditional Independence parameters GTM
     evaluation_data_type_gtm = "samples_from_model",
@@ -128,8 +122,6 @@ def run_experiment(
     conv_ema_beta = 0.9,  # if conv_use_ema=True
     conv_use_ema = True,
     
-    ## Posterior Sampling 
-    vi_predective_sampling = 10000
     ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
@@ -223,6 +215,7 @@ def run_experiment(
         mlflow.log_param(key="spline_transformation", value=spline_transformation)
         mlflow.log_param(key="spline_decorrelation", value=spline_decorrelation)
         mlflow.log_param(key="transformation_spline_range", value=transformation_spline_range)
+        mlflow.log_param(key="decorrelation_spline_range", value=decorrelation_spline_range)
         mlflow.log_param(key="device", value=device)
         mlflow.log_param(key="penalty_decorrelation_ridge_param" , value=penalty_decorrelation_ridge_param)
         mlflow.log_param(key="penalty_decorrelation_ridge_first_difference", value=penalty_decorrelation_ridge_first_difference)
@@ -317,6 +310,7 @@ def run_experiment(
             spline_transformation = spline_transformation,
             spline_decorrelation = spline_decorrelation,
             transformation_spline_range = transformation_spline_range,
+            decorrelation_spline_range = decorrelation_spline_range,
             device = device)
         
         # Run GTM Model Training
@@ -504,6 +498,7 @@ def run_experiment(
             spline_transformation=spline_transformation,
             spline_decorrelation=spline_decorrelation,
             transformation_spline_range=transformation_spline_range,
+            decorrelation_spline_range=decorrelation_spline_range,
             device= device,
             ## NEW ARGUMENTS ##
             inference = 'bayesian',
@@ -586,7 +581,7 @@ def run_experiment(
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
             tau_nodes=tau_nodes,
-            S=32,
+            S=posterior_sampling_size_bgtm,
         )
 
         log_likelihood_test_bgtm = VI.predictive_log_prob(
@@ -595,7 +590,7 @@ def run_experiment(
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
             tau_nodes=tau_nodes,
-            S=32,
+            S=posterior_sampling_size_bgtm,
         )
         
         
