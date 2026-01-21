@@ -708,7 +708,8 @@ def train_freq_gtm_model(
     study_name,
     dataloader_train,
     dataloader_validate,
-    model
+    model,
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     ):
     
     
