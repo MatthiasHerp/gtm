@@ -90,6 +90,7 @@ class GTM(nn.Module):
         spline_transformation: Literal["bspline", "bernstein"] = "bspline",
         spline_decorrelation: Literal["bspline", "bernstein"] = "bspline",
         transformation_spline_range: Tuple[float, float] = (-15, 15),
+        decorrelation_spline_range: Tuple[float, float] = (-15, 15),
         inference: Literal['frequentist', 'bayesian'] = 'frequentist',
         hyperparameter: dict[str, dict[str, float]] | None = None,
         device: str | torch.device = "cpu",
@@ -127,6 +128,9 @@ class GTM(nn.Module):
             Outside of the range the transformation layer uses a span restriction which results the border case prediction.
             The same is true for the decorrelation layer.
             Default spline range is [-15, 15].
+        decorrelation_spline_range: Tuple[float, float] = [-15, 15], optional
+        This is the range in which the decorrelation layer is defined. As data is transformed already it should be fine, perhaps reduce for more efficient training.
+        Can have same knot closeness with less parameters and smaller range.
         device : str | torch.device = "cpu", optional
             The device on which the model is trained. Default is "cpu". Can also be a torch.device object such as a torch.device("cuda:0") for GPU training.
         -----------
@@ -134,7 +138,6 @@ class GTM(nn.Module):
         super(GTM, self).__init__()
 
         # Parameters below are left out of init for the initial package release
-        decorrelation_spline_range: List[List[float]] = [[-15], [15]]
         span_factor: torch.Tensor = torch.tensor(0.1)
         span_restriction : Literal['reluler'] = "reluler"
         number_covariates: bool | int = False  # False means no covariates, or its count #ALLWAYS FALSE FOR THIS VERSION, Till the number of cov is finally implemented.
@@ -159,8 +162,8 @@ class GTM(nn.Module):
         ]
             
         self.decorrelation_spline_range: List[List[float]] = [
-            decorrelation_spline_range[0] * self.number_variables,
-            decorrelation_spline_range[1] * self.number_variables
+            [decorrelation_spline_range[0]] * self.number_variables,
+            [decorrelation_spline_range[1]] * self.number_variables
         ]
         
         # required for the varying degree of the transformation layer to work
@@ -677,6 +680,7 @@ class GTM(nn.Module):
         -------
         Returns the the log likelihood per sample for input Y.
         """
+        y = y.to(device=self.device)
         return self.__log_likelihood_loss__(y=y, mean_loss=mean_loss)[
             "log_likelihood_data"
         ]  # covariate=False, train=False, evaluate=True
@@ -694,7 +698,6 @@ class GTM(nn.Module):
         lambda_penalty_mode:Literal['square']="square",
         objective_type:Literal['negloglik']="negloglik",
     ) -> dict[str, Tensor]:
-
         return training_objective(
             model=self,
             samples=samples,
@@ -768,7 +771,8 @@ class GTM(nn.Module):
         lr_rho: float = 3e-4,
         lr_tau: float = 1.5e-3,
         sched_cooldown: int = 1,
-        sched_min_lr: float = 5e-5
+        sched_min_lr: float = 5e-5,
+        temp_folder = "./",
     ) -> dict[str, Tensor]:
         """
         Trains the GTM iteratively using gradient-based optimization.
@@ -884,6 +888,7 @@ class GTM(nn.Module):
                 objective_type=objective_type,
                 adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
                 max_batches_per_iter=max_batches_per_iter,
+                temp_folder = temp_folder
             )
             
         elif self.inference == 'bayesian':
@@ -921,7 +926,8 @@ class GTM(nn.Module):
                 conv_tol=conv_tol,
                 conv_min_epochs=conv_min_epochs,
                 conv_ema_beta=conv_ema_beta,
-                mu_init=mu_init
+                mu_init=mu_init,
+                temp_folder=temp_folder,
             )
         else:
             raise NotImplementedError('Selected Inference is not recognized or is not implemented yet.')
@@ -959,6 +965,7 @@ class GTM(nn.Module):
         #Optimization method
         beta_kl_start: float = 3.0,    # try 1.5–3.0
         beta_kl_anneal_epochs: int = 20,  # how fast to decay to 1.0
+        temp_folder="./"
     ) -> None:
         
         """
@@ -1039,7 +1046,8 @@ class GTM(nn.Module):
                 optimizer=optimizer,
                 lambda_penalty_mode=lambda_penalty_mode,
                 objective_type=objective_type,
-                max_batches_per_iter=max_batches_per_iter
+                max_batches_per_iter=max_batches_per_iter,
+                temp_folder=temp_folder
                 )
         elif self.inference =="bayesian":
             return_dict_model_training = train_bayes(
@@ -1066,6 +1074,8 @@ class GTM(nn.Module):
                 #Optimization method
                 beta_kl_start = beta_kl_start,    # try 1.5–3.0
                 beta_kl_anneal_epochs = beta_kl_anneal_epochs,  # how fast to decay to 1.0
+                
+                temp_folder=temp_folder
             )
 
         self.transform_only = False
@@ -1078,6 +1088,7 @@ class GTM(nn.Module):
         iterations: int = 100,
         degrees_try_list: list[int] = list(range(5, 155, 5)),
         max_batches_per_iter: int | bool = False,
+        temp_folder="./"
     ):
         """
         Searches for the smallest transformation spline degree that is enough to transform the training data into standard Gaussian space for each data dimension individually.
@@ -1139,6 +1150,7 @@ class GTM(nn.Module):
                         iterations=iterations,
                         optimizer="LBFGS",
                         max_batches_per_iter=max_batches_per_iter,
+                        temp_folder=temp_folder
                     )
 
                     z_tilde = []
@@ -1207,7 +1219,7 @@ class GTM(nn.Module):
         torch.Tensor
             A tensor of shape (n_samples, n_variables, n_variables) representing the pseudo precision matrix.
         """
-
+        y = y.to(device=self.device)
         with torch.no_grad():
             return_dict = self.forward(
                 y, return_lambda_matrix=True
@@ -1239,7 +1251,7 @@ class GTM(nn.Module):
         torch.Tensor
             A tensor of shape (n_samples, n_variables, n_variables) representing the pseudo conditional correlation matrix.
         """
-
+        y = y.to(device=self.device)
         def p_to_corr(matrix):
             d = matrix.size(0)
             diag_sqrt = torch.diag(matrix) ** 0.5
@@ -1428,6 +1440,7 @@ class GTM(nn.Module):
         max_batches_per_iter:bool|int|None=False,
         pretrained_transformation_layer=False,
         cross_validation_folds:bool|None=False,
+        temp_folder="./"
     )  -> float:
 
         import copy
@@ -1485,6 +1498,7 @@ class GTM(nn.Module):
             optimizer=optimizer,
             seperate_copula_training=seperate_copula_training,
             max_batches_per_iter=max_batches_per_iter,
+            temp_folder=temp_folder
         )
         
         num_batches: int = 0
@@ -1806,6 +1820,7 @@ class GTM(nn.Module):
                         max_batches_per_iter=max_batches_per_iter,
                         pretrained_transformation_layer=pretrained_transformation_layer,
                         cross_validation_folds=cross_validation_folds,
+                        temp_folder= temp_folder
                     )
 
                     return target

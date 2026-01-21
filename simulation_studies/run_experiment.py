@@ -26,6 +26,7 @@ def run_experiment(
     experiment_id,
     # Tags
     seed_value=1,
+    seed_value_copula=None,
     dimensionality=10,
     Independence_tree=3,
     vine_type="R-Vine",
@@ -40,6 +41,7 @@ def run_experiment(
     spline_transformation = "bspline",
     spline_decorrelation = "bspline",
     transformation_spline_range = (-10, 10),
+    decorrelation_spline_range = (-10, 10),
     device = "cpu",
     penalty_decorrelation_ridge_param = None,
     penalty_decorrelation_ridge_first_difference = "sample",
@@ -59,6 +61,7 @@ def run_experiment(
     temp_folder="./temp",
     study_name=None,
     # Evaluation of Conditional Independence parameters
+    #evaluation_data_type = "samples_from_model",
     num_processes=4,
     sample_size = 5000,
     num_points_quad=15,
@@ -133,6 +136,7 @@ def run_experiment(
 
     Args:
         - seed_value (int): Seed for reproducibility.
+        - seed_value_copula (int or None): Seed for fixing the vine copula model (structure, pair copulas, params) that are sampled. If None then each seed_value has a different vine copula.
         - dimensionality (int): Number of dimensions for the vine copula.
         - Independence_tree (int): Tree level from which to set independence copulas to have full conditional independencies in the related pairs.
         - vine_type (str): Type of vine to generate ("R-Vine", "C-Vine", or "D-Vine").
@@ -154,6 +158,7 @@ def run_experiment(
             run_name="{}".format(run_name),
             experiment_id=experiment_id,
             tags={"seed_value": seed_value,
+                  "seed_value_copula": seed_value_copula,
                   "dimensionality": dimensionality,
                   "Independence_tree": Independence_tree,
                   "vine_type": vine_type,
@@ -780,6 +785,7 @@ def train_freq_gtm_model(
                                 penalty_decorrelation_ridge_second_difference_chosen,
                                 penalty_transformation_ridge_second_difference_chosen
                                 ])
+    penalty_splines_params_chosen = penalty_splines_params_chosen.to(device=device)
     
     if penalty_lasso_conditional_independence is None:
         penalty_lasso_conditional_independence_chosen = False
@@ -787,6 +793,8 @@ def train_freq_gtm_model(
         penalty_lasso_conditional_independence_chosen = penalty_lasso_conditional_independence
     else:
         penalty_lasso_conditional_independence_chosen = study.best_params["penalty_lasso_conditional_independence"]
+        penalty_lasso_conditional_independence_chosen = torch.FloatTensor([penalty_lasso_conditional_independence_chosen])
+        penalty_lasso_conditional_independence_chosen = penalty_lasso_conditional_independence_chosen.to(device=device)
     
     # here we store the adaptive lasso weights matrix as an artifact
     # the same way plots can also be stored for each run    
@@ -795,12 +803,13 @@ def train_freq_gtm_model(
         mlflow.log_artifact(temp_folder+"/adaptive_lasso_weights_matrix.npy")
 
     # pretrain the marginal transformations
-    _ = model.pretrain_transformation_layer(dataloader_train, iterations=iterations, max_batches_per_iter=max_batches_per_iter, penalty_splines_params=penalty_splines_params_chosen)
+    _ = model.pretrain_transformation_layer(dataloader_train, iterations=iterations, max_batches_per_iter=max_batches_per_iter, penalty_splines_params=penalty_splines_params_chosen, temp_folder=temp_folder)
+    
     
     # train the joint model
     training_dict = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, iterations=iterations, optimizer=optimizer, learning_rate=learning_rate, patience=patience, min_delta=min_delta,
                 penalty_splines_params=penalty_splines_params_chosen, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, penalty_lasso_conditional_independence=penalty_lasso_conditional_independence_chosen, 
-                max_batches_per_iter=max_batches_per_iter)
+                max_batches_per_iter=max_batches_per_iter, temp_folder=temp_folder)
     
     
     return  penalty_decorrelation_ridge_param_chosen, penalty_decorrelation_ridge_first_difference_chosen, penalty_decorrelation_ridge_second_difference_chosen, penalty_transformation_ridge_second_difference_chosen, penalty_lasso_conditional_independence_chosen, training_dict

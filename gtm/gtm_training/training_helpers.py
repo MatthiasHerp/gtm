@@ -593,6 +593,7 @@ def train_freq(
     objective_type: Literal['negloglik']="negloglik",  # ema_decay=False,
     adaptive_lasso_weights_matrix: Tensor| bool=False,
     max_batches_per_iter: bool|int|None=False,
+    temp_folder="./"
 ) -> dict[str, Tensor]:    # max_batches_per_iter infos
     # then use random sampling data_loader
     # always 1 for validation data
@@ -657,11 +658,11 @@ def train_freq(
     loss_list_val: list = []
 
     if validate_dataloader is not False:
-        with open("model.pkl", "wb") as f:
+        with open(temp_folder+"/model.pkl", "wb") as f:
             pickle.dump(model, f)
-        with open("model.pkl", "rb") as f:
+        with open(temp_folder+"/model.pkl", "rb") as f:
             model_val: "GTM" = pickle.load(f)
-        os.remove("model.pkl")
+        os.remove(temp_folder+"/model.pkl")
         if model_val.num_trans_layers > 0:
             model_val.transformation.multivariate_basis = False
             model_val.transformation.multivariate_basis_derivativ_1 = False
@@ -777,7 +778,8 @@ def train_freq(
                 break
 
     # Return the best model which is not necessarily the last model
-    model.load_state_dict(early_stopper.best_model_state)
+    if validate_dataloader is not False:
+        model.load_state_dict(early_stopper.best_model_state)
 
     # Rerun model at the end to get final penalties
     return_dict_model_training: dict[str, Tensor] = model.__training_objective__(
