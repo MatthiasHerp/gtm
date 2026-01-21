@@ -16,3 +16,4 @@ demos/demo_3D_jji_rvine.ipynb
 model_state_dict.pth
 demo.py
 mlruns/
+gtm_check_hydra.py

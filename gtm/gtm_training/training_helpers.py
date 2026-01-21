@@ -582,6 +582,7 @@ def train(
     objective_type="negloglik",  # ema_decay=False,
     adaptive_lasso_weights_matrix=False,
     max_batches_per_iter=False,
+    temp_folder="./"
 ):
     # max_batches_per_iter infos
     # then use random sampling data_loader
@@ -646,11 +647,11 @@ def train(
     loss_list_val = []
 
     if validate_dataloader is not False:
-        with open("model.pkl", "wb") as f:
+        with open(temp_folder+"/model.pkl", "wb") as f:
             pickle.dump(model, f)
-        with open("model.pkl", "rb") as f:
+        with open(temp_folder+"/model.pkl", "rb") as f:
             model_val = pickle.load(f)
-        os.remove("model.pkl")
+        os.remove(temp_folder+"/model.pkl")
         if model_val.num_trans_layers > 0:
             model_val.transformation.multivariate_basis = False
             model_val.transformation.multivariate_basis_derivativ_1 = False
@@ -767,7 +768,8 @@ def train(
                 break
 
     # Return the best model which is not necessarily the last model
-    model.load_state_dict(early_stopper.best_model_state)
+    if validate_dataloader is not False:
+        model.load_state_dict(early_stopper.best_model_state)
 
     # Rerun model at the end to get final penalties
     return_dict_model_training = model.__training_objective__(

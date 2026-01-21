@@ -9,7 +9,8 @@ import numpy as np
 import torch
 
 
-def generate_synthetic_vine_data(seed_value=1, 
+def generate_synthetic_vine_data(seed_value=1,
+                                 seed_value_copula=None, 
                                  dimensionality=10,
                                  Independence_tree=3,
                                  vine_type="R-Vine",
@@ -21,6 +22,7 @@ def generate_synthetic_vine_data(seed_value=1,
 
     Args:
         - seed_value (int): Seed for reproducibility.
+        - seed_value_copula (int or None): Seed for fixing the vine copula model (structure, pair copulas, params) that are sampled. If None then each seed_value has a different vine copula.
         - dimensionality (int): Number of dimensions for the vine copula.
         - Independence_tree (int): Tree level from which to set independence copulas to have full conditional independencies in the related pairs.
         - vine_type (str): Type of vine to generate ("R-Vine", "C-Vine", or "D-Vine").
@@ -43,7 +45,10 @@ def generate_synthetic_vine_data(seed_value=1,
     """
     
     # Sets seeds across packages for reproducibility
-    set_seeds(seed_value)
+    if seed_value_copula is not None:
+        set_seeds(seed_value_copula)
+    else:
+        set_seeds(seed_value)
     
     ### 1. Sample Synthetic Copula Data and Compute Likelihoods
     # We sample data from a R-Vine-Copula and add Gaussian marginals. 
@@ -69,6 +74,11 @@ def generate_synthetic_vine_data(seed_value=1,
     df_true_structure_sub.loc[:, "var_row"] = df_true_structure_sub["var_row"] - 1
     df_true_structure_sub.loc[:, "var_col"] = df_true_structure_sub["var_col"] - 1
 
+    # If we have a fixed copula seed then we need to set the seed for the data simulation here
+    # Otherwise we would always get the same sampled data for the fixed copula
+    # If each seed has a seperate copula model, then we dont need to set a seed here again
+    if seed_value_copula is not None:
+        set_seeds(seed_value)
     
     # Train
     simulated_data_uniform_train = vine_model.simulate(n=N_train)

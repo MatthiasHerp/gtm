@@ -24,6 +24,7 @@ def run_experiment(
     experiment_id,
     # Tags
     seed_value=1,
+    seed_value_copula=None,
     dimensionality=10,
     Independence_tree=3,
     vine_type="R-Vine",
@@ -38,6 +39,7 @@ def run_experiment(
     spline_transformation = "bspline",
     spline_decorrelation = "bspline",
     transformation_spline_range = (-10, 10),
+    decorrelation_spline_range = (-10, 10),
     device = "cpu",
     penalty_decorrelation_ridge_param = None,
     penalty_decorrelation_ridge_first_difference = "sample",
@@ -58,8 +60,8 @@ def run_experiment(
     study_name=None,
     # Evaluation of Conditional Independence parameters
     #evaluation_data_type = "samples_from_model",
-    num_processes=4,
-    sample_size = 5000,
+    num_processes=1,
+    sample_size = 10000,
     num_points_quad=15,
     copula_only=False,
     min_val=-6,
@@ -71,6 +73,7 @@ def run_experiment(
 
     Args:
         - seed_value (int): Seed for reproducibility.
+        - seed_value_copula (int or None): Seed for fixing the vine copula model (structure, pair copulas, params) that are sampled. If None then each seed_value has a different vine copula.
         - dimensionality (int): Number of dimensions for the vine copula.
         - Independence_tree (int): Tree level from which to set independence copulas to have full conditional independencies in the related pairs.
         - vine_type (str): Type of vine to generate ("R-Vine", "C-Vine", or "D-Vine").
@@ -92,6 +95,7 @@ def run_experiment(
             run_name="{}".format(run_name),
             experiment_id=experiment_id,
             tags={"seed_value": seed_value,
+                  "seed_value_copula": seed_value_copula,
                   "dimensionality": dimensionality,
                   "Independence_tree": Independence_tree,
                   "vine_type": vine_type,
@@ -102,6 +106,7 @@ def run_experiment(
     
     synthetic_data_dict = generate_synthetic_vine_data(
         seed_value=seed_value,
+        seed_value_copula=seed_value_copula,
         dimensionality=dimensionality,
         Independence_tree=Independence_tree,
         vine_type=vine_type,
@@ -149,6 +154,7 @@ def run_experiment(
     mlflow.log_param(key="spline_transformation", value=spline_transformation)
     mlflow.log_param(key="spline_decorrelation", value=spline_decorrelation)
     mlflow.log_param(key="transformation_spline_range", value=transformation_spline_range)
+    mlflow.log_param(key="decorrelation_spline_range", value=decorrelation_spline_range)
     mlflow.log_param(key="device", value=device)
     mlflow.log_param(key="penalty_decorrelation_ridge_param" , value=penalty_decorrelation_ridge_param)
     mlflow.log_param(key="penalty_decorrelation_ridge_first_difference", value=penalty_decorrelation_ridge_first_difference)
@@ -177,7 +183,10 @@ def run_experiment(
         spline_transformation = spline_transformation,
         spline_decorrelation = spline_decorrelation,
         transformation_spline_range = transformation_spline_range,
+        decorrelation_spline_range = decorrelation_spline_range,
         device = device)
+    model.to(device=device)
+
 
     study = model.hyperparameter_tune_penalties( 
         train_dataloader = dataloader_train,
@@ -235,6 +244,7 @@ def run_experiment(
                                 penalty_decorrelation_ridge_second_difference_chosen,
                                 penalty_transformation_ridge_second_difference_chosen
                                 ])
+    penalty_splines_params_chosen = penalty_splines_params_chosen.to(device=device)
     
     if penalty_lasso_conditional_independence is None:
         penalty_lasso_conditional_independence_chosen = False
@@ -242,6 +252,8 @@ def run_experiment(
         penalty_lasso_conditional_independence_chosen = penalty_lasso_conditional_independence
     else:
         penalty_lasso_conditional_independence_chosen = study.best_params["penalty_lasso_conditional_independence"]
+        penalty_lasso_conditional_independence_chosen = torch.FloatTensor([penalty_lasso_conditional_independence_chosen])
+        penalty_lasso_conditional_independence_chosen = penalty_lasso_conditional_independence_chosen.to(device=device)
     
     # here we store the adaptive lasso weights matrix as an artifact
     # the same way plots can also be stored for each run    
@@ -250,12 +262,13 @@ def run_experiment(
         mlflow.log_artifact(temp_folder+"/adaptive_lasso_weights_matrix.npy")
 
     # pretrain the marginal transformations
-    _ = model.pretrain_transformation_layer(dataloader_train, iterations=iterations, max_batches_per_iter=max_batches_per_iter, penalty_splines_params=penalty_splines_params_chosen)
+    _ = model.pretrain_transformation_layer(dataloader_train, iterations=iterations, max_batches_per_iter=max_batches_per_iter, penalty_splines_params=penalty_splines_params_chosen, temp_folder=temp_folder)
+    
     
     # train the joint model
     training_dict = model.train(train_dataloader=dataloader_train, validate_dataloader=dataloader_validate, iterations=iterations, optimizer=optimizer, learning_rate=learning_rate, patience=patience, min_delta=min_delta,
                 penalty_splines_params=penalty_splines_params_chosen, adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix, penalty_lasso_conditional_independence=penalty_lasso_conditional_independence_chosen, 
-                max_batches_per_iter=max_batches_per_iter)
+                max_batches_per_iter=max_batches_per_iter, temp_folder=temp_folder)
     
     # plot training curves
     plt.plot(training_dict["loss_list_training"], label="Training Loss")
@@ -268,7 +281,7 @@ def run_experiment(
     fig_train = plt.gcf()
     plt.close()
     # log the plot as an mlflow artifact
-    log_mlflow_plot(fig_train, 'training_curves.png')
+    log_mlflow_plot(fig_train, 'training_curves.png', temporary_storage_directory=temp_folder)
     
     # Log trained model
     _ = mlflow.pytorch.log_model(model, "model")
@@ -285,9 +298,9 @@ def run_experiment(
 
     # We compare the learned GTM to a Gaussian Approximation and the Oracle Model. We expect the GTM to lie between these two in terms of approximation the true underlying distribution.
     # We measure this by means of the Kullback Leibler Divergence which we approximate on the test set which is equivalent to the log likelihood ratio between the true distribution and an approximation of it..
-    log_likelihood_train_gtm = model.log_likelihood(synthetic_data_dict['train_data'])
-    log_likelihood_validate_gtm = model.log_likelihood(synthetic_data_dict['validate_data'])
-    log_likelihood_test_gtm = model.log_likelihood(synthetic_data_dict['test_data'])
+    log_likelihood_train_gtm = model.log_likelihood(synthetic_data_dict['train_data']).detach().cpu()
+    log_likelihood_validate_gtm = model.log_likelihood(synthetic_data_dict['validate_data']).detach().cpu()
+    log_likelihood_test_gtm = model.log_likelihood(synthetic_data_dict['test_data']).detach().cpu()
     
     # estimate the Multivariate Normal Distribution as Model
     mean_mvn_model = synthetic_data_dict['train_data'].mean(0)
@@ -343,9 +356,19 @@ def run_experiment(
                                          max_val=max_val)
     
 
-    combined_data = torch.cat((synthetic_data_dict['train_data'], synthetic_data_dict['validate_data']), dim=0).detach()
-    conditional_independence_table_data = model.compute_conditional_independence_table(
-                                        y = combined_data,
+    conditional_independence_table_data_train = model.compute_conditional_independence_table(
+                                        y = synthetic_data_dict['train_data'].detach(),
+                                        evaluation_data_type = "data",
+                                        num_processes=num_processes,
+                                        sample_size = sample_size,
+                                        num_points_quad=num_points_quad,
+                                        copula_only=copula_only,
+                                        min_val=min_val,
+                                        max_val=max_val)
+    
+
+    conditional_independence_table_data_val = model.compute_conditional_independence_table(
+                                        y = synthetic_data_dict['validate_data'].detach(),
                                         evaluation_data_type = "data",
                                         num_processes=num_processes,
                                         sample_size = sample_size,
@@ -363,38 +386,73 @@ def run_experiment(
         on=["var_row", "var_col"]
     )
 
-    merged_ci_tables_data = pd.merge(
-        conditional_independence_table_data,
+    merged_ci_tables_data_train = pd.merge(
+        conditional_independence_table_data_train,
         synthetic_data_dict["df_true_structure"],
         on=["var_row", "var_col"]
     )
     # the iae makes no sense when using the true data, and the kld is the log likelihood ratio so we del iae and rename kld into ll_diff
-    del merged_ci_tables_data["iae"]
-    merged_ci_tables_data["ll_diff"] = merged_ci_tables_data["kld"]
-    del merged_ci_tables_data["kld"]
+    del merged_ci_tables_data_train["iae"]
+    merged_ci_tables_data_train["ll_diff"] = merged_ci_tables_data_train["kld"]
+    del merged_ci_tables_data_train["kld"]
+    
+    merged_ci_tables_data_val = pd.merge(
+        conditional_independence_table_data_val,
+        synthetic_data_dict["df_true_structure"],
+        on=["var_row", "var_col"]
+    )
+    del merged_ci_tables_data_val["iae"]
+    merged_ci_tables_data_val["ll_diff"] = merged_ci_tables_data_val["kld"]
+    del merged_ci_tables_data_val["kld"]
     
     # store the merged table as an artifact
     merged_ci_tables_samples.to_csv(temp_folder+"/conditional_independence_table_model_samples.csv", index=False)
     mlflow.log_artifact(temp_folder+"/conditional_independence_table_model_samples.csv")   
     
-    conditional_independence_table_data.to_csv(temp_folder+"/conditional_independence_table_data.csv", index=False)
-    mlflow.log_artifact(temp_folder+"/conditional_independence_table_data.csv")   
+    conditional_independence_table_data_train.to_csv(temp_folder+"/conditional_independence_table_data_train.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_train.csv")   
+    
+    conditional_independence_table_data_val.to_csv(temp_folder+"/conditional_independence_table_data_validate.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_validate.csv")   
 
     # Store metrics based on synthetic samples
     auc_iae = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["iae"])
     auc_kld = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["kld"])
     auc_corr = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["cond_correlation_abs_mean"])
-    auc_pmat = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["precision_abs_mean"])
-
+    auc_pmat = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["precision_abs_mean"])
+    
     mlflow.log_metric(key="auc_iae", value=auc_iae)
     mlflow.log_metric(key="auc_kld", value=auc_kld)
     mlflow.log_metric(key="auc_cond_corr", value=auc_corr)
     mlflow.log_metric(key="auc_precision_matrix", value=auc_pmat)
 
     # Store metrics based on true data
-    auc_ll_diff = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["ll_diff"])
+    auc_corr_train = roc_auc_score(merged_ci_tables_data_train["dependence"], merged_ci_tables_data_train["cond_correlation_abs_mean"])
+    auc_pmat_train = roc_auc_score(merged_ci_tables_data_train["dependence"], merged_ci_tables_data_train["precision_abs_mean"])
+    auc_corr_val = roc_auc_score(merged_ci_tables_data_val["dependence"], merged_ci_tables_data_val["cond_correlation_abs_mean"])
+    auc_pmat_val = roc_auc_score(merged_ci_tables_data_val["dependence"], merged_ci_tables_data_val["precision_abs_mean"])
 
-    mlflow.log_metric(key="auc_loglik_diff", value=auc_ll_diff)
+    auc_ll_diff_train = roc_auc_score(merged_ci_tables_data_train["dependence"], merged_ci_tables_data_train["ll_diff"])
+    auc_ll_diff_val = roc_auc_score(merged_ci_tables_data_val["dependence"], merged_ci_tables_data_val["ll_diff"])
+
+    mlflow.log_metric(key="auc_cond_corr_train", value=auc_corr_train)
+    mlflow.log_metric(key="auc_precision_matrix_train", value=auc_pmat_train)
+    mlflow.log_metric(key="auc_cond_corr_val", value=auc_corr_val)
+    mlflow.log_metric(key="auc_precision_matrix_val", value=auc_pmat_val)    
+    
+    mlflow.log_metric(key="auc_loglik_diff_train", value=auc_ll_diff_train)
+    mlflow.log_metric(key="auc_loglik_diff_val", value=auc_ll_diff_val)
+    
+    # joint metrics computed by simple weighting of means
+    N = N_train + N_validate
+    proportion_train = N_train / N
+    proportion_val = N_validate / N
+    
+    mlflow.log_metric(key="auc_cond_corr_data", value=auc_corr_train*proportion_train + auc_corr_val*proportion_val)
+    mlflow.log_metric(key="auc_precision_matrix_data", value=auc_pmat_train*proportion_train + auc_pmat_val*proportion_val)
+    
+    mlflow.log_metric(key="auc_loglik_diff_data", value=auc_ll_diff_train*proportion_train + auc_ll_diff_val*proportion_val)
+    
     
 
     mlflow.end_run()
