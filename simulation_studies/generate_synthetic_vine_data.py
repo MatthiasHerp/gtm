@@ -44,11 +44,11 @@ def generate_synthetic_vine_data(seed_value=1,
             - 'df_true_structure': DataFrame detailing the true dependence structure of the vine copula.
     """
     
-    # Sets seeds across packages for reproducibility
+    # Sets seeds across packages for reproducibility of sampling the random pair copulas as well as the parameters (my functions)
+    # For sampling the vine structure we use the seed inside pyvinecopulib
+    # For sampling from the vine copula we also use the seed inside pyvinecopulib
     if seed_value_copula is not None:
         set_seeds(seed_value_copula)
-    else:
-        set_seeds(seed_value)
     
     ### 1. Sample Synthetic Copula Data and Compute Likelihoods
     # We sample data from a R-Vine-Copula and add Gaussian marginals. 
@@ -56,11 +56,11 @@ def generate_synthetic_vine_data(seed_value=1,
     # Theses allow use to set independence copulas upon Tree 3 to add full conditional independencies as detailed in our Paper. The `df`contains a tables with the copulas, 
     # there parameters and there tree positions in a manner comparable to the conditional independence table later generated with the GTM.
     if vine_type == "R-Vine":
-        vine_structure = pv.RVineStructure.simulate(dimensionality)
+        vine_structure = pv.RVineStructure.simulate(dimensionality,seeds=[seed_value_copula])
     elif vine_type == "C-Vine":
-        vine_structure = pv.CVineStructure.simulate(dimensionality)
+        vine_structure = pv.CVineStructure.simulate(dimensionality,seeds=[seed_value_copula])
     elif vine_type == "D-Vine":
-        vine_structure = pv.DVineStructure.simulate(dimensionality)
+        vine_structure = pv.DVineStructure.simulate(dimensionality,seeds=[seed_value_copula])
     else:
         raise ValueError("vine_type must be one of 'R-Vine', 'C-Vine', or 'D-Vine'")
     
@@ -69,29 +69,22 @@ def generate_synthetic_vine_data(seed_value=1,
     df = compute_conditional_dependence_table(vine_model)
 
     # creating a table to compare the true dependence structure later on to what the gtm learned
-    df_true_structure = df[["tree","edge","conditioned variables", "conditioned variable 1", "conditioned variable 2", "dependence", "var_row", "var_col"]]
-    df_true_structure_sub = df_true_structure[["var_row", "var_col", "dependence"]]
+    df_true_structure = df[["tree","edge","conditioned variables", "conditioned variable 1", "conditioned variable 2", "dependence", "var_row", "var_col", "tau", "family", "rotation"]]
+    df_true_structure_sub = df_true_structure[["var_row", "var_col", "dependence", "tau", "family", "rotation"]]
     df_true_structure_sub.loc[:, "var_row"] = df_true_structure_sub["var_row"] - 1
     df_true_structure_sub.loc[:, "var_col"] = df_true_structure_sub["var_col"] - 1
 
-    # If we have a fixed copula seed then we need to set the seed for the data simulation here
-    # Otherwise we would always get the same sampled data for the fixed copula
-    # If each seed has a seperate copula model, then we dont need to set a seed here again
-    if seed_value_copula is not None:
-        set_seeds(seed_value)
-    
     # Train
-    simulated_data_uniform_train = vine_model.simulate(n=N_train)
+    simulated_data_uniform_train = vine_model.simulate(n=N_train,seeds=[seed_value])
     simulated_data_train = torch.distributions.Normal(0,1).icdf(torch.tensor(simulated_data_uniform_train)).float()
 
     # Validate
-    simulated_data_uniform_validate = vine_model.simulate(n=N_validate)
+    simulated_data_uniform_validate = vine_model.simulate(n=N_validate,seeds=[seed_value])
     simulated_data_validate = torch.distributions.Normal(0,1).icdf(torch.tensor(simulated_data_uniform_validate)).float()
 
     # Test
-    simulated_data_uniform_test = vine_model.simulate(n=N_test)
+    simulated_data_uniform_test = vine_model.simulate(n=N_test,seeds=[seed_value])
     simulated_data_test = torch.distributions.Normal(0,1).icdf(torch.tensor(simulated_data_uniform_test)).float()
-    
     
     # Notice we use Sklars Theorem to compute the density of the joint copula and Gaussian marginals density.
     loglik_copula = np.log(vine_model.pdf(simulated_data_uniform_train))

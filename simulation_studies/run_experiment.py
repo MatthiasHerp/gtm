@@ -101,7 +101,8 @@ def run_experiment(
                   "vine_type": vine_type,
                   "N_train": N_train,
                   "N_validate": N_validate,
-                  "N_test": N_test})
+                  "N_test": N_test,
+                  "bootstrap_warpspeed": bootstrap_warpspeed})
     
     
     synthetic_data_dict = generate_synthetic_vine_data(
