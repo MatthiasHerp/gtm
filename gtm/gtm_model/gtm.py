@@ -15,7 +15,8 @@ from gtm.gtm_layers.decorrelation_layer import Decorrelation
 from gtm.gtm_layers.layer_utils import generate_diagonal_matrix
 # from gtm.layers.flip import Flip
 from gtm.gtm_layers.transformation_layer import *
-from gtm.gtm_plots_analysis.compute_conditional_independence_kld import *
+from gtm.gtm_plots_analysis.compute_conditional_independence_kld import compute_conditional_independence_kld#, compute_conditional_independence_kld_bayesian
+from gtm.gtm_plots_analysis.compute_conditional_independence_kld_bayes import compute_conditional_independence_kld_bayesian
 from gtm.gtm_plots_analysis.plot_conditional_dependence_pair import \
     plot_conditional_dependence_pair
 from gtm.gtm_plots_analysis.plot_conditional_independence_graph import \
@@ -1974,6 +1975,7 @@ class GTM(nn.Module):
                 likelihood_based_metrics=likelihood_based_metrics,
             )
         elif self.inference == "bayesian":
+            likelihood_based_metrics = True
             self.conditional_independence_table = compute_conditional_independence_kld_bayesian(
                 self,
                 vi_model=vi_model,

@@ -41,12 +41,6 @@ def _get_quad_tensors(
     device: torch.device,
     dtype: torch.dtype,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """
-    Returns:
-      X: [Q, ndim]
-      W: [Q]
-    Cached by (ndim, npoints, min, max, device, dtype).
-    """
     key = (ndim, int(num_points_quad), float(min_val), float(max_val), str(device), str(dtype))
     if key in _QUAD_CACHE:
         return _QUAD_CACHE[key]
@@ -61,121 +55,171 @@ def _get_quad_tensors(
     return X, W
 
 
-# --------------------------------------
-# Vectorized GLQ integrals for many pairs
-# --------------------------------------
-@torch.no_grad()
-def _log_int_out_two_cols_many_pairs(
-    model,
-    data: torch.Tensor,          # [N, D]
-    col_i: torch.Tensor,         # [P] (int64)
-    col_j: torch.Tensor,         # [P] (int64)
-    X2: torch.Tensor,            # [Q2, 2]
-    W2: torch.Tensor,            # [Q2]
-) -> torch.Tensor:
-    """
-    Computes log ∫∫ f(y with cols i,j replaced by grid) dy_i dy_j
-    for many pairs simultaneously.
-
-    Returns:
-      log_integral: [P, N]
-    """
-    # shapes
-    N, D = data.shape
-    P = col_i.numel()
-    Q2 = X2.shape[0]
-
-    # Base: [P, N, Q2, D]
-    base = data[None, :, None, :].expand(P, N, Q2, D).clone()
-
-    # Fill varying columns with X2
-    # base[p, n, q, col_i[p]] = X2[q,0]
-    # base[p, n, q, col_j[p]] = X2[q,1]
-    base.scatter_(3, col_i[:, None, None, None].expand(P, N, Q2, 1), X2[None, None, :, 0:1].expand(P, N, Q2, 1))
-    base.scatter_(3, col_j[:, None, None, None].expand(P, N, Q2, 1), X2[None, None, :, 1:2].expand(P, N, Q2, 1))
-
-    flat = base.reshape(P * N * Q2, D)
-    ll = model.log_likelihood(flat)           # [P*N*Q2]
-    dens = torch.exp(ll).reshape(P, N, Q2)    # [P,N,Q2]
-
-    # weighted integral over Q2
-    integral = (dens * W2[None, None, :]).sum(dim=2)  # [P,N]
-    # numerical safety
-    integral = torch.clamp(integral, min=torch.finfo(integral.dtype).tiny)
-    return torch.log(integral)
-
+# ============================================================
+# Memory-safe GLQ integrals (stream over quadrature points)
+# ============================================================
 
 @torch.no_grad()
-def _log_int_out_one_col_many_pairs(
+def _log_int_out_one_col_stream(
     model,
-    data: torch.Tensor,          # [N, D]
-    col_k: torch.Tensor,         # [P] (int64)
-    X1: torch.Tensor,            # [Q1, 1]
-    W1: torch.Tensor,            # [Q1]
+    data: torch.Tensor,      # [N, D]
+    col_k: torch.Tensor,     # [P] int64
+    X1: torch.Tensor,        # [Q1, 1]
+    W1: torch.Tensor,        # [Q1]
+    q_microbatch: int = 64,  # number of quadrature points per microbatch
 ) -> torch.Tensor:
     """
-    Computes log ∫ f(y with col k replaced by grid) dy_k
-    for many columns (here: one per pair) simultaneously.
+    Computes for each pair p and each row n:
+      log ∫ f( y with col_k[p] replaced by x ) dx
+    without allocating [P,N,Q,D].
 
-    Returns:
-      log_integral: [P, N]
+    Returns: [P, N]
     """
     N, D = data.shape
     P = col_k.numel()
     Q1 = X1.shape[0]
 
-    base = data[None, :, None, :].expand(P, N, Q1, D).clone()
-    base.scatter_(3, col_k[:, None, None, None].expand(P, N, Q1, 1), X1[None, None, :, 0:1].expand(P, N, Q1, 1))
+    # replicate base for P pairs: [P,N,D] (manageable)
+    base = data.unsqueeze(0).expand(P, N, D).contiguous()
+    flat_base = base.reshape(P * N, D)  # [P*N, D]
 
-    flat = base.reshape(P * N * Q1, D)
-    ll = model.log_likelihood(flat)
-    dens = torch.exp(ll).reshape(P, N, Q1)
+    # accumulate integral in probability space
+    integral = torch.zeros((P * N,), device=data.device, dtype=torch.float32)
 
-    integral = (dens * W1[None, None, :]).sum(dim=2)  # [P,N]
-    integral = torch.clamp(integral, min=torch.finfo(integral.dtype).tiny)
-    return torch.log(integral)
+    # micro-batch quadrature points to control peak memory
+    for s in range(0, Q1, q_microbatch):
+        e = min(s + q_microbatch, Q1)
+        xb = X1[s:e, 0]         # [B]
+        wb = W1[s:e]            # [B]
+        B = xb.numel()
+
+        # expand to [B, P*N, D] as a view then materialize only [B*P*N, D]
+        xrep = xb[:, None].expand(B, P * N)  # [B, P*N]
+        xrep_flat = xrep.reshape(-1)         # [B*P*N]
+
+        y = flat_base.unsqueeze(0).expand(B, P * N, D).reshape(B * P * N, D).clone()
+        # set varying column (different per pair): need per-row mapping of which column to set
+        # We do it by indexing per pair block.
+        # Create an index vector of length P*N telling which pair each row belongs to:
+        pair_id = torch.arange(P, device=data.device).repeat_interleave(N)  # [P*N]
+        col_for_row = col_k[pair_id]                                        # [P*N]
+        col_for_row = col_for_row.unsqueeze(0).expand(B, P * N).reshape(-1) # [B*P*N]
+
+        y[torch.arange(B * P * N, device=data.device), col_for_row] = xrep_flat
+
+        ll = model.log_likelihood(y)               # [B*P*N]
+        dens = torch.exp(ll).to(torch.float32)     # [B*P*N]
+
+        # weight each quadrature point
+        wrep = wb[:, None].expand(B, P * N).reshape(-1)  # [B*P*N]
+        integral += (dens * wrep).reshape(B, P * N).sum(dim=0)
+
+        # free temp
+        del y, ll, dens
+
+    integral = torch.clamp(integral, min=torch.finfo(torch.float32).tiny)
+    return torch.log(integral).reshape(P, N)
 
 
 @torch.no_grad()
-def _ci_log_dists_many_pairs_glq(
+def _log_int_out_two_cols_stream(
     model,
-    data: torch.Tensor,          # [N,D]
-    col_i: torch.Tensor,         # [P]
-    col_j: torch.Tensor,         # [P]
+    data: torch.Tensor,      # [N, D]
+    col_i: torch.Tensor,     # [P]
+    col_j: torch.Tensor,     # [P]
+    X2: torch.Tensor,        # [Q2, 2]
+    W2: torch.Tensor,        # [Q2]
+    q_microbatch: int = 16,  # for Q2=400, 16/32 is typical
+) -> torch.Tensor:
+    """
+    Computes:
+      log ∫∫ f( y with cols i,j replaced by (x1,x2) ) dx1 dx2
+    for many pairs, streaming over quadrature points.
+
+    Returns: [P, N]
+    """
+    N, D = data.shape
+    P = col_i.numel()
+    Q2 = X2.shape[0]
+
+    base = data.unsqueeze(0).expand(P, N, D).contiguous()
+    flat_base = base.reshape(P * N, D)  # [P*N, D]
+
+    integral = torch.zeros((P * N,), device=data.device, dtype=torch.float32)
+
+    pair_id = torch.arange(P, device=data.device).repeat_interleave(N)  # [P*N]
+    col_i_row = col_i[pair_id]                                          # [P*N]
+    col_j_row = col_j[pair_id]                                          # [P*N]
+
+    for s in range(0, Q2, q_microbatch):
+        e = min(s + q_microbatch, Q2)
+        Xb = X2[s:e, :]  # [B,2]
+        Wb = W2[s:e]     # [B]
+        B = Xb.shape[0]
+
+        x1 = Xb[:, 0]
+        x2 = Xb[:, 1]
+
+        x1rep = x1[:, None].expand(B, P * N).reshape(-1)  # [B*P*N]
+        x2rep = x2[:, None].expand(B, P * N).reshape(-1)
+
+        y = flat_base.unsqueeze(0).expand(B, P * N, D).reshape(B * P * N, D).clone()
+
+        # expand column indices to [B*P*N]
+        col_i_rep = col_i_row.unsqueeze(0).expand(B, P * N).reshape(-1)
+        col_j_rep = col_j_row.unsqueeze(0).expand(B, P * N).reshape(-1)
+
+        idx = torch.arange(B * P * N, device=data.device)
+        y[idx, col_i_rep] = x1rep
+        y[idx, col_j_rep] = x2rep
+
+        ll = model.log_likelihood(y)
+        dens = torch.exp(ll).to(torch.float32)
+
+        wrep = Wb[:, None].expand(B, P * N).reshape(-1)
+        integral += (dens * wrep).reshape(B, P * N).sum(dim=0)
+
+        del y, ll, dens
+
+    integral = torch.clamp(integral, min=torch.finfo(torch.float32).tiny)
+    return torch.log(integral).reshape(P, N)
+
+
+@torch.no_grad()
+def _ci_log_dists_many_pairs_glq_stream(
+    model,
+    data: torch.Tensor,      # [N,D]
+    col_i: torch.Tensor,     # [P]
+    col_j: torch.Tensor,     # [P]
     X1: torch.Tensor, W1: torch.Tensor,
     X2: torch.Tensor, W2: torch.Tensor,
+    qmb_1d: int = 64,
+    qmb_2d: int = 16,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
-    Vectorized version of compute_ci_probability_deviance_two_dim_glq for many pairs.
     Returns:
-      actual_log_distribution_glq: [P, N]
-      under_ci_assumption_log_distribution_glq: [P, N]
+      actual: [P,N]
+      under : [P,N]
     """
-    # p1 = log f(Y) (same for all pairs)
     p1 = model.log_likelihood(data)  # [N]
 
-    # p2 = log f(Y_{/ij}) by integrating out i and j
-    p2 = _log_int_out_two_cols_many_pairs(model, data, col_i, col_j, X2, W2)  # [P,N]
+    p2 = _log_int_out_two_cols_stream(model, data, col_i, col_j, X2, W2, q_microbatch=qmb_2d)  # [P,N]
 
-    # p3 = log f(Y_i, Y_j | Y_{/ij})
-    p3 = p1[None, :] - p2  # [P,N]
+    p3 = p1[None, :] - p2
 
-    # p4 = log f(Y_i | Y_{/ij}) = log f(Y_i, Y_{/ij}) - log f(Y_{/ij})
-    #      where log f(Y_i, Y_{/ij}) integrates out Y_j => integrate out col_j
-    p4_num = _log_int_out_one_col_many_pairs(model, data, col_j, X1, W1)  # [P,N]
+    p4_num = _log_int_out_one_col_stream(model, data, col_j, X1, W1, q_microbatch=qmb_1d)      # [P,N]
     p4 = p4_num - p2
 
-    # p5 = log f(Y_j | Y_{/ij}) integrates out col_i
-    p5_num = _log_int_out_one_col_many_pairs(model, data, col_i, X1, W1)  # [P,N]
+    p5_num = _log_int_out_one_col_stream(model, data, col_i, X1, W1, q_microbatch=qmb_1d)      # [P,N]
     p5 = p5_num - p2
 
     actual = p3
-    under  = p4 + p5
+    under = p4 + p5
     return actual, under
 
 
 # --------------------------------------
-# Evaluation data helper (your same logic)
+# Your evaluation data helper (unchanged)
 # --------------------------------------
 def get_evaluation_data(
     self: "GTM",
@@ -216,24 +260,19 @@ def get_evaluation_data(
     return evaluation_data
 
 
-def ci_from_samples(t, q_lo=0.025, q_hi=0.975):
-    qs = torch.quantile(t, torch.tensor([q_lo, q_hi], device=t.device), dim=0)
-    return qs[0].tolist(), qs[1].tolist()
-
-
 # ---------------------------------------------------------
-# Main: optimized Bayesian KLD conditional independence table
+# Main function: memory-safe chunked+streaming version
 # ---------------------------------------------------------
 def compute_conditional_independence_kld_bayesian(
     self: "GTM",
     vi_model: "VI_Model",
     y=None,
     evaluation_data_type="data",
-    num_processes=1,          # Not used
+    num_processes=1,
     tau_nodes: Optional["TauPack"] = None,
     sample_size=1000,
     num_points_quad=20,
-    optimized=True,           # now means "use vectorized+cached"
+    optimized=True,
     copula_only=False,
     min_val=-5.0,
     max_val=5.0,
@@ -241,19 +280,20 @@ def compute_conditional_independence_kld_bayesian(
     S_posterior: int = 32,
     S_posterior_predictive_sampling: int = 32,
     cred_level: float = 0.95,
-    pair_chunk_size: int = 16,     # <-- NEW: chunk pairs
+    pair_chunk_size: int = 4,      # <<< IMPORTANT: keep small
+    q_microbatch_1d: int = 64,     # 1D quadrature microbatch
+    q_microbatch_2d: int = 8,      # 2D quadrature microbatch (smaller!)
 ):
     """
-    Bayesian version (optimized):
-      - Cache quadrature grids
-      - Chunk pairs and evaluate KLD for many pairs per likelihood call
-      - Vectorize trimming for KLD (0.99 abs-quantile) across pairs
+    OOM-safe Bayesian CI KLD:
+      - cache quadrature
+      - chunk pairs
+      - stream over quadrature points (no [P,N,Q,D] tensor)
     """
 
     device = next(self.parameters()).device
-    dtype = torch.float32  # use model/data dtype if you prefer
+    dtype = torch.float32
 
-    # 0) Setup evaluation data
     evaluation_data = get_evaluation_data(
         self,
         vi_model,
@@ -273,7 +313,6 @@ def compute_conditional_independence_kld_bayesian(
         old_num_trans_layers = self.num_trans_layers
         self.num_trans_layers = 0
 
-    # Build pair list once
     with torch.no_grad():
         precision_ref = self.compute_pseudo_precision_matrix(evaluation_data).detach().cpu()
     precision_summary = compute_precision_matrix_summary_statistics(precision_ref)
@@ -285,148 +324,107 @@ def compute_conditional_independence_kld_bayesian(
         dtype=torch.long
     )  # [n_pairs, 2]
 
-    # Cache quadrature tensors once
+    # cache quadrature
     X1, W1 = _get_quad_tensors(
-        num_points_quad=num_points_quad,
-        min_val=min_val, max_val=max_val,
+        num_points_quad=num_points_quad, min_val=min_val, max_val=max_val,
         ndim=1, device=device, dtype=dtype
     )
     X2, W2 = _get_quad_tensors(
-        num_points_quad=num_points_quad,
-        min_val=min_val, max_val=max_val,
+        num_points_quad=num_points_quad, min_val=min_val, max_val=max_val,
         ndim=2, device=device, dtype=dtype
     )
-
-    # Storage: preallocate [S_posterior, n_pairs]
-    metrics_kld = None
-    if likelihood_based_metrics:
-        metrics_kld = torch.empty((S_posterior, n_pairs), dtype=torch.float32, device="cpu")
 
     alpha = 1.0 - cred_level
     q_lo = alpha / 2.0
     q_hi = 1.0 - alpha / 2.0
 
-    # Draw posterior thetas
+    metrics_kld = None
+    if likelihood_based_metrics:
+        metrics_kld = torch.empty((S_posterior, n_pairs), dtype=torch.float32, device="cpu")
+
     thetas = vi_model.sample_theta(S_posterior, antithetic=True)
 
     start_total = time.time()
-    bar = tqdm(
-        range(S_posterior),
-        total=S_posterior,
-        desc="[Bayesian CI] posterior draws",
-        unit="draw",
-        dynamic_ncols=True,
-        smoothing=0.05,
-        leave=True,
-    )
+    bar = tqdm(range(S_posterior), total=S_posterior, desc="[Bayesian CI] posterior draws", unit="draw")
 
     kld_running_sum = 0.0
 
     for s in bar:
-        draw_t0 = time.time()
+        t0 = time.time()
         theta_s = thetas[s]
         params_s = vi_model._theta_to_state_dict(theta_s)
 
-        # Reparametrize model parameters for this draw
         with _reparametrize_module(self, params_s):
-
             if likelihood_based_metrics:
-                # We fill a GPU tensor of size [n_pairs] then copy once to CPU
-                kld_this_draw = torch.empty((n_pairs,), device=device, dtype=torch.float32)
+                kld_draw = torch.empty((n_pairs,), device=device, dtype=torch.float32)
 
-                # process pairs in chunks
                 for start in range(0, n_pairs, pair_chunk_size):
                     end = min(start + pair_chunk_size, n_pairs)
-                    cols = pair_index[start:end]        # [P,2]
+                    cols = pair_index[start:end]
                     col_i = cols[:, 0]
                     col_j = cols[:, 1]
 
-                    # actual/under: [P, N]
-                    actual, under = _ci_log_dists_many_pairs_glq(
+                    actual, under = _ci_log_dists_many_pairs_glq_stream(
                         self,
                         evaluation_data,
                         col_i, col_j,
                         X1, W1,
                         X2, W2,
-                    )
+                        qmb_1d=q_microbatch_1d,
+                        qmb_2d=q_microbatch_2d,
+                    )  # [P,N]
 
                     if evaluation_data_type in ("data", "samples_from_model"):
-                        ll_dev = actual - under  # [P,N]
-
-                        # remove non-finite safely using NaNs
-                        ll_dev = ll_dev.to(torch.float32)
+                        ll_dev = (actual - under).to(torch.float32)  # [P,N]
                         finite = torch.isfinite(ll_dev)
                         ll_dev = torch.where(finite, ll_dev, torch.tensor(float("nan"), device=device))
 
-                        # per-pair 0.99 quantile of abs deviation
                         abs_dev = ll_dev.abs()
                         q = torch.nanquantile(abs_dev, 0.99, dim=1)  # [P]
+                        keep = (abs_dev < q[:, None]) & torch.isfinite(ll_dev)
 
-                        keep = abs_dev < q[:, None]
-                        keep = keep & torch.isfinite(ll_dev)
-
-                        # mean with masking: sum / count (avoid empty)
                         count = keep.sum(dim=1).clamp_min(1)
                         val = torch.where(keep, ll_dev, torch.zeros_like(ll_dev)).sum(dim=1) / count
                         kld_chunk = torch.nan_to_num(val, nan=0.0, posinf=0.0, neginf=0.0)
 
                     elif evaluation_data_type == "uniform_random_samples":
-                        # KLD ≈ E[ exp(actual) * (actual-under) ]
-                        # (your existing formula)
                         ll_dev = torch.exp(actual) * (actual - under)
-                        finite = torch.isfinite(ll_dev)
-                        ll_dev = torch.where(finite, ll_dev, torch.tensor(float("nan"), device=device))
-                        kld_chunk = torch.nanmean(ll_dev, dim=1)
-                        kld_chunk = torch.nan_to_num(kld_chunk, nan=0.0, posinf=0.0, neginf=0.0)
+                        kld_chunk = torch.nan_to_num(torch.nanmean(ll_dev, dim=1), nan=0.0, posinf=0.0, neginf=0.0)
 
                     else:
                         raise ValueError("unknown evaluation_data_type in Bayesian KLD")
 
-                    kld_this_draw[start:end] = kld_chunk
+                    kld_draw[start:end] = kld_chunk
 
-                # copy once to CPU storage
-                metrics_kld[s] = kld_this_draw.detach().cpu()
-
-                # progress stats
+                metrics_kld[s] = kld_draw.detach().cpu()
                 kld_draw_mean = float(metrics_kld[s].mean().item())
                 kld_running_sum += kld_draw_mean
 
-        dt = time.time() - draw_t0
-        postfix = {
-            "device": str(device),
+        dt = time.time() - t0
+        bar.set_postfix({
             "pairs": n_pairs,
+            "pair_chunk": pair_chunk_size,
+            "qmb2d": q_microbatch_2d,
             "sec/draw": f"{dt:.2f}",
-        }
-        if likelihood_based_metrics:
-            postfix["KLD(draw)"] = f"{kld_draw_mean:.4g}"
-            postfix["KLD(avg)"]  = f"{(kld_running_sum / (s+1)):.4g}"
-        bar.set_postfix(postfix)
+            "KLD(draw)": f"{kld_draw_mean:.4g}",
+            "KLD(avg)": f"{(kld_running_sum/(s+1)):.4g}",
+        })
 
     total_sec = time.time() - start_total
     print(
-        f"[Bayesian CI] Time taken (device={device}, "
-        f"S_post={S_posterior}, pairs={n_pairs}): "
-        f"{total_sec:.2f}s  (~{total_sec / float(S_posterior):.2f}s per posterior draw)"
+        f"[Bayesian CI] Time taken (device={device}, S_post={S_posterior}, pairs={n_pairs}): "
+        f"{total_sec:.2f}s (~{total_sec/float(S_posterior):.2f}s per draw)"
     )
 
-    # Aggregate
     df = precision_summary.copy()
-
     raw = {}
+
     if likelihood_based_metrics:
-        # metrics_kld: [S, n_pairs] on CPU
         kld_mean = metrics_kld.mean(dim=0).tolist()
-
-        kld_t = metrics_kld.to(torch.float32)  # CPU tensor
-        # torch.quantile works on CPU too
-        qs = torch.quantile(kld_t, torch.tensor([q_lo, q_hi]), dim=0)
-        kld_lo = qs[0].tolist()
-        kld_hi = qs[1].tolist()
-
+        qs = torch.quantile(metrics_kld.to(torch.float32), torch.tensor([q_lo, q_hi]), dim=0)
         df["kld_mean"] = kld_mean
-        df["kld_lo"]   = kld_lo
-        df["kld_hi"]   = kld_hi
-
+        df["kld_lo"] = qs[0].tolist()
+        df["kld_hi"] = qs[1].tolist()
         raw["kld"] = metrics_kld.numpy()
 
     raw["pair_index"] = precision_summary[["var_row", "var_col"]].to_numpy(dtype=np.int64)
