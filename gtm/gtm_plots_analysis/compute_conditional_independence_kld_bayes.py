@@ -1,28 +1,16 @@
-# ============================================================
-#  Drop-in optimized Bayesian KLD computation (copy/paste)
-#  Main changes:
-#   1) Cache quadrature grids (no repeated getQuad/transformQuad)
-#   2) Chunk pairs and evaluate many pairs per likelihood call
-#   3) Vectorize KLD trimming (0.99 abs-quantile) across pairs
-# ============================================================
-
 from __future__ import annotations
 import time
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, TYPE_CHECKING
 
 import numpy as np
 import torch
 from tqdm import tqdm
-from typing import TYPE_CHECKING, Optional
 from torch.nn.utils.stateless import _reparametrize_module
 
-
-from gtm.gtm_plots_analysis.nd_quad import getQuad, transformQuad  # you already import these
+from gtm.gtm_plots_analysis.nd_quad import getQuad, transformQuad
 from gtm.gtm_plots_analysis.compute_precision_matrix_summary_statistics import *
-from gtm.gtm_plots_analysis.independence_kld_process_row import *
 
 if TYPE_CHECKING:
-
     from gtm_model.gtm import GTM
     from gtm_training.training_bayes.variational_model_estimator import TauPack, VI_Model
 
@@ -49,107 +37,41 @@ def _get_quad_tensors(
     x, w = getQuad(num_points_quad, ndim=ndim)
     x, w = transformQuad(x, w, limits)
 
-    X = torch.as_tensor(x, device=device, dtype=dtype)  # [Q, ndim]
-    W = torch.as_tensor(w, device=device, dtype=dtype)  # [Q]
+    X = torch.as_tensor(x, device=device, dtype=dtype)
+    W = torch.as_tensor(w, device=device, dtype=dtype)
     _QUAD_CACHE[key] = (X, W)
     return X, W
 
 
 # ============================================================
-# Memory-safe GLQ integrals (stream over quadrature points)
+# Streaming integrals with precomputed indices (faster)
 # ============================================================
 
 @torch.no_grad()
-def _log_int_out_one_col_stream(
+def _log_int_out_two_cols_stream_fast(
     model,
-    data: torch.Tensor,      # [N, D]
-    col_k: torch.Tensor,     # [P] int64
-    X1: torch.Tensor,        # [Q1, 1]
-    W1: torch.Tensor,        # [Q1]
-    q_microbatch: int = 64,  # number of quadrature points per microbatch
+    flat_base: torch.Tensor,   # [P*N, D] base replicated (already)
+    P: int,
+    N: int,
+    D: int,
+    col_i_row: torch.Tensor,   # [P*N] column index for each row
+    col_j_row: torch.Tensor,   # [P*N]
+    X2: torch.Tensor,          # [Q2,2]
+    W2: torch.Tensor,          # [Q2]
+    q_microbatch: int,
+    use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.bfloat16,
 ) -> torch.Tensor:
     """
-    Computes for each pair p and each row n:
-      log ∫ f( y with col_k[p] replaced by x ) dx
-    without allocating [P,N,Q,D].
-
-    Returns: [P, N]
+    Returns log integral: [P,N]
     """
-    N, D = data.shape
-    P = col_k.numel()
-    Q1 = X1.shape[0]
-
-    # replicate base for P pairs: [P,N,D] (manageable)
-    base = data.unsqueeze(0).expand(P, N, D).contiguous()
-    flat_base = base.reshape(P * N, D)  # [P*N, D]
-
-    # accumulate integral in probability space
-    integral = torch.zeros((P * N,), device=data.device, dtype=torch.float32)
-
-    # micro-batch quadrature points to control peak memory
-    for s in range(0, Q1, q_microbatch):
-        e = min(s + q_microbatch, Q1)
-        xb = X1[s:e, 0]         # [B]
-        wb = W1[s:e]            # [B]
-        B = xb.numel()
-
-        # expand to [B, P*N, D] as a view then materialize only [B*P*N, D]
-        xrep = xb[:, None].expand(B, P * N)  # [B, P*N]
-        xrep_flat = xrep.reshape(-1)         # [B*P*N]
-
-        y = flat_base.unsqueeze(0).expand(B, P * N, D).reshape(B * P * N, D).clone()
-        # set varying column (different per pair): need per-row mapping of which column to set
-        # We do it by indexing per pair block.
-        # Create an index vector of length P*N telling which pair each row belongs to:
-        pair_id = torch.arange(P, device=data.device).repeat_interleave(N)  # [P*N]
-        col_for_row = col_k[pair_id]                                        # [P*N]
-        col_for_row = col_for_row.unsqueeze(0).expand(B, P * N).reshape(-1) # [B*P*N]
-
-        y[torch.arange(B * P * N, device=data.device), col_for_row] = xrep_flat
-
-        ll = model.log_likelihood(y)               # [B*P*N]
-        dens = torch.exp(ll).to(torch.float32)     # [B*P*N]
-
-        # weight each quadrature point
-        wrep = wb[:, None].expand(B, P * N).reshape(-1)  # [B*P*N]
-        integral += (dens * wrep).reshape(B, P * N).sum(dim=0)
-
-        # free temp
-        del y, ll, dens
-
-    integral = torch.clamp(integral, min=torch.finfo(torch.float32).tiny)
-    return torch.log(integral).reshape(P, N)
-
-
-@torch.no_grad()
-def _log_int_out_two_cols_stream(
-    model,
-    data: torch.Tensor,      # [N, D]
-    col_i: torch.Tensor,     # [P]
-    col_j: torch.Tensor,     # [P]
-    X2: torch.Tensor,        # [Q2, 2]
-    W2: torch.Tensor,        # [Q2]
-    q_microbatch: int = 16,  # for Q2=400, 16/32 is typical
-) -> torch.Tensor:
-    """
-    Computes:
-      log ∫∫ f( y with cols i,j replaced by (x1,x2) ) dx1 dx2
-    for many pairs, streaming over quadrature points.
-
-    Returns: [P, N]
-    """
-    N, D = data.shape
-    P = col_i.numel()
     Q2 = X2.shape[0]
+    device = flat_base.device
 
-    base = data.unsqueeze(0).expand(P, N, D).contiguous()
-    flat_base = base.reshape(P * N, D)  # [P*N, D]
+    integral = torch.zeros((P * N,), device=device, dtype=torch.float32)
 
-    integral = torch.zeros((P * N,), device=data.device, dtype=torch.float32)
-
-    pair_id = torch.arange(P, device=data.device).repeat_interleave(N)  # [P*N]
-    col_i_row = col_i[pair_id]                                          # [P*N]
-    col_j_row = col_j[pair_id]                                          # [P*N]
+    # constants reused
+    row_idx = torch.arange(P * N, device=device)  # for scatter on the flattened P*N axis
 
     for s in range(0, Q2, q_microbatch):
         e = min(s + q_microbatch, Q2)
@@ -157,27 +79,32 @@ def _log_int_out_two_cols_stream(
         Wb = W2[s:e]     # [B]
         B = Xb.shape[0]
 
-        x1 = Xb[:, 0]
-        x2 = Xb[:, 1]
-
-        x1rep = x1[:, None].expand(B, P * N).reshape(-1)  # [B*P*N]
-        x2rep = x2[:, None].expand(B, P * N).reshape(-1)
-
+        # Create [B, P*N, D] view then materialize [B*P*N, D] once
         y = flat_base.unsqueeze(0).expand(B, P * N, D).reshape(B * P * N, D).clone()
 
-        # expand column indices to [B*P*N]
+        # Repeat per-microbatch column indices
         col_i_rep = col_i_row.unsqueeze(0).expand(B, P * N).reshape(-1)
         col_j_rep = col_j_row.unsqueeze(0).expand(B, P * N).reshape(-1)
 
-        idx = torch.arange(B * P * N, device=data.device)
+        # Values to insert
+        x1rep = Xb[:, 0].unsqueeze(1).expand(B, P * N).reshape(-1)
+        x2rep = Xb[:, 1].unsqueeze(1).expand(B, P * N).reshape(-1)
+
+        idx = torch.arange(B * P * N, device=device)
         y[idx, col_i_rep] = x1rep
         y[idx, col_j_rep] = x2rep
 
-        ll = model.log_likelihood(y)
-        dens = torch.exp(ll).to(torch.float32)
+        if use_amp and y.is_cuda:
+            with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=True):
+                ll = model.log_likelihood(y)
+            dens = torch.exp(ll.float())
+        else:
+            ll = model.log_likelihood(y)
+            dens = torch.exp(ll).to(torch.float32)
 
-        wrep = Wb[:, None].expand(B, P * N).reshape(-1)
-        integral += (dens * wrep).reshape(B, P * N).sum(dim=0)
+        # weights: [B, P*N]
+        wrep = Wb.unsqueeze(1).expand(B, P * N)
+        integral += (dens.reshape(B, P * N) * wrep).sum(dim=0)
 
         del y, ll, dens
 
@@ -186,31 +113,191 @@ def _log_int_out_two_cols_stream(
 
 
 @torch.no_grad()
-def _ci_log_dists_many_pairs_glq_stream(
+def _log_int_out_one_col_stream_fast(
     model,
-    data: torch.Tensor,      # [N,D]
-    col_i: torch.Tensor,     # [P]
-    col_j: torch.Tensor,     # [P]
+    flat_base: torch.Tensor,   # [P*N, D]
+    P: int,
+    N: int,
+    D: int,
+    col_k_row: torch.Tensor,   # [P*N]
+    X1: torch.Tensor,          # [Q1,1]
+    W1: torch.Tensor,          # [Q1]
+    q_microbatch: int,
+    use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.bfloat16,
+) -> torch.Tensor:
+    """
+    Returns log integral: [P,N]
+    """
+    Q1 = X1.shape[0]
+    device = flat_base.device
+
+    integral = torch.zeros((P * N,), device=device, dtype=torch.float32)
+
+    for s in range(0, Q1, q_microbatch):
+        e = min(s + q_microbatch, Q1)
+        xb = X1[s:e, 0]   # [B]
+        wb = W1[s:e]      # [B]
+        B = xb.numel()
+
+        y = flat_base.unsqueeze(0).expand(B, P * N, D).reshape(B * P * N, D).clone()
+
+        col_rep = col_k_row.unsqueeze(0).expand(B, P * N).reshape(-1)
+        xrep = xb.unsqueeze(1).expand(B, P * N).reshape(-1)
+
+        idx = torch.arange(B * P * N, device=device)
+        y[idx, col_rep] = xrep
+
+        if use_amp and y.is_cuda:
+            with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=True):
+                ll = model.log_likelihood(y)
+            dens = torch.exp(ll.float())
+        else:
+            ll = model.log_likelihood(y)
+            dens = torch.exp(ll).to(torch.float32)
+
+        wrep = wb.unsqueeze(1).expand(B, P * N)
+        integral += (dens.reshape(B, P * N) * wrep).sum(dim=0)
+
+        del y, ll, dens
+
+    integral = torch.clamp(integral, min=torch.finfo(torch.float32).tiny)
+    return torch.log(integral).reshape(P, N)
+
+
+@torch.no_grad()
+def _log_int_out_two_one_cols_fused_stream_fast(
+    model,
+    flat_base: torch.Tensor,     # [P*N, D]
+    P: int,
+    N: int,
+    D: int,
+    col_a_row: torch.Tensor,     # [P*N] (for p4_num)
+    col_b_row: torch.Tensor,     # [P*N] (for p5_num)
+    X1: torch.Tensor,            # [Q1,1]
+    W1: torch.Tensor,            # [Q1]
+    q_microbatch: int,
+    use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.bfloat16,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Fused computation of two separate 1D integrals in ONE likelihood call stream:
+      int_a: integrate out col_a_row
+      int_b: integrate out col_b_row
+
+    Returns:
+      log_int_a: [P,N]
+      log_int_b: [P,N]
+    """
+    Q1 = X1.shape[0]
+    device = flat_base.device
+
+    integral_a = torch.zeros((P * N,), device=device, dtype=torch.float32)
+    integral_b = torch.zeros((P * N,), device=device, dtype=torch.float32)
+
+    for s in range(0, Q1, q_microbatch):
+        e = min(s + q_microbatch, Q1)
+        xb = X1[s:e, 0]   # [B]
+        wb = W1[s:e]      # [B]
+        B = xb.numel()
+
+        # We will build two batches (A and B) and concatenate:
+        # y_cat has shape [2*B*P*N, D]
+        yA = flat_base.unsqueeze(0).expand(B, P * N, D).reshape(B * P * N, D).clone()
+        yB = flat_base.unsqueeze(0).expand(B, P * N, D).reshape(B * P * N, D).clone()
+
+        colA = col_a_row.unsqueeze(0).expand(B, P * N).reshape(-1)
+        colB = col_b_row.unsqueeze(0).expand(B, P * N).reshape(-1)
+        xrep = xb.unsqueeze(1).expand(B, P * N).reshape(-1)
+
+        idx = torch.arange(B * P * N, device=device)
+        yA[idx, colA] = xrep
+        yB[idx, colB] = xrep
+
+        y = torch.cat([yA, yB], dim=0)
+
+        if use_amp and y.is_cuda:
+            with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=True):
+                ll = model.log_likelihood(y)
+            dens = torch.exp(ll.float())
+        else:
+            ll = model.log_likelihood(y)
+            dens = torch.exp(ll).to(torch.float32)
+
+        densA, densB = dens[: B * P * N], dens[B * P * N :]
+
+        wrep = wb.unsqueeze(1).expand(B, P * N)  # [B,P*N]
+        integral_a += (densA.reshape(B, P * N) * wrep).sum(dim=0)
+        integral_b += (densB.reshape(B, P * N) * wrep).sum(dim=0)
+
+        del yA, yB, y, ll, dens, densA, densB
+
+    integral_a = torch.clamp(integral_a, min=torch.finfo(torch.float32).tiny)
+    integral_b = torch.clamp(integral_b, min=torch.finfo(torch.float32).tiny)
+
+    return torch.log(integral_a).reshape(P, N), torch.log(integral_b).reshape(P, N)
+
+
+@torch.no_grad()
+def _ci_log_dists_many_pairs_glq_stream_fast(
+    model,
+    data: torch.Tensor,          # [N,D]
+    col_i: torch.Tensor,         # [P]
+    col_j: torch.Tensor,         # [P]
     X1: torch.Tensor, W1: torch.Tensor,
     X2: torch.Tensor, W2: torch.Tensor,
-    qmb_1d: int = 64,
-    qmb_2d: int = 16,
+    qmb_1d: int,
+    qmb_2d: int,
+    use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.bfloat16,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Returns:
       actual: [P,N]
       under : [P,N]
     """
+    device = data.device
+    N, D = data.shape
+    P = col_i.numel()
+
+    # p1 is common for all pairs
     p1 = model.log_likelihood(data)  # [N]
 
-    p2 = _log_int_out_two_cols_stream(model, data, col_i, col_j, X2, W2, q_microbatch=qmb_2d)  # [P,N]
+    # Build replicated base ONCE per chunk: [P*N, D]
+    base = data.unsqueeze(0).expand(P, N, D).contiguous()
+    flat_base = base.reshape(P * N, D)
 
+    # Precompute per-row pair mapping ONCE
+    pair_id = torch.arange(P, device=device).repeat_interleave(N)  # [P*N]
+    col_i_row = col_i[pair_id]                                     # [P*N]
+    col_j_row = col_j[pair_id]                                     # [P*N]
+
+    # p2: integrate out i and j
+    p2 = _log_int_out_two_cols_stream_fast(
+        model, flat_base, P, N, D,
+        col_i_row, col_j_row,
+        X2, W2,
+        q_microbatch=qmb_2d,
+        use_amp=use_amp,
+        amp_dtype=amp_dtype,
+    )  # [P,N]
+
+    # p3
     p3 = p1[None, :] - p2
 
-    p4_num = _log_int_out_one_col_stream(model, data, col_j, X1, W1, q_microbatch=qmb_1d)      # [P,N]
-    p4 = p4_num - p2
+    # FUSED p4_num (integrate out j) and p5_num (integrate out i)
+    p4_num, p5_num = _log_int_out_two_one_cols_fused_stream_fast(
+        model,
+        flat_base, P, N, D,
+        col_a_row=col_j_row,
+        col_b_row=col_i_row,
+        X1=X1, W1=W1,
+        q_microbatch=qmb_1d,
+        use_amp=use_amp,
+        amp_dtype=amp_dtype,
+    )  # each [P,N]
 
-    p5_num = _log_int_out_one_col_stream(model, data, col_i, X1, W1, q_microbatch=qmb_1d)      # [P,N]
+    p4 = p4_num - p2
     p5 = p5_num - p2
 
     actual = p3
@@ -219,7 +306,7 @@ def _ci_log_dists_many_pairs_glq_stream(
 
 
 # --------------------------------------
-# Your evaluation data helper (unchanged)
+# evaluation data helper (same)
 # --------------------------------------
 def get_evaluation_data(
     self: "GTM",
@@ -240,12 +327,10 @@ def get_evaluation_data(
         evaluation_data = y[:sample_size].to(device)
         if copula_only:
             evaluation_data = self.after_transformation(evaluation_data)
-
     elif evaluation_data_type == "uniform_random_samples":
         evaluation_data = torch.distributions.Uniform(min_val, max_val).sample(
             [sample_size, self.y_train.size(1)]
         ).to(device)
-
     elif evaluation_data_type == "samples_from_model":
         evaluation_data = VI_Model.predictive_sample(
             model=self,
@@ -261,7 +346,7 @@ def get_evaluation_data(
 
 
 # ---------------------------------------------------------
-# Main function: memory-safe chunked+streaming version
+# Main: Bayesian CI KLD (faster streaming)
 # ---------------------------------------------------------
 def compute_conditional_independence_kld_bayesian(
     self: "GTM",
@@ -280,19 +365,29 @@ def compute_conditional_independence_kld_bayesian(
     S_posterior: int = 32,
     S_posterior_predictive_sampling: int = 32,
     cred_level: float = 0.95,
-    pair_chunk_size: int = 4,      # <<< IMPORTANT: keep small
-    q_microbatch_1d: int = 64,     # 1D quadrature microbatch
-    q_microbatch_2d: int = 8,      # 2D quadrature microbatch (smaller!)
+    pair_chunk_size: int = 12,
+    q_microbatch_1d: int = 256,
+    q_microbatch_2d: int = 32,
+    # NEW speed toggles:
+    use_amp: bool = False,
+    amp_dtype: torch.dtype = torch.bfloat16,
 ):
     """
-    OOM-safe Bayesian CI KLD:
-      - cache quadrature
-      - chunk pairs
-      - stream over quadrature points (no [P,N,Q,D] tensor)
+    Faster OOM-safe Bayesian CI KLD:
+      - caches quadrature
+      - streams quadrature points
+      - precomputes indices once per pair chunk
+      - fuses the two 1D integrals (p4_num & p5_num) into one stream
+      - optional AMP for A40
     """
 
     device = next(self.parameters()).device
     dtype = torch.float32
+
+    # Optional: TF32 (Ampere+). Safe and often faster.
+    if device.type == "cuda":
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
     evaluation_data = get_evaluation_data(
         self,
@@ -322,9 +417,8 @@ def compute_conditional_independence_kld_bayesian(
         precision_summary[["var_row", "var_col"]].to_numpy(dtype=np.int64),
         device=device,
         dtype=torch.long
-    )  # [n_pairs, 2]
+    )
 
-    # cache quadrature
     X1, W1 = _get_quad_tensors(
         num_points_quad=num_points_quad, min_val=min_val, max_val=max_val,
         ndim=1, device=device, dtype=dtype
@@ -346,7 +440,6 @@ def compute_conditional_independence_kld_bayesian(
 
     start_total = time.time()
     bar = tqdm(range(S_posterior), total=S_posterior, desc="[Bayesian CI] posterior draws", unit="draw")
-
     kld_running_sum = 0.0
 
     for s in bar:
@@ -364,7 +457,7 @@ def compute_conditional_independence_kld_bayesian(
                     col_i = cols[:, 0]
                     col_j = cols[:, 1]
 
-                    actual, under = _ci_log_dists_many_pairs_glq_stream(
+                    actual, under = _ci_log_dists_many_pairs_glq_stream_fast(
                         self,
                         evaluation_data,
                         col_i, col_j,
@@ -372,6 +465,8 @@ def compute_conditional_independence_kld_bayesian(
                         X2, W2,
                         qmb_1d=q_microbatch_1d,
                         qmb_2d=q_microbatch_2d,
+                        use_amp=use_amp,
+                        amp_dtype=amp_dtype,
                     )  # [P,N]
 
                     if evaluation_data_type in ("data", "samples_from_model"):
