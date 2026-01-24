@@ -30,8 +30,9 @@ if __name__ == "__main__":
 
     
     for seed in range(10):
+        run_name = f"{experimental_name}_seed_{seed}"
         run_experiment(
-            run_name=f"{experimental_name}_seed_{seed}",
+            run_name=run_name,
             experiment_id=experiment_id,
             seed_value=seed,
             dimensionality=7,
@@ -69,5 +70,6 @@ if __name__ == "__main__":
             study_name=None,
             posterior_sampling_size_bgtm=1024
         )
+        print(f"{run_name} and {seed} done, {(seed+1)/10 *100}% complete")
     print("Tracking URI:", mlflow.get_tracking_uri())
     print("Experiment artifact_location:", client.get_experiment(experiment_id).artifact_location)
