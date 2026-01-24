@@ -11,7 +11,11 @@ if __name__ == "__main__":
     mlflow.set_tracking_uri(f"file:{TRACKING}")
     client = MlflowClient()
     
-    experimental_name = "cvine_5D_1000obs_bgtm"
+    data_type = "C-Vine"
+    dimensionality = 7
+    observations = 1000
+    
+    experimental_name = f"{data_type}_{dimensionality}D_{observations}obs_bgtm"
     experiment = mlflow.get_experiment_by_name(experimental_name)
     if experiment is None:
         experiment_id = mlflow.create_experiment(
@@ -27,12 +31,12 @@ if __name__ == "__main__":
     
     for seed in range(10):
         run_experiment(
-            run_name=f"rine_5D_1000obs_seed_{seed}",
+            run_name=f"{experimental_name}_seed_{seed}",
             experiment_id=experiment_id,
             seed_value=seed,
-            dimensionality=5,
+            dimensionality=7,
             Independence_tree=2,
-            vine_type="C-Vine",
+            vine_type=data_type,
             N_train=667,
             N_validate=333,
             N_test=20000,
@@ -43,6 +47,7 @@ if __name__ == "__main__":
             spline_transformation="bspline",
             spline_decorrelation="bspline",
             transformation_spline_range=(-10, 10),
+            decorrelation_spline_range=(-10, 10),
             device="cuda" if torch.cuda.is_available() else "cpu",
             penalty_decorrelation_ridge_param=None,
             penalty_decorrelation_ridge_first_difference="sample",
@@ -60,7 +65,7 @@ if __name__ == "__main__":
             max_batches_per_iter=False,
             pretrained_transformation_layer=True,
             n_trials=4,
-            temp_folder="./temp",
+            temp_folder="./temp_rvine",
             study_name=None,
             posterior_sampling_size_bgtm=1024
         )

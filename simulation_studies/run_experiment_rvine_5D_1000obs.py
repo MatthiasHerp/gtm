@@ -11,7 +11,7 @@ if __name__ == "__main__":
     mlflow.set_tracking_uri(f"file:{TRACKING}")
     client = MlflowClient()
     
-    data_type = "D-Vine"
+    data_type = "R-Vine"
     dimensionality = 7
     observations = 1000
     

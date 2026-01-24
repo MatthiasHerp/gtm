@@ -172,12 +172,16 @@ def run_experiment(
             device=device
         )
         
-        truth_csv = os.path.join(temp_folder, "true_structure.csv")
-        synthetic_data_dict["df_true_structure"].to_csv(truth_csv, index=False)
-        mlflow.log_artifact(truth_csv, artifact_path="truth")
+        dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
+        dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
+        dataset_train_val = Generic_Dataset(synthetic_data_dict['train_validate_data'])
         
         # Create dataset and DataLoader, if bootstrapped note that
         if bootstrap_warpspeed:
+            
+            truth_csv = os.path.join(temp_folder, "true_structure.csv")
+            synthetic_data_dict["df_true_structure"].to_csv(truth_csv, index=False)
+            mlflow.log_artifact(truth_csv, artifact_path="truth")
             #merge train and validate data for warpspeed bootstrap
             combined_data = torch.cat((synthetic_data_dict['train_data'], synthetic_data_dict['validate_data']), dim=0)
             
@@ -193,18 +197,13 @@ def run_experiment(
             synthetic_data_dict['train_data'] = bootstrapped_data[:N_train]
             synthetic_data_dict['validate_data'] = bootstrapped_data[N_train:]
             
-                # Create dataset and DataLoader
-            dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
+            # Create dataset and DataLoader
             dataloader_train = DataLoader(dataset_train, batch_size=N_train)
-            dataloader_train_bgtm = DataLoader(dataset_train, batch_size=35, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True, prefetch_factor=4)
-            
-            
-            dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
             dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
         else:
-            dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
+            
+            dataloader_train_bgtm = DataLoader(dataset_train_val, batch_size=35, shuffle=True, num_workers=8, pin_memory=True, persistent_workers=True, prefetch_factor=4)
             dataloader_train = DataLoader(dataset_train, batch_size=N_train)
-            dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
             dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
 
         # first store all training parameters
@@ -540,6 +539,18 @@ def run_experiment(
         hyper_D   = model_bayes.hyperparameter["decorrelation"]
         
         elbo_values = output_train["loss_history"]
+        
+        monitor = output_train["monitor"]
+        
+        monitor_np = {key: np.asarray(value) for key, value in monitor.items()}
+        
+        monitor_path = os.path.join(temp_folder, "monitor.npz")
+        np.savez_compressed(monitor_path, **monitor_np)
+        
+        assert os.path.exists(monitor_path), f"Monitor NPZ not created: {monitor_path}"
+        print("Monitor NPZ size (bytes):", os.path.getsize(monitor_path))
+        
+        mlflow.log_artifact(monitor_path, artifact_path="gtm_bayes/training")
 
         # normalize type
         if isinstance(elbo_values, torch.Tensor):
@@ -573,10 +584,13 @@ def run_experiment(
             },
             log_mlflow_model=False
         )
+        
+        y_train_eval = as_torch(synthetic_data_dict["train_validate_data"], device=device)
+        y_test_eval  = as_torch(synthetic_data_dict["test_data"], device=device)
 
         # BGTM predictive log-likelihoods (Bayesian mixture over θ, τ)
         log_likelihood_train_bgtm = VI.predictive_log_prob(
-            y=synthetic_data_dict['train_data'],
+            y=y_train_eval,
             model=model_bayes,
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
@@ -585,7 +599,7 @@ def run_experiment(
         )
 
         log_likelihood_test_bgtm = VI.predictive_log_prob(
-            y=synthetic_data_dict['test_data'],
+            y=y_test_eval,
             model=model_bayes,
             hyperparameter_transformation=hyper_T,
             hyperparameter_decorrelation=hyper_D,
@@ -594,7 +608,7 @@ def run_experiment(
         )
         
         
-        kld_bgtm_train = np.round(torch.mean(synthetic_data_dict["loglik_true_train"] - log_likelihood_train_bgtm).item(),4)
+        kld_bgtm_train = np.round(torch.mean(synthetic_data_dict["loglik_true_train_validate"] - log_likelihood_train_bgtm).item(),4)
         rel_kld_bgtm_train = np.round((kld_bgtm_train - kld_vine_oracle_train) / (kld_gaussian_train - kld_vine_oracle_train),4)
     
         kld_bgtm_test = np.round(torch.mean(synthetic_data_dict["loglik_true_test"] - log_likelihood_test_bgtm).item(),4)
@@ -619,7 +633,7 @@ def run_experiment(
         
         conditional_independence_table_bgtm, raw_ci_bgtm = model_bayes.compute_conditional_independence_table(
             vi_model=VI,
-            y=synthetic_data_dict['test_data'],
+            y=synthetic_data_dict['train_validate_data'],
             sample_size = sample_size_bgtm,
             evaluation_data_type=evaluation_data_type_bgtm,
             S_posterior=posterior_sampling_size_bgtm,
@@ -635,10 +649,10 @@ def run_experiment(
             on=["var_row", "var_col"]
             )
         
-        auc_iae_bgtm = roc_auc_score(merged_ci_tables_bgtm["dependence"], merged_ci_tables_bgtm["iae_mean"])
+        #auc_iae_bgtm = roc_auc_score(merged_ci_tables_bgtm["dependence"], merged_ci_tables_bgtm["iae_mean"])
         auc_kld_bgtm = roc_auc_score(merged_ci_tables_bgtm["dependence"], merged_ci_tables_bgtm["kld_mean"])
-        auc_corr_bgtm = roc_auc_score(merged_ci_tables_bgtm["dependence"], merged_ci_tables_bgtm["cond_correlation_abs_mean"])
-        auc_pmat_bgtm = roc_auc_score(merged_ci_tables_bgtm["dependence"], merged_ci_tables_bgtm["precision_abs_mean"])
+        #auc_corr_bgtm = roc_auc_score(merged_ci_tables_bgtm["dependence"], merged_ci_tables_bgtm["cond_correlation_abs_mean"])
+        #auc_pmat_bgtm = roc_auc_score(merged_ci_tables_bgtm["dependence"], merged_ci_tables_bgtm["precision_abs_mean"])
 
         # save raw arrays so you can compute AUC distribution later
         npz_path = os.path.join(temp_folder, "bgtm_ci_raw_arrays.npz")
@@ -649,14 +663,22 @@ def run_experiment(
         mlflow.log_artifact(npz_path, artifact_path="gtm_bayes/ci_raw")
         
         
-        mlflow.log_metric(key="auc_iae_bgtm", value=auc_iae_bgtm)
+        #mlflow.log_metric(key="auc_iae_bgtm", value=auc_iae_bgtm)
         mlflow.log_metric(key="auc_kld_bgtm", value=auc_kld_bgtm)
-        mlflow.log_metric(key="auc_cond_corr_bgtm", value=auc_corr_bgtm)
-        mlflow.log_metric(key="auc_precision_matrix_bgtm", value=auc_pmat_bgtm)
+        #mlflow.log_metric(key="auc_cond_corr_bgtm", value=auc_corr_bgtm)
+        #mlflow.log_metric(key="auc_precision_matrix_bgtm", value=auc_pmat_bgtm)
 
     finally:
         mlflow.end_run()
         clear_temp_folder(temp_folder)
+
+def as_torch(y, *, device, dtype=torch.float32):
+    """Convert numpy->torch and move to device."""
+    if isinstance(y, np.ndarray):
+        y = torch.from_numpy(y)
+    if not torch.is_tensor(y):
+        raise TypeError(f"Expected torch.Tensor or np.ndarray, got {type(y)}")
+    return y.to(device=device, dtype=dtype)
 
 def define_hyperparameters(tau_1, tau_2, tau_4, cv):
     

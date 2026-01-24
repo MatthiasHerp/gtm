@@ -88,6 +88,10 @@ def generate_synthetic_vine_data(seed_value=1,
     # Validate
     simulated_data_uniform_validate = vine_model.simulate(n=N_validate)
     simulated_data_validate = torch.distributions.Normal(0,1).icdf(torch.tensor(simulated_data_uniform_validate)).float()
+    
+    # Train + Validate
+    simulated_data_uniform_train_validate = vine_model.simulate(n=N_train + N_validate)
+    simulated_data_train_validate = torch.distributions.Normal(0,1).icdf(torch.tensor(simulated_data_uniform_train_validate)).float()
 
     # Test
     simulated_data_uniform_test = vine_model.simulate(n=N_test)
@@ -107,6 +111,10 @@ def generate_synthetic_vine_data(seed_value=1,
     log_marginals = torch.distributions.Normal(0,1).log_prob(simulated_data_test).sum(1)
     loglik_true_test = torch.tensor(loglik_copula) + log_marginals
     
+    loglik_copula = np.log(vine_model.pdf(simulated_data_uniform_train_validate))
+    log_marginals = torch.distributions.Normal(0,1).log_prob(simulated_data_train_validate).sum(1)
+    loglik_true_train_validate = torch.tensor(loglik_copula) + log_marginals
+    
     # We further estimate the copula on the synthetic data to get an oracle denisity estimator. 
     # Hence an estimator that knows the true underlying structure and merely estiamtes the model parameters.
     copula_pv_est = vine_model
@@ -125,16 +133,25 @@ def generate_synthetic_vine_data(seed_value=1,
     log_marginals = torch.distributions.Normal(means,vars).log_prob(simulated_data_test).sum(1)
     loglik_true_est_test = torch.tensor(loglik_copula) + log_marginals
     
+    loglik_copula = np.log(copula_pv_est.pdf(simulated_data_uniform_train_validate))
+    log_marginals = torch.distributions.Normal(means,vars).log_prob(simulated_data_train_validate).sum(1)
+    loglik_true_est_train_validate = torch.tensor(loglik_copula) + log_marginals
+    
     
     return {
         "train_data": simulated_data_train,
         "validate_data": simulated_data_validate,
+        "train_validate_data": simulated_data_train_validate,
         "test_data": simulated_data_test,
         "loglik_true_train": loglik_true_train.to(device),
         "loglik_true_validate": loglik_true_validate.to(device),
         "loglik_true_test": loglik_true_test.to(device),
+        
+        "loglik_true_train_validate": loglik_true_train_validate.to(device),
+        
         "loglik_true_est_train": loglik_true_est_train.to(device),
         "loglik_true_est_validate": loglik_true_est_validate.to(device),
+        "loglik_true_est_train_validate": loglik_true_est_train_validate.to(device),
         "loglik_true_est_test": loglik_true_est_test.to(device),
         "df_true_structure": df_true_structure_sub
     }
