@@ -66,10 +66,10 @@ if __name__ == "__main__":
             max_batches_per_iter=False,
             pretrained_transformation_layer=True,
             n_trials=4,
-            temp_folder="./temp_rvine",
+            temp_folder="./temp_cvine",
             study_name=None,
             posterior_sampling_size_bgtm=1024
         )
-        print(f"{run_name} and {seed} done, {(seed+1)/10 *100}% complete")
+        print(f"{run_name} and {seed + 1} done, {(seed+1)/10 *100}% complete")
     print("Tracking URI:", mlflow.get_tracking_uri())
     print("Experiment artifact_location:", client.get_experiment(experiment_id).artifact_location)
