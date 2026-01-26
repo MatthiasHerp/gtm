@@ -247,6 +247,7 @@ def run_experiment(
                                 ])
     penalty_splines_params_chosen = penalty_splines_params_chosen.to(device=device)
     
+    
     if penalty_lasso_conditional_independence is None:
         penalty_lasso_conditional_independence_chosen = False
     elif penalty_lasso_conditional_independence is float:
@@ -293,7 +294,7 @@ def run_experiment(
     mlflow.log_param(key="penalty_decorrelation_ridge_first_difference_chosen", value=penalty_decorrelation_ridge_first_difference_chosen)
     mlflow.log_param(key="penalty_decorrelation_ridge_second_difference_chosen", value=penalty_decorrelation_ridge_second_difference_chosen)
     mlflow.log_param(key="penalty_transformation_ridge_second_difference_chosen", value=penalty_transformation_ridge_second_difference_chosen)
-    mlflow.log_param(key="penalty_lasso_conditional_independence_chosen", value=penalty_lasso_conditional_independence_chosen)
+    mlflow.log_param(key="penalty_lasso_conditional_independence_chosen", value=penalty_lasso_conditional_independence_chosen.detach().cpu().item())
 
     ### 4. Compare to Benchmarks
 
