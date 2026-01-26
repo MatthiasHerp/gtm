@@ -10,7 +10,7 @@ import torch
 
 
 def generate_synthetic_vine_data(seed_value=1,
-                                 seed_value_copula=None, 
+                                 seed_value_copula=1, 
                                  dimensionality=10,
                                  Independence_tree=3,
                                  vine_type="R-Vine",
@@ -21,8 +21,8 @@ def generate_synthetic_vine_data(seed_value=1,
     Generate Synthetic Data from a Randomly Sampled Vine Copula with Gaussian Marginals.
 
     Args:
-        - seed_value (int): Seed for reproducibility.
-        - seed_value_copula (int or None): Seed for fixing the vine copula model (structure, pair copulas, params) that are sampled. If None then each seed_value has a different vine copula.
+        - seed_value (int): Seed for reproducibility in sampling the data.
+        - seed_value_copula (int or None): Seed for reproducibility in sampling the vine copula model (structure, pair copulas, params).
         - dimensionality (int): Number of dimensions for the vine copula.
         - Independence_tree (int): Tree level from which to set independence copulas to have full conditional independencies in the related pairs.
         - vine_type (str): Type of vine to generate ("R-Vine", "C-Vine", or "D-Vine").
@@ -47,8 +47,7 @@ def generate_synthetic_vine_data(seed_value=1,
     # Sets seeds across packages for reproducibility of sampling the random pair copulas as well as the parameters (my functions)
     # For sampling the vine structure we use the seed inside pyvinecopulib
     # For sampling from the vine copula we also use the seed inside pyvinecopulib
-    if seed_value_copula is not None:
-        set_seeds(seed_value_copula)
+    set_seeds(seed_value_copula)
     
     ### 1. Sample Synthetic Copula Data and Compute Likelihoods
     # We sample data from a R-Vine-Copula and add Gaussian marginals. 
@@ -56,11 +55,11 @@ def generate_synthetic_vine_data(seed_value=1,
     # Theses allow use to set independence copulas upon Tree 3 to add full conditional independencies as detailed in our Paper. The `df`contains a tables with the copulas, 
     # there parameters and there tree positions in a manner comparable to the conditional independence table later generated with the GTM.
     if vine_type == "R-Vine":
-        vine_structure = pv.RVineStructure.simulate(dimensionality,seeds=[seed_value_copula])
+        vine_structure = pv.RVineStructure.simulate(dimensionality,seeds=[int(seed_value_copula)])
     elif vine_type == "C-Vine":
-        vine_structure = pv.CVineStructure.simulate(dimensionality,seeds=[seed_value_copula])
+        vine_structure = pv.CVineStructure.simulate(dimensionality,seeds=[int(seed_value_copula)])
     elif vine_type == "D-Vine":
-        vine_structure = pv.DVineStructure.simulate(dimensionality,seeds=[seed_value_copula])
+        vine_structure = pv.DVineStructure.simulate(dimensionality,seeds=[int(seed_value_copula)])
     else:
         raise ValueError("vine_type must be one of 'R-Vine', 'C-Vine', or 'D-Vine'")
     
@@ -75,15 +74,15 @@ def generate_synthetic_vine_data(seed_value=1,
     df_true_structure_sub.loc[:, "var_col"] = df_true_structure_sub["var_col"] - 1
 
     # Train
-    simulated_data_uniform_train = vine_model.simulate(n=N_train,seeds=[seed_value])
+    simulated_data_uniform_train = vine_model.simulate(n=N_train,seeds=[int(seed_value)])
     simulated_data_train = torch.distributions.Normal(0,1).icdf(torch.tensor(simulated_data_uniform_train)).float()
 
     # Validate
-    simulated_data_uniform_validate = vine_model.simulate(n=N_validate,seeds=[seed_value])
+    simulated_data_uniform_validate = vine_model.simulate(n=N_validate,seeds=[int(seed_value)])
     simulated_data_validate = torch.distributions.Normal(0,1).icdf(torch.tensor(simulated_data_uniform_validate)).float()
 
     # Test
-    simulated_data_uniform_test = vine_model.simulate(n=N_test,seeds=[seed_value])
+    simulated_data_uniform_test = vine_model.simulate(n=N_test,seeds=[int(seed_value)])
     simulated_data_test = torch.distributions.Normal(0,1).icdf(torch.tensor(simulated_data_uniform_test)).float()
     
     # Notice we use Sklars Theorem to compute the density of the joint copula and Gaussian marginals density.
