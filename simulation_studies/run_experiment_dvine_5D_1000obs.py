@@ -12,7 +12,8 @@ if __name__ == "__main__":
     client = MlflowClient()
     
     data_type = "D-Vine"
-    dimensionality = 7
+    dimensionality = 5
+    independent_tree = 2
     observations = 1000
     
     experimental_name = f"{data_type}_{dimensionality}D_{observations}obs_bgtm"
@@ -35,8 +36,8 @@ if __name__ == "__main__":
             run_name=run_name,
             experiment_id=experiment_id,
             seed_value=seed,
-            dimensionality=7,
-            Independence_tree=2,
+            dimensionality=dimensionality,
+            Independence_tree=independent_tree,
             vine_type=data_type,
             N_train=667,
             N_validate=333,

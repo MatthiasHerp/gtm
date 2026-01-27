@@ -12,7 +12,8 @@ if __name__ == "__main__":
     client = MlflowClient()
     
     data_type = "R-Vine"
-    dimensionality = 7
+    dimensionality = 5
+    intdependent_tree = 2
     observations = 1000
     
     experimental_name = f"{data_type}_{dimensionality}D_{observations}obs_bgtm"
@@ -35,7 +36,7 @@ if __name__ == "__main__":
             run_name=run_name,
             experiment_id=experiment_id,
             seed_value=seed,
-            dimensionality=7,
+            dimensionality=dimensionality,
             Independence_tree=2,
             vine_type=data_type,
             N_train=667,
@@ -70,6 +71,6 @@ if __name__ == "__main__":
             study_name=None,
             posterior_sampling_size_bgtm=1024
         )
-        print(f"{run_name} and {seed} done, {(seed+1)/10 *100}% complete")
+        print(f"{run_name} and {seed + 1} done, {(seed+1)/10 *100}% complete")
     print("Tracking URI:", mlflow.get_tracking_uri())
     print("Experiment artifact_location:", client.get_experiment(experiment_id).artifact_location)
