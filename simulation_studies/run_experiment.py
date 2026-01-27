@@ -19,6 +19,10 @@ import mlflow
 import torch
 import matplotlib.pyplot as plt
 
+import pandas as pd
+import numpy as np
+import math
+
 def run_experiment(
     run_name,
     experiment_id,
@@ -62,6 +66,7 @@ def run_experiment(
     #evaluation_data_type = "samples_from_model",
     num_processes=1,
     sample_size = 10000,
+    max_num_ci_sample_size = 10000,
     num_points_quad=15,
     copula_only=False,
     min_val=-6,
@@ -347,21 +352,60 @@ def run_experiment(
     #mlflow.log_param(key="evaluation_data_type", value=evaluation_data_type)
     mlflow.log_param(key="num_processes", value=num_processes)
     mlflow.log_param(key="sample_size", value=sample_size)
+    mlflow.log_param(key="max_num_ci_sample_size", value=max_num_ci_sample_size)
     mlflow.log_param(key="num_points_quad", value=num_points_quad)
     mlflow.log_param(key="copula_only", value=copula_only)
     mlflow.log_param(key="min_val", value=min_val)
     mlflow.log_param(key="max_val", value=max_val)
+    
+    
+    if max_num_ci_sample_size < sample_size:
+        # Compute number of chunks
+        n_chunks = math.ceil(sample_size / max_num_ci_sample_size)
+        print("needs to chunk synthetic sample ci computation, uses {} chunks of size ".format(n_chunks) + str(max_num_ci_sample_size))
+        print("is be more then sample_size if sample_size / max_num_ci_sample_size not an integer")
 
+        result_tables = []
+        for i in range(n_chunks):
+            print(f"Processing chunk {i+1}/{n_chunks} ({max_num_ci_sample_size} samples)...")
+            chunk_table = model.compute_conditional_independence_table(
+                y=None,
+                evaluation_data_type="samples_from_model",
+                num_processes=num_processes,
+                sample_size=max_num_ci_sample_size,
+                num_points_quad=num_points_quad,
+                copula_only=copula_only,
+                min_val=min_val,
+                max_val=max_val
+            )
+            result_tables.append(chunk_table)
 
-    conditional_independence_table_samples = model.compute_conditional_independence_table(
-                                         y = None,
-                                         evaluation_data_type = "samples_from_model",
-                                         num_processes=num_processes,
-                                         sample_size = sample_size,
-                                         num_points_quad=num_points_quad,
-                                         copula_only=copula_only,
-                                         min_val=min_val,
-                                         max_val=max_val)
+        # Concatenate all results into one dataframe
+        all_results = pd.concat(result_tables, ignore_index=True)
+
+        # Aggregate (average) using groupby:
+        conditional_independence_table_samples = (
+            all_results
+            .groupby(["var_row", "var_col"], as_index=False)
+            .agg({
+                "precision_abs_mean": "mean",
+                "precision_square_mean": "mean",
+                "cond_correlation_abs_mean": "mean",
+                "cond_correlation_square_mean": "mean",
+                "kld": "mean",
+                "iae": "mean"
+            })
+        )
+    else:  
+        conditional_independence_table_samples = model.compute_conditional_independence_table(
+                                            y = None,
+                                            evaluation_data_type = "samples_from_model",
+                                            num_processes=num_processes,
+                                            sample_size = sample_size,
+                                            num_points_quad=num_points_quad,
+                                            copula_only=copula_only,
+                                            min_val=min_val,
+                                            max_val=max_val)
     
 
     conditional_independence_table_data_train = model.compute_conditional_independence_table(

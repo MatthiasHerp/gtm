@@ -15,7 +15,7 @@ def compute_ci_probability_deviance_31_glq(
 ):
 
     # compute p1 = log(f(Y_1,Y_3,Y_2)) from the model
-    p1_glq = model.log_likelihood(y_subset)
+    p1_glq = model.log_likelihood(y_subset,return_lambda_matrix=False)
 
     # compute p2 = log(f(Y_2))
     # First define montecarlo integration over Y_1, Y_3
@@ -28,7 +28,7 @@ def compute_ci_probability_deviance_31_glq(
             Y_synth = torch.vstack(
                 [Y_1_samples, Y_2.repeat(Y_3_samples.size(0)), Y_3_samples]
             ).T
-            return torch.exp(model.log_likelihood(Y_synth)).detach().numpy()
+            return torch.exp(model.log_likelihood(Y_synth,return_lambda_matrix=False)).detach().numpy()
 
         # Define limits
         limits = [[Y_1_min, Y_1_max], [Y_3_min, Y_3_max]]
@@ -72,7 +72,7 @@ def compute_ci_probability_deviance_31_glq(
                     Y_3_samples,
                 ]
             ).T
-            return torch.exp(model.log_likelihood(Y_synth)).detach().numpy()
+            return torch.exp(model.log_likelihood(Y_synth,return_lambda_matrix=False)).detach().numpy()
 
         # Define limits
         limits = [[Y_3_min, Y_3_max]]
@@ -114,7 +114,7 @@ def compute_ci_probability_deviance_31_glq(
                     Y_3.repeat(Y_1_samples.size(0)),
                 ]
             ).T
-            return torch.exp(model.log_likelihood(Y_synth)).detach().numpy()
+            return torch.exp(model.log_likelihood(Y_synth,return_lambda_matrix=False)).detach().numpy()
 
         # Define limits
         limits = [[Y_1_min, Y_1_max]]
@@ -148,7 +148,7 @@ def compute_ci_probability_deviance_31_glq(
 
 def compute_ci_probability_deviance_21(model, y_subset, min_val=-5, max_val=5):
     # compute p1 = log(f(Y_1,Y_3,Y_2)) from the model
-    p1_mc = model.log_likelihood(y_subset)
+    p1_mc = model.log_likelihood(y_subset,return_lambda_matrix=False)
 
     # First define montecarlo integration over Y_1, Y_2
     def monte_carlo_integration_over_Y_1_Y_2(
@@ -159,7 +159,7 @@ def compute_ci_probability_deviance_21(model, y_subset, min_val=-5, max_val=5):
 
         Y_synth = torch.vstack([Y_1_samples, Y_2_samples, Y_3.repeat(samples)]).T
 
-        likelihoods = torch.exp(model.log_likelihood(Y_synth))
+        likelihoods = torch.exp(model.log_likelihood(Y_synth,return_lambda_matrix=False,))
         mean_likelihood = likelihoods.mean()
 
         volume = (Y_2_max - Y_2_min) * (Y_1_max - Y_1_min)
@@ -200,7 +200,7 @@ def compute_ci_probability_deviance_21(model, y_subset, min_val=-5, max_val=5):
 
         # we are computing f(Y_1,Y_2) so we need to divide by f(Y_2) to get the conditional
 
-        likelihoods = torch.exp(model.log_likelihood(Y_synth))
+        likelihoods = torch.exp(model.log_likelihood(Y_synth,return_lambda_matrix=False))
         mean_likelihood = likelihoods.mean()
 
         approx_integral = mean_likelihood * (Y_2_max - Y_2_min)
@@ -236,7 +236,7 @@ def compute_ci_probability_deviance_21(model, y_subset, min_val=-5, max_val=5):
 
         # we are computing f(Y_1,Y_2) so we need to divide by f(Y_2) to get the conditional
 
-        likelihoods = torch.exp(model.log_likelihood(Y_synth))
+        likelihoods = torch.exp(model.log_likelihood(Y_synth,return_lambda_matrix=False))
         mean_likelihood = likelihoods.mean()
 
         approx_integral = mean_likelihood * (Y_1_max - Y_1_min)
@@ -286,7 +286,7 @@ def list_comprehension_integrate_out_one_variable(
         data_synth = data.clone().repeat(sample.size(0), 1)
         data_synth[:, num_col_to_integrate_out] = sample
 
-        ll = model.log_likelihood(data_synth).detach()
+        ll = model.log_likelihood(data_synth,return_lambda_matrix=False).detach()
         if copula == True:
             marginal_ll = torch.distributions.Normal(0, 1).log_prob(data_synth).sum(1)
         else:
@@ -301,7 +301,7 @@ def list_comprehension_integrate_out_one_variable(
             print("data_synth:", data_synth)
 
         return ll.numpy()
-        # return model.log_likelihood(data_synth).detach().numpy()
+        # return model.log_likelihood(data_synth,return_lambda_matrix=False).detach().numpy()
 
     # Define limits
     limits = [[min_val, max_val]]
@@ -331,7 +331,7 @@ def list_comprehension_integrate_out_two_variables(
         data_synth[:, num_col_to_integrate_out_1] = sample_1
         data_synth[:, num_col_to_integrate_out_2] = sample_2
 
-        ll = model.log_likelihood(data_synth).detach()
+        ll = model.log_likelihood(data_synth,return_lambda_matrix=False).detach()
         if copula == True:
             marginal_ll = torch.distributions.Normal(0, 1).log_prob(data_synth).sum(1)
         else:
@@ -346,8 +346,8 @@ def list_comprehension_integrate_out_two_variables(
             print("data_synth:", data_synth)
 
         return ll.numpy()
-        # return torch.exp(model.log_likelihood(data_synth)).detach().numpy()
-        # return model.log_likelihood(data_synth).detach().numpy()
+        # return torch.exp(model.log_likelihood(data_synth,return_lambda_matrix=False)).detach().numpy()
+        # return model.log_likelihood(data_synth,return_lambda_matrix=False).detach().numpy()
 
     # Define limits
     limits = [[min_val, max_val], [min_val, max_val]]
@@ -391,7 +391,7 @@ def list_comprehension_integrate_out_one_variable_optimized(
 
     expanded_data[:, num_col_to_integrate_out] = repeated_X[:, 0]
 
-    l_expanded_data = torch.exp(model.log_likelihood(expanded_data))
+    l_expanded_data = torch.exp(model.log_likelihood(expanded_data,return_lambda_matrix=False))
 
     # if l_expanded_data.isnan().any():
     #        print("ll:",l_expanded_data.isnan().sum() / l_expanded_data.size(0) )
@@ -440,8 +440,10 @@ def list_comprehension_integrate_out_two_variables_optimized(
 
     expanded_data[:, num_col_to_integrate_out_1] = repeated_X[:, 0]
     expanded_data[:, num_col_to_integrate_out_2] = repeated_X[:, 1]
+    
+    print()
 
-    l_expanded_data = torch.exp(model.log_likelihood(expanded_data))
+    l_expanded_data = torch.exp(model.log_likelihood(expanded_data,return_lambda_matrix=False))
 
     l_expanded_data_weighted = repeated_W * l_expanded_data
 
@@ -464,7 +466,7 @@ def compute_ci_probability_deviance_two_dim_glq(
 ):
     with torch.no_grad():
         # compute p1 = log(f(Y)) from the model
-        p1_glq = model.log_likelihood(data)
+        p1_glq = model.log_likelihood(data, return_lambda_matrix=False)
 
         # compute p2 = log(f(Y_{/ij}))
         # z_tilde = model.after_transformation(data)

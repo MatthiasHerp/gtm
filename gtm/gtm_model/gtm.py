@@ -561,11 +561,11 @@ class GTM(nn.Module):
         return_dict = self.forward(y)  # , covariate) #, train=False, evaluate=True)
         return return_dict["output"]
 
-    def __log_likelihood_loss__(self, y, mean_loss=True):
+    def __log_likelihood_loss__(self, y, mean_loss=True, return_lambda_matrix=True):
         # covariate=False, train=True, evaluate=True,
 
         return_dict_nf_mctm = log_likelihood(
-            model=self, samples=y, mean_loss=mean_loss
+            model=self, samples=y, mean_loss=mean_loss, return_lambda_matrix=return_lambda_matrix
         )  # train_covariates=covariate, train=train, evaluate=evaluate,
 
         return_dict_nf_mctm["negative_log_likelihood_data"] = (
@@ -574,7 +574,7 @@ class GTM(nn.Module):
 
         return return_dict_nf_mctm
 
-    def log_likelihood(self, y, mean_loss=False):  # covariate=False,
+    def log_likelihood(self, y, mean_loss=False, return_lambda_matrix=True):  # covariate=False,
         """
         Returns the the log likelihood per sample for input Y.
 
@@ -590,7 +590,7 @@ class GTM(nn.Module):
         Returns the the log likelihood per sample for input Y.
         """
         y = y.to(device=self.device)
-        return self.__log_likelihood_loss__(y, mean_loss=mean_loss)[
+        return self.__log_likelihood_loss__(y, mean_loss=mean_loss, return_lambda_matrix=return_lambda_matrix)[
             "log_likelihood_data"
         ]  # covariate=False, train=False, evaluate=True
 
