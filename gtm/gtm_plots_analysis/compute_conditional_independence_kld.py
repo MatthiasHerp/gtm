@@ -159,8 +159,8 @@ def compute_conditional_independence_kld(
                     actual_log_distribution_glq
                     - under_ci_assumption_log_distribution_glq
                 )
-                ll_dev = ll_dev[~torch.isnan(ll_dev)]
-                ll_dev = ll_dev[~torch.isinf(ll_dev)]
+                # handeling unstable numerics
+                ll_dev = ll_dev.nan_to_num(nan=0, posinf=0, neginf=0)
                 ll_dev = ll_dev[ll_dev.abs() < ll_dev.abs().quantile(0.99)]
                 kld = ll_dev.mean()
 
@@ -177,8 +177,8 @@ def compute_conditional_independence_kld(
                     torch.exp(actual_log_distribution_glq)
                     - torch.exp(under_ci_assumption_log_distribution_glq)
                 )
-                ll_dev2 = ll_dev2[~torch.isnan(ll_dev2)]
-                ll_dev2 = ll_dev2[~torch.isinf(ll_dev2)]
+                # handeling unstable numerics
+                ll_dev2 = ll_dev2.nan_to_num(nan=0, posinf=0, neginf=0)
                 # correct
                 iae = ll_dev2 * weights
                 iae = iae[iae < iae.quantile(0.99)]
