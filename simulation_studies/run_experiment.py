@@ -162,7 +162,10 @@ def run_experiment(
     mlflow.log_param(key="penalty_decorrelation_ridge_second_difference", value=penalty_decorrelation_ridge_second_difference)
     mlflow.log_param(key="penalty_transformation_ridge_second_difference", value=penalty_transformation_ridge_second_difference)
     mlflow.log_param(key="penalty_lasso_conditional_independence", value=penalty_lasso_conditional_independence)
-    mlflow.log_param(key="adaptive_lasso_weights_matrix", value=adaptive_lasso_weights_matrix)
+    if adaptive_lasso_weights_matrix is not False:
+        mlflow.log_param(key="adaptive_lasso_weights_matrix", value="matrix_passed")
+    else:
+        mlflow.log_param(key="adaptive_lasso_weights_matrix", value=adaptive_lasso_weights_matrix)
     mlflow.log_param(key="optimizer", value=optimizer)
     mlflow.log_param(key="learning_rate", value=learning_rate)
     mlflow.log_param(key="iterations", value=iterations)
@@ -294,7 +297,10 @@ def run_experiment(
     mlflow.log_param(key="penalty_decorrelation_ridge_first_difference_chosen", value=penalty_decorrelation_ridge_first_difference_chosen)
     mlflow.log_param(key="penalty_decorrelation_ridge_second_difference_chosen", value=penalty_decorrelation_ridge_second_difference_chosen)
     mlflow.log_param(key="penalty_transformation_ridge_second_difference_chosen", value=penalty_transformation_ridge_second_difference_chosen)
-    mlflow.log_param(key="penalty_lasso_conditional_independence_chosen", value=penalty_lasso_conditional_independence_chosen.detach().cpu().item())
+    if penalty_lasso_conditional_independence_chosen is not False:
+        mlflow.log_param(key="penalty_lasso_conditional_independence_chosen", value=penalty_lasso_conditional_independence_chosen.detach().cpu().item())
+    else:
+        mlflow.log_param(key="penalty_lasso_conditional_independence_chosen", value=penalty_lasso_conditional_independence_chosen)
 
     ### 4. Compare to Benchmarks
 
