@@ -1642,10 +1642,15 @@ if __name__ == "__main__":
 
     # your experiments
     EXPERIMENTS = [
-        "rine_5D_1000obs_bgtm_test_1",
-        "rvine_5D_1000obs_bgtm",
-        "cvine_5D_1000obs_bgtm",
-        "dvine_5D_1000obs_bgtm",
+        "C-Vine_5D_1000obs_bgtm",
+        "C-Vine_7D_1000obs_bgtm",
+        "C-Vine_10D_1000obs_bgtm",
+        "R-Vine_5D_1000obs_bgtm",
+        "R-Vine_7D_1000obs_bgtm",
+        "R-Vine_10D_1000obs_bgtm",
+        "D-Vine_5D_1000obs_bgtm",
+        "D-Vine_7D_1000obs_bgtm",
+        "D-Vine_10D_1000obs_bgtm",
     ]
 
     # your credibility levels

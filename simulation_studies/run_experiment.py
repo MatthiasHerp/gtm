@@ -172,6 +172,10 @@ def run_experiment(
             device=device
         )
         
+        truth_csv = os.path.join(temp_folder, "true_structure.csv")
+        synthetic_data_dict["df_true_structure"].to_csv(truth_csv, index=False)
+        mlflow.log_artifact(truth_csv, artifact_path="truth")
+        
         dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
         dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
         dataset_train_val = Generic_Dataset(synthetic_data_dict['train_validate_data'])
@@ -179,9 +183,6 @@ def run_experiment(
         # Create dataset and DataLoader, if bootstrapped note that
         if bootstrap_warpspeed:
             
-            truth_csv = os.path.join(temp_folder, "true_structure.csv")
-            synthetic_data_dict["df_true_structure"].to_csv(truth_csv, index=False)
-            mlflow.log_artifact(truth_csv, artifact_path="truth")
             #merge train and validate data for warpspeed bootstrap
             combined_data = torch.cat((synthetic_data_dict['train_data'], synthetic_data_dict['validate_data']), dim=0)
             
