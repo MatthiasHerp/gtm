@@ -22,12 +22,12 @@ from pathlib import Path
 from dataclasses import dataclass
 from collections import defaultdict
 
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 import textwrap
+import math
 
 
 # =============================================================================
@@ -100,7 +100,6 @@ def clear_dir_contents(dir_path: Path, verbose: bool = False) -> None:
             print(f"[WARN] Could not delete {child}: {e}")
 
 
-
 # =============================================================================
 # MLFLOW FILESYSTEM HELPERS
 # =============================================================================
@@ -142,18 +141,18 @@ def find_run_dirs(
         for run_dir in sorted(exp_dir.iterdir()):
             if not run_dir.is_dir():
                 continue
-            
+
             run_dirs.append(run_dir)
             if verbose:
                 print(f"[find_run_dirs] {exp_dir.name} -> run: {run_dir.name}")
 
     return run_dirs
 
+
 def find_ci_npz(run_dir: Path) -> Path | None:
     candidates = [
         # your current structure (confirmed)
         run_dir / "artifacts" / "gtm_bayes" / "ci_raw" / "bgtm_ci_raw_arrays.npz",
-
         # fallback (if in some runs you changed artifact_location)
         run_dir / "gtm_bayes" / "ci_raw" / "bgtm_ci_raw_arrays.npz",
     ]
@@ -161,6 +160,7 @@ def find_ci_npz(run_dir: Path) -> Path | None:
         if c.exists():
             return c
     return None
+
 
 def find_truth_csv(run_dir: Path) -> Path | None:
     candidates = [
@@ -172,11 +172,13 @@ def find_truth_csv(run_dir: Path) -> Path | None:
             return c
     return None
 
+
 def _read_text_safely(p: Path) -> str | None:
     try:
         return p.read_text().strip()
     except Exception:
         return None
+
 
 def _find_mlruns_root_from_run_dir(run_dir: Path) -> Path | None:
     """
@@ -188,8 +190,10 @@ def _find_mlruns_root_from_run_dir(run_dir: Path) -> Path | None:
             return parent
     return None
 
+
 def _get_run_id_from_path(run_dir: Path) -> str:
     return run_dir.name
+
 
 def _read_experiment_id_from_meta(meta_path: Path) -> str | None:
     """
@@ -203,6 +207,7 @@ def _read_experiment_id_from_meta(meta_path: Path) -> str | None:
     if m:
         return m.group("eid")
     return None
+
 
 def _canonical_run_dir(run_dir: Path) -> Path | None:
     """
@@ -225,18 +230,17 @@ def _canonical_run_dir(run_dir: Path) -> Path | None:
 
     # 2) If no meta.yaml here, try to find canonical by scanning experiment_id dirs
     if mlruns_root:
-        # common ignore dirs
         ignore = {".trash", "models"}
         for exp_dir in mlruns_root.iterdir():
             if not exp_dir.is_dir() or exp_dir.name in ignore:
                 continue
             cand = exp_dir / run_id
             if cand.is_dir():
-                # optional sanity: check meta.yaml exists
                 if (cand / "meta.yaml").exists() or (cand / "tags").exists():
                     return cand
 
     return None
+
 
 def read_tag(run_dir: Path, key: str) -> str | None:
     """
@@ -342,22 +346,41 @@ def ensure_dir(p: Path) -> Path:
 # PLOTTING
 # =============================================================================
 
-def find_training_npz(run_dir: Path) -> Path | None:
-    """
-    Looks for ELBO training artifact in:
-      <run_dir>/artifacts/gtm_bayes/training/*.npz
-    Returns first npz found (sorted).
-    """
+def find_training_file(run_dir: Path, filename: str) -> Path | None:
     candidates = [
+        run_dir / "artifacts" / "gtm_bayes" / "training" / filename,
+        run_dir / "gtm_bayes" / "training" / filename,
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
+def find_elbo_npz(run_dir: Path) -> Path | None:
+    # prefer your known name first
+    for fn in ["elbo_loss.npz", "elbo.npz"]:
+        p = find_training_file(run_dir, fn)
+        if p is not None:
+            return p
+    # fallback: first npz containing "elbo" key
+    for folder in [
         run_dir / "artifacts" / "gtm_bayes" / "training",
         run_dir / "gtm_bayes" / "training",
-    ]
-    for folder in candidates:
-        if folder.exists() and folder.is_dir():
-            files = sorted([p for p in folder.iterdir() if p.suffix == ".npz"])
-            if len(files) > 0:
-                return files[0]
+    ]:
+        if folder.exists():
+            for p in sorted(folder.glob("*.npz")):
+                try:
+                    z = np.load(p, allow_pickle=False)
+                    if "elbo" in z.files:
+                        return p
+                except Exception:
+                    pass
     return None
+
+
+def find_monitor_npz(run_dir: Path) -> Path | None:
+    return find_training_file(run_dir, "monitor.npz")
 
 
 def load_elbo_from_npz(npz_path: Path) -> np.ndarray | None:
@@ -371,6 +394,54 @@ def load_elbo_from_npz(npz_path: Path) -> np.ndarray | None:
     if elbo.ndim != 1 or elbo.size == 0:
         return None
     return elbo
+
+
+def load_monitor_from_npz(npz_path: Path) -> dict[str, np.ndarray] | None:
+    if npz_path is None:
+        return None
+    try:
+        z = np.load(npz_path, allow_pickle=True)  # allow_pickle needed if dict stored
+    except Exception:
+        return None
+
+    monitor = {}
+
+    # Case A: stored as separate arrays (common)
+    if len(z.files) > 0 and "monitor" not in z.files:
+        for k in z.files:
+            v = np.asarray(z[k])
+            monitor[k] = v
+        return _filter_monitor_traces(monitor)
+
+    # Case B: stored under key "monitor" as dict-like object
+    if "monitor" in z.files:
+        obj = z["monitor"]
+        # obj might be 0-d object array containing dict
+        if isinstance(obj, np.ndarray) and obj.dtype == object and obj.shape == ():
+            obj = obj.item()
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                monitor[k] = np.asarray(v)
+            return _filter_monitor_traces(monitor)
+
+    return None
+
+
+def _filter_monitor_traces(monitor: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    out = {}
+    for k, v in monitor.items():
+        if isinstance(v, (str, bytes)):
+            continue
+        v = np.asarray(v)
+        if v.ndim != 1:
+            continue
+        if v.size < 2:
+            continue
+        # keep only numeric
+        if not np.issubdtype(v.dtype, np.number):
+            continue
+        out[str(k)] = v.astype(float)
+    return out
 
 
 def summarize_elbo(elbo: np.ndarray, tail_window: int = 50) -> dict[str, float]:
@@ -399,7 +470,46 @@ def summarize_elbo(elbo: np.ndarray, tail_window: int = 50) -> dict[str, float]:
         "elbo_tail_std": tail_std,
         "elbo_delta_tail_mean": delta_tail,
     }
-    
+
+
+def summarize_trace(x: np.ndarray, tail_window: int = 50) -> dict[str, float]:
+    x = np.asarray(x, dtype=float)
+    n = int(x.size)
+    w = int(min(tail_window, n))
+    tail = x[-w:]
+    if n >= 2*w:
+        prev = x[-2*w:-w]
+        delta_tail = float(np.nanmean(tail) - np.nanmean(prev))
+    else:
+        delta_tail = float("nan")
+
+    tail_mean = float(np.nanmean(tail))
+    tail_std  = float(np.nanstd(tail))
+    rel_drift = float(abs(delta_tail) / (abs(tail_mean) + 1e-12)) if np.isfinite(delta_tail) else float("nan")
+
+    return {
+        "len": float(n),
+        "first": float(x[0]),
+        "last": float(x[-1]),
+        "gain": float(x[-1] - x[0]),
+        "tail_mean": tail_mean,
+        "tail_std": tail_std,
+        "delta_tail_mean": delta_tail,
+        "rel_tail_drift": rel_drift,
+    }
+
+
+def summarize_monitor(monitor: dict[str, np.ndarray], tail_window: int = 50) -> pd.DataFrame:
+    rows = []
+    for k, v in (monitor or {}).items():
+        s = summarize_trace(v, tail_window=tail_window)
+        s["key"] = k
+        rows.append(s)
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows).sort_values("key")
+
+
 def make_confusion_tables_from_counts(cm: pd.DataFrame) -> pd.DataFrame:
     """
     Input: cm with columns [experiment, seed, true_ci, pred_ci, count]
@@ -462,6 +572,7 @@ def make_confusion_tables_from_counts(cm: pd.DataFrame) -> pd.DataFrame:
         })
 
     return pd.DataFrame(out_rows)
+
 
 def confusion_across_experiment(df_all: pd.DataFrame, *, decided_only: bool = True) -> pd.DataFrame:
     """
@@ -539,7 +650,6 @@ def confusion_2x2_from_counts(counts: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-
 def pair_level_confusion(df_all: pd.DataFrame, thr: float) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Aggregate across seeds/runs to get ONE prediction per pair.
@@ -578,6 +688,7 @@ def pair_level_confusion(df_all: pd.DataFrame, thr: float) -> tuple[pd.DataFrame
     )
     return df_pair, cm_pair
 
+
 def confusion_3x3_counts_by_experiment(df_all: pd.DataFrame) -> pd.DataFrame:
     """
     Returns counts per experiment for:
@@ -614,6 +725,7 @@ def confusion_3x3_counts_by_experiment(df_all: pd.DataFrame) -> pd.DataFrame:
           .reset_index(name="count")
     )
     return counts
+
 
 def confusion_counts_2x2_decided(df_all: pd.DataFrame) -> pd.DataFrame:
     df = df_all.copy()
@@ -661,6 +773,7 @@ def confusion_counts_3x3(df_all: pd.DataFrame) -> pd.DataFrame:
     )
     return counts
 
+
 def confusion_3x3_matrix_from_counts(counts_3x3: pd.DataFrame, exp: str) -> np.ndarray:
     true_order = ["indep", "dep", "unk"]
     pred_order = ["indep", "dep", "uncertain"]
@@ -672,12 +785,13 @@ def confusion_3x3_matrix_from_counts(counts_3x3: pd.DataFrame, exp: str) -> np.n
         mat[i, j] += int(r["count"])
     return mat
 
+
 def _shorten_title(s: str, width: int = 28) -> str:
-    # wrap long experiment names onto 2 lines max
     parts = textwrap.wrap(str(s), width=width)
     if len(parts) <= 2:
         return "\n".join(parts)
     return "\n".join(parts[:2]) + "…"
+
 
 def _annotate_cells(ax, mat, *, fmt="{:d}", fontsize=11):
     vmax = np.nanmax(mat) if np.isfinite(mat).any() else 0.0
@@ -686,7 +800,7 @@ def _annotate_cells(ax, mat, *, fmt="{:d}", fontsize=11):
         v_int = int(v)
         color = "white" if v >= thresh else "black"
         ax.text(j, i, fmt.format(v_int), ha="center", va="center", fontsize=fontsize, color=color)
-        
+
 
 def plot_confusion_grid_3x3_pub(
     counts_3x3: pd.DataFrame,
@@ -705,7 +819,6 @@ def plot_confusion_grid_3x3_pub(
     ncols = min(ncols, k)
     nrows = int(np.ceil(k / ncols))
 
-    # collect matrices first (for global color scale)
     mats = [confusion_3x3_matrix_from_counts(counts_3x3, exp).astype(float) for exp in exps]
     vmax = max(float(np.nanmax(m)) for m in mats) if mats else 1.0
     vmax = max(vmax, 1.0)
@@ -726,11 +839,9 @@ def plot_confusion_grid_3x3_pub(
         ax.set_xticks(range(3))
         ax.set_yticks(range(3))
 
-        # Slightly smaller rotation + alignment helps readability and spacing
         ax.set_xticklabels(pred_levels, rotation=20, ha="right", fontsize=10)
         ax.set_yticklabels(true_levels, fontsize=10)
 
-        # add a touch of padding so ticks don't crowd the axes
         ax.tick_params(axis="x", which="both", length=0, pad=6)
         ax.tick_params(axis="y", which="both", length=0, pad=6)
 
@@ -739,7 +850,6 @@ def plot_confusion_grid_3x3_pub(
 
         _annotate_cells(ax, mat, fontsize=12)
 
-        # ✅ footer INSIDE axes (bottom-right), no overlap with xticks
         n_total = int(np.sum(mat))
         ax.text(
             0.98, 0.02,
@@ -750,11 +860,9 @@ def plot_confusion_grid_3x3_pub(
             bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none", alpha=0.85),
         )
 
-    # hide unused axes
     for ax in axes[len(exps):]:
         ax.axis("off")
 
-    # shared colorbar
     if im_last is not None:
         cbar = fig.colorbar(im_last, ax=axes[:len(exps)], shrink=0.95, pad=0.02)
         cbar.set_label("count", fontsize=11)
@@ -762,6 +870,7 @@ def plot_confusion_grid_3x3_pub(
     fig.suptitle(title, fontsize=16, y=1.02)
     fig.savefig(outpath, dpi=300, bbox_inches="tight")
     plt.close(fig)
+
 
 def plot_confusion_grid_2x2_pub(
     cm_table: pd.DataFrame,
@@ -833,12 +942,10 @@ def plot_confusion_grid_2x2_pub(
     plt.close(fig)
 
 
-
 def plot_elbo_all_runs(cfg, outdir, plots_dir, elbo_traces, df_runs):
     if "has_elbo" in df_runs.columns and df_runs["has_elbo"].any():
         df_runs.to_csv(outdir / "bgtm_kld_run_summaries_with_elbo.csv", index=False)
 
-        # --- Plot: all runs overlay ---
         plt.figure()
         for rid, rec in elbo_traces.items():
             plt.plot(rec["elbo"], alpha=0.7)
@@ -852,6 +959,39 @@ def plot_elbo_all_runs(cfg, outdir, plots_dir, elbo_traces, df_runs):
         if cfg.verbose:
             print("[INFO] No ELBO traces found in training artifacts (gtm_bayes/training/*.npz).")
 
+
+def plot_monitor_grid(
+    monitor: dict[str, np.ndarray],
+    outpath: Path,
+    *,
+    title: str,
+    cols: int = 3,
+) -> None:
+    if monitor is None or len(monitor) == 0:
+        return
+
+    keys = sorted(monitor.keys())
+    n = len(keys)
+    rows = int(math.ceil(n / cols))
+
+    fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 3.6 * rows), constrained_layout=True)
+    axes = np.atleast_1d(axes).ravel()
+
+    for ax, k in zip(axes, keys):
+        y = monitor[k]
+        ax.plot(y, linewidth=1.0)
+        ax.set_title(k, fontsize=10)
+        ax.set_xlabel("iteration")
+        ax.grid(True, alpha=0.3)
+
+    for ax in axes[n:]:
+        ax.axis("off")
+
+    fig.suptitle(title, fontsize=14)
+    fig.savefig(outpath, dpi=250, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_pooled_posterior_kld_boxplot(
     kld_pool_cat: dict[str, np.ndarray],
     outpath: Path,
@@ -860,7 +1000,6 @@ def plot_pooled_posterior_kld_boxplot(
     cred_level: float,
     title: str,
 ) -> None:
-    # order pairs by pooled median (or mean) for readability
     order = sorted(kld_pool_cat.keys(), key=lambda p: np.nanmedian(kld_pool_cat[p]))
 
     data = [np.clip(kld_pool_cat[p], 1e-12, None) for p in order]
@@ -868,7 +1007,6 @@ def plot_pooled_posterior_kld_boxplot(
     plt.figure(figsize=(max(10, len(order) * 0.55), 5))
     plt.boxplot(data, labels=order, showfliers=False)
 
-    # reference lines
     plt.axhline(0.0, linewidth=1.0)
     plt.axhline(eps, linewidth=1.2, linestyle="--")
     plt.axhline(max(eps, 1e-12), linewidth=1.2, linestyle="--")
@@ -877,6 +1015,26 @@ def plot_pooled_posterior_kld_boxplot(
     plt.yscale("log")
     plt.ylabel("Pooled posterior samples of KLD (log scale)")
     plt.title(title + f" (pooled across seeds/runs; ε={eps:g}, CI={cred_level:.2f})")
+    plt.tight_layout()
+    plt.savefig(outpath, dpi=200)
+    plt.close()
+
+
+def plot_monitor_key_overlay(monitor_traces, outpath: Path, *, key: str, title: str):
+    plt.figure()
+    n = 0
+    for rid, rec in monitor_traces.items():
+        mon = rec["monitor"]
+        if key not in mon:
+            continue
+        plt.plot(mon[key], alpha=0.6)
+        n += 1
+    if n == 0:
+        plt.close()
+        return
+    plt.xlabel("iteration")
+    plt.ylabel(key)
+    plt.title(title + f" (n_runs={n})")
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
     plt.close()
@@ -910,20 +1068,15 @@ def plot_boxplot_across_seeds(df_all: pd.DataFrame, outpath: Path, col: str) -> 
 
     plt.figure(figsize=(max(10, len(pairs_sorted) * 0.5), 5))
     plt.boxplot(data, labels=pairs_sorted, showfliers=False)
-    if col == "p_kld_le_eps": plt.ylim(-0.05, 1.05)
+    if col == "p_kld_le_eps":
+        plt.ylim(-0.05, 1.05)
     plt.xticks(rotation=90)
-    plt.ylabel(
-        ("KLD mean (per run)" if col == "kld_mean" else "p(KLD <= eps)") 
-        )
-    plt.title(
-        ("Across-seed variability of posterior mean KLD" 
-         if col == "kld_mean" 
-         else "Posterior independence probability per pair across seeds")
-        )
-    
+    plt.ylabel(("KLD mean (per run)" if col == "kld_mean" else "p(KLD <= eps)"))
+    plt.title(("Across-seed variability of posterior mean KLD" if col == "kld_mean" else "Posterior independence probability per pair across seeds"))
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
     plt.close()
+
 
 def plot_scatter_pairs(
     df_all: pd.DataFrame,
@@ -933,21 +1086,9 @@ def plot_scatter_pairs(
     thr: float = 0.95,
     eps: float | None = None,
 ) -> None:
-    """
-    Scatter plot of posterior practical-independence probability
-    p_eps(i,j) = Pr(KLD_{i,j} <= eps | D) across seeds.
-
-    - x-axis: variable pairs
-    - y-axis: posterior probability
-    - background bands: decision regions
-    - color: truth
-    - marker: prediction
-    """
-
     df = df_all.copy()
     df["pair"] = df["pair"].astype(str)
 
-    # order pairs by mean probability (clean readability)
     order = (
         df.groupby("pair")[col]
         .mean()
@@ -959,29 +1100,19 @@ def plot_scatter_pairs(
     plt.figure(figsize=(12, 4))
     rng = np.random.default_rng(0)
 
-    # ---------- decision thresholds ----------
     hi_thr = thr
     lo_thr = 1.0 - thr
 
-    # background decision bands
     plt.axhspan(hi_thr, 1.0, alpha=0.08)
     plt.axhspan(lo_thr, hi_thr, alpha=0.06)
     plt.axhspan(0.0, lo_thr, alpha=0.08)
 
-    # threshold lines
     plt.axhline(hi_thr, linewidth=1.2)
     plt.axhline(lo_thr, linewidth=1.2, linestyle="--")
     plt.axhline(0.5, linewidth=0.8, linestyle=":", alpha=0.7)
 
-    # ---------- scatter points ----------
     if "dependence" in df.columns and "pred_ci" in df.columns:
-        # truth → color, prediction → marker
-        truth_map = {0: "independent", 1: "dependent", -1: "unknown"}
-        pred_mark = {
-            "independent": "o",
-            "dependent": "x",
-            "uncertain": "s",   # visible marker (not '.')
-        }
+        pred_mark = {"independent": "o", "dependent": "x", "uncertain": "s"}
 
         for tval, tname in [(0, "independent"), (1, "dependent"), (-1, "unknown")]:
             sub = df.loc[df["dependence"].fillna(-1).astype(int) == tval]
@@ -993,10 +1124,7 @@ def plot_scatter_pairs(
                 if sub2.empty:
                     continue
 
-                xj = (
-                    sub2["x"].to_numpy(float)
-                    + rng.uniform(-0.08, 0.08, size=len(sub2))
-                )
+                xj = sub2["x"].to_numpy(float) + rng.uniform(-0.08, 0.08, size=len(sub2))
 
                 plt.scatter(
                     xj,
@@ -1007,30 +1135,19 @@ def plot_scatter_pairs(
                     label=f"{tname} / pred={pname}",
                 )
     else:
-        # fallback (no truth/pred available)
         xj = df["x"].to_numpy(float) + rng.uniform(-0.08, 0.08, size=len(df))
         plt.scatter(xj, df[col], s=22, alpha=0.7)
 
-    # ---------- legend (deduplicated) ----------
     handles, labels = plt.gca().get_legend_handles_labels()
     uniq = dict(zip(labels, handles))
     plt.legend(uniq.values(), uniq.keys(), fontsize=8, ncol=2)
 
-    # ---------- axes & labels ----------
     plt.xticks(range(len(order)), order, rotation=90)
     plt.ylim(-0.05, 1.05)
 
-    plt.ylabel(
-        r"$p_{\varepsilon}(\mathrm{KLD}\leq \varepsilon)$" 
-        if col == "p_kld_le_eps" 
-        else "Posterior mean KLD"
-    )
+    plt.ylabel(r"$p_{\varepsilon}(\mathrm{KLD}\leq \varepsilon)$" if col == "p_kld_le_eps" else "Posterior mean KLD")
 
-    title = (
-        "Posterior practical-independence probability per pair across seeds" 
-        if col == "p_kld_le_eps" else "Posterior mean KLD per pair across seeds"
-        )
-    
+    title = ("Posterior practical-independence probability per pair across seeds" if col == "p_kld_le_eps" else "Posterior mean KLD per pair across seeds")
     if eps is not None:
         title += f" (ε={eps:g}, γ={thr:.2f})"
     plt.title(title)
@@ -1038,6 +1155,7 @@ def plot_scatter_pairs(
     plt.tight_layout()
     plt.savefig(outpath, dpi=200)
     plt.close()
+
 
 def plot_scatter_pairs_faceted_by_seed(
     df_all: pd.DataFrame,
@@ -1047,19 +1165,15 @@ def plot_scatter_pairs_faceted_by_seed(
     thr: float = 0.90,
     eps: float | None = None,
 ) -> None:
-    
     df = df_all.copy()
     df["pair"] = df["pair"].astype(str)
 
-    # global order so all seed-panels share x-axis meaning
     order = (
         df.groupby("pair")[col].mean()
         .sort_values(ascending=True)
         .index.tolist()
     )
-    df["x"] = df["pair"].map(
-        {p: i for i, p in enumerate(order)}
-        )
+    df["x"] = df["pair"].map({p: i for i, p in enumerate(order)})
 
     seeds = sorted(df["seed"].dropna().unique())
     n = len(seeds)
@@ -1073,14 +1187,6 @@ def plot_scatter_pairs_faceted_by_seed(
     hi_thr = thr
     lo_thr = 1.0 - thr
 
-    # -----------------------------
-    # STYLE = (truth, pred) -> (color, marker)
-    # This is chosen to match your "across-seeds" legend screenshot:
-    #  - independent / pred=independent : blue circle
-    #  - independent / pred=uncertain   : orange square
-    #  - dependent   / pred=dependent   : green x
-    #  - dependent   / pred=uncertain   : red square
-    # -----------------------------
     combo_style = {
         (0, "independent"): ("C0", "o"),
         (0, "uncertain"):   ("C1", "s"),
@@ -1088,13 +1194,11 @@ def plot_scatter_pairs_faceted_by_seed(
         (1, "uncertain"):   ("C3", "s"),
     }
 
-    # Optional combos (if they happen, give them consistent styles too)
-    # (these won’t appear in legend unless they exist in data)
     fallback_cycle = ["C4", "C5", "C6", "C7", "C8", "C9"]
+
     def get_style(tval: int, pname: str):
         if (tval, pname) in combo_style:
             return combo_style[(tval, pname)]
-        # deterministic fallback so it doesn't jump around
         idx = (hash((tval, pname)) % len(fallback_cycle))
         color = fallback_cycle[idx]
         marker = {"independent": "o", "dependent": "x", "uncertain": "s"}.get(pname, "o")
@@ -1102,14 +1206,13 @@ def plot_scatter_pairs_faceted_by_seed(
 
     truth_name = {0: "independent", 1: "dependent", -1: "unknown"}
 
-    # legend order: match the across-seeds plot (and then add any extra combos if present)
     legend_order = [
         (0, "independent"),
         (0, "uncertain"),
         (1, "dependent"),
         (1, "uncertain"),
-        (1, "independent"),   # if present in data
-        (0, "dependent"),     # if present in data
+        (1, "independent"),
+        (0, "dependent"),
         (-1, "independent"),
         (-1, "dependent"),
         (-1, "uncertain"),
@@ -1118,7 +1221,6 @@ def plot_scatter_pairs_faceted_by_seed(
     for ax, s in zip(axes, seeds):
         g = df[df["seed"] == s].copy()
 
-        # background bands + thresholds
         ax.axhspan(hi_thr, 1.0, alpha=0.08)
         ax.axhspan(lo_thr, hi_thr, alpha=0.06)
         ax.axhspan(0.0, lo_thr, alpha=0.08)
@@ -1126,16 +1228,12 @@ def plot_scatter_pairs_faceted_by_seed(
         ax.axhline(lo_thr, linewidth=1.2, linestyle="--")
         ax.axhline(0.5, linewidth=0.8, linestyle=":", alpha=0.7)
 
-        # ---------- points: runs per seed (jittered) ----------
         if "dependence" in g.columns and "pred_ci" in g.columns:
             xbase = g["x"].to_numpy(float)
             g["_xj"] = xbase + rng.uniform(-0.08, 0.08, size=len(g))
 
             for tval, pname in legend_order:
-                sub = g[
-                    (g["dependence"].fillna(-1).astype(int) == tval)
-                    & (g["pred_ci"] == pname)
-                ]
+                sub = g[(g["dependence"].fillna(-1).astype(int) == tval) & (g["pred_ci"] == pname)]
                 if sub.empty:
                     continue
 
@@ -1157,20 +1255,15 @@ def plot_scatter_pairs_faceted_by_seed(
         ax.set_ylabel(r"$p_{\varepsilon}(\mathrm{KLD}\leq \varepsilon)$")
         ax.set_ylim(-0.05, 1.05)
 
-    # ---------- shared x axis ----------
     axes[-1].set_xticks(range(len(order)))
     axes[-1].set_xticklabels(order, rotation=90)
 
-    # ---------- FIGURE-LEVEL LEGEND (same colors/markers as across-seeds) ----------
     if "dependence" in df.columns and "pred_ci" in df.columns:
         legend_handles = []
         legend_labels = []
 
         for tval, pname in legend_order:
-            exists = (
-                (df["dependence"].fillna(-1).astype(int) == tval)
-                & (df["pred_ci"] == pname)
-            ).any()
+            exists = ((df["dependence"].fillna(-1).astype(int) == tval) & (df["pred_ci"] == pname)).any()
             if not exists:
                 continue
 
@@ -1201,12 +1294,7 @@ def plot_scatter_pairs_faceted_by_seed(
             frameon=True,
         )
 
-    # ---------- title ----------
-    title = (
-        "Posterior practical-independence probability per pair (faceted by seed)"
-        if col == "p_kld_le_eps"
-        else "Posterior mean KLD per pair (faceted by seed)"
-    )
+    title = ("Posterior practical-independence probability per pair (faceted by seed)" if col == "p_kld_le_eps" else "Posterior mean KLD per pair (faceted by seed)")
     if eps is not None:
         title += f" (ε={eps:g}, γ={thr:.2f})"
     fig.suptitle(title, y=1.06)
@@ -1234,7 +1322,6 @@ def parse_args_optional() -> argparse.Namespace:
 
 
 def merge_config(cfg: Config, args: argparse.Namespace) -> Config:
-    # CLI overrides only if provided
     if args.mlruns is not None:
         cfg.mlruns_path = args.mlruns
     if args.outdir is not None:
@@ -1259,7 +1346,6 @@ def merge_config(cfg: Config, args: argparse.Namespace) -> Config:
 # =============================================================================
 
 def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> None:
-
     # Resolve mlruns root
     if cfg.mlruns_path is None:
         mlruns_root = find_project_mlruns(script_dir)
@@ -1282,7 +1368,6 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
     )
 
     outdir = ensure_dir(outdir)
-    # Clean previous results in that folder
     clear_dir_contents(outdir, verbose=cfg.verbose)
 
     plots_dir = ensure_dir(outdir / "plots")
@@ -1299,12 +1384,8 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         print(f"max_runs   : {cfg.max_runs}")
         print("=" * 80)
 
-    run_dirs = find_run_dirs(
-        mlruns_root,
-        cfg.experiment_name,
-        cfg.verbose
-        )
-    
+    run_dirs = find_run_dirs(mlruns_root, cfg.experiment_name, cfg.verbose)
+
     if len(run_dirs) == 0:
         raise RuntimeError(f"No MLflow run dirs found under: {mlruns_root}")
 
@@ -1314,26 +1395,25 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
     rows_all = []
     rows_run_summary = []
     processed = 0
-    
+
     trash_dir = (mlruns_root / ".trash").resolve()
-    
-    elbo_traces = {}  # run_id -> dict(seed=?, exp=?, elbo=np.array)
-    kld_pool = defaultdict(list)      # pair_label -> list of 1D arrays
-    pair_meta = {}                    # pair_label -> (var_row, var_col) optional
+    monitor_traces = {}      # run_id -> dict(seed, exp, monitor=dict)
+    monitor_summaries = []   # list of per-run monitor summary rows
+    elbo_traces = {}         # run_id -> dict(seed=?, exp=?, elbo=np.array)
+    kld_pool = defaultdict(list)  # pair_label -> list of 1D arrays
+    pair_meta = {}               # pair_label -> (var_row, var_col) optional
 
     for run_dir in sorted(run_dirs):
-        #npz_path = run_dir / "artifacts" / "gtm_bayes" / "ci_raw" / "bgtm_ci_raw_arrays.npz"
         run_dir_resolved = run_dir.resolve()
         if trash_dir in run_dir_resolved.parents or run_dir_resolved == trash_dir:
             continue
-        
+
         npz_path = find_ci_npz(run_dir)
-        if  npz_path is None:
+        if npz_path is None:
             if cfg.verbose:
                 print(f"[SKIP] No ci_raw npz in run: {run_dir}")
             continue
 
-        #truth_path = run_dir / "artifacts" / "truth" / "true_structure.csv"
         truth_path = find_truth_csv(run_dir)
         if cfg.require_truth and (truth_path is None or not truth_path.exists()):
             continue
@@ -1362,17 +1442,14 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         if cfg.verbose:
             print(f"      kld shape      : {kld.shape}")
             print(f"      pair_index shape: {pair_index.shape}")
-        
+
         pair_labels = [make_pair_label(a, b) for a, b in pair_index]
 
         for j, lab in enumerate(pair_labels):
-            # store pooled posterior samples for this pair
             kld_pool[lab].append(kld[:, j].astype(float))
-
-            # optional: keep meta once
             if lab not in pair_meta:
                 pair_meta[lab] = (int(pair_index[j, 0]), int(pair_index[j, 1]))
-                
+
         summ = summarize_kld_samples(kld, cred_level=cfg.cred_level, eps=cfg.eps)
 
         df_pairs = pd.DataFrame({
@@ -1388,9 +1465,9 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
             "experiment": exp,
             "run_id": run_id,
         })
-        
+
         df_pairs["kld_ci_width"] = df_pairs["kld_hi"] - df_pairs["kld_lo"]
-        df_pairs["kld_pos_prob"] = (kld > 0).mean(axis=0)  # posterior P(KLD>0) per pair, debug
+        df_pairs["kld_pos_prob"] = (kld > 0).mean(axis=0)
 
         thr_hi = cfg.cred_level
         thr_lo = 1.0 - cfg.cred_level
@@ -1417,7 +1494,7 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
                     df_pairs["true_ci"] = np.nan
                     df_pairs["is_decided"] = df_pairs["pred_ci"] != "uncertain"
                     df_pairs["is_correct"] = np.nan
-                    
+
                 if cfg.verbose:
                     print(f"      merged truth    : YES ({truth_path})")
             except Exception as e:
@@ -1429,15 +1506,36 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         run_kld_mean_over_pairs = float(np.nanmean(df_pairs["kld_mean"].values))
         run_frac_lo_le_eps = float(np.mean(df_pairs["lo_le_eps"].values))
         run_mean_p_le_eps = float(np.nanmean(df_pairs["p_kld_le_eps"].values))
-        
+
         # --- ELBO: load training trace (optional) ---
-        elbo_npz = find_training_npz(run_dir)
+        elbo_npz = find_elbo_npz(run_dir)
         elbo = load_elbo_from_npz(elbo_npz) if elbo_npz is not None else None
+
+        # --- MONITOR: load training trace (optional) ---
+        monitor_npz = find_monitor_npz(run_dir)
+        monitor = load_monitor_from_npz(monitor_npz)  # loader handles None safely
+
+        if monitor is not None and len(monitor) > 0:
+            monitor_traces[run_id] = {"seed": seed, "experiment": exp, "monitor": monitor}
+
+            df_mon = summarize_monitor(monitor, tail_window=50)
+            if not df_mon.empty:
+                df_mon.insert(0, "run_id", run_id)
+                df_mon.insert(0, "seed", seed)
+                df_mon.insert(0, "experiment", exp)
+                monitor_summaries.append(df_mon)
+
+            run_plot_dir = ensure_dir(plots_dir / "monitor" / exp / f"seed_{seed}")
+            plot_monitor_grid(
+                monitor,
+                run_plot_dir / f"monitor_grid_{run_id}.png",
+                title=f"Monitor traces | exp={exp} | seed={seed} | run={run_id}",
+                cols=3,
+            )
 
         elbo_stats = {}
         if elbo is not None:
             elbo_stats = summarize_elbo(elbo, tail_window=50)
-
 
         rows_run_summary.append({
             "experiment": exp,
@@ -1448,18 +1546,21 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
             "frac_pairs_lo_le_eps": run_frac_lo_le_eps,
             "mean_p_kld_le_eps": run_mean_p_le_eps,
             "npz_path": str(npz_path),
-            
+
             "elbo_npz_path": str(elbo_npz) if elbo_npz is not None else None,
             "has_elbo": bool(elbo is not None),
             **elbo_stats,
+
+            # (optional but useful)
+            "monitor_npz_path": str(monitor_npz) if monitor_npz is not None else None,
+            "has_monitor": bool(monitor is not None and len(monitor) > 0),
         })
-        
+
         if elbo is not None:
             elbo_traces[run_id] = {"seed": seed, "experiment": exp, "elbo": elbo}
 
-
         rows_all.append(df_pairs)
-        
+
         processed += 1
         if cfg.max_runs is not None and processed >= cfg.max_runs:
             if cfg.verbose:
@@ -1472,33 +1573,51 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
             "Check that mlruns_root is correct and that artifacts were copied."
         )
 
+    # ---------- NEW: monitor overlays (moved OUT of the run loop) ----------
+    if len(monitor_traces) > 0:
+        by_exp = defaultdict(list)
+        for rid, rec in monitor_traces.items():
+            by_exp[rec["experiment"]].append(rid)
+
+        for exp, run_ids in by_exp.items():
+            key_counts = defaultdict(int)
+            for rid in run_ids:
+                for k in monitor_traces[rid]["monitor"].keys():
+                    key_counts[k] += 1
+
+            common_keys = [k for k, c in key_counts.items() if c >= max(2, int(0.7 * len(run_ids)))]
+            exp_dir = ensure_dir(plots_dir / "monitor" / exp)
+
+            for k in sorted(common_keys)[:8]:
+                outp = exp_dir / f"overlay_{k}.png"
+                plot_monitor_key_overlay(
+                    {rid: monitor_traces[rid] for rid in run_ids},
+                    outp,
+                    key=k,
+                    title=f"Monitor convergence | exp={exp} | key={k}",
+                )
+    else:
+        if cfg.verbose:
+            print("[INFO] No monitor traces collected; skipping overlay plots.")
+
     # concatenate across runs -> one pooled posterior per pair
     kld_pool_cat = {lab: np.concatenate(chunks, axis=0) for lab, chunks in kld_pool.items()}
 
     df_all = pd.concat(rows_all, ignore_index=True)
-    
-    if "dependence" in df_all.columns and df_all["dependence"].notna().any():
-        # build true_ci everywhere
-        df_all["true_ci"] = np.where(df_all["dependence"] == 0, "independent", "dependent")
-        
 
-        # per-seed metrics
+    if "dependence" in df_all.columns and df_all["dependence"].notna().any():
+        df_all["true_ci"] = np.where(df_all["dependence"] == 0, "independent", "dependent")
+
         df_seed_metrics = (
             df_all.groupby(["experiment", "seed"])
             .apply(lambda g: pd.Series({
                 "n_pairs": len(g),
                 "coverage_decided": (g["pred_ci"] != "uncertain").mean(),
-
-                # accuracy among decided only
                 "accuracy_on_decided": (
                     (g.loc[g["pred_ci"] != "uncertain", "pred_ci"] == g.loc[g["pred_ci"] != "uncertain", "true_ci"]).mean()
                     if (g["pred_ci"] != "uncertain").any() else np.nan
                 ),
-
-                # hit-rate with abstentions treated as wrong (optional but useful)
                 "accuracy_with_abstain_as_wrong": (g["pred_ci"] == g["true_ci"]).mean(),
-
-                # recalls among decided only
                 "indep_recall_decided": (
                     (g.loc[(g["true_ci"]=="independent") & (g["pred_ci"]!="uncertain"), "pred_ci"] == "independent").mean()
                     if ((g["true_ci"]=="independent") & (g["pred_ci"]!="uncertain")).any() else np.nan
@@ -1507,15 +1626,13 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
                     (g.loc[(g["true_ci"]=="dependent") & (g["pred_ci"]!="uncertain"), "pred_ci"] == "dependent").mean()
                     if ((g["true_ci"]=="dependent") & (g["pred_ci"]!="uncertain")).any() else np.nan
                 ),
-
-                # abstentions
                 "frac_uncertain": (g["pred_ci"] == "uncertain").mean(),
             }))
             .reset_index()
         )
 
         df_seed_metrics.to_csv(outdir / "seed_level_truth_comparison.csv", index=False)
-        
+
         decided = df_all[df_all["pred_ci"] != "uncertain"].copy()
 
         cm = (
@@ -1524,19 +1641,16 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
             .reset_index(name="count")
         )
         cm.to_csv(outdir / "seed_level_confusion_counts.csv", index=False)
-        
+
         seed_cm_table = make_confusion_tables_from_counts(cm)
         seed_cm_table.to_csv(outdir / "seed_level_confusion_table_2x2.csv", index=False)
 
-        
         pred_counts = (
             df_all.groupby(["experiment","seed","pred_ci"])
             .size().reset_index(name="count")
         )
         pred_counts.to_csv(outdir / "seed_level_prediction_counts.csv", index=False)
-        
-        
-        # decided-only confusion per experiment
+
         cm_exp_counts = confusion_across_experiment(df_all, decided_only=True)
         cm_exp_counts.to_csv(outdir / "experiment_level_confusion_counts_decided.csv", index=False)
 
@@ -1548,13 +1662,9 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
             title=f"Confusion matrices (decided-only) by experiment | eps={cfg.eps:g}, gamma={cfg.cred_level:.2f}",
         )
 
-        # optional: include uncertain as a separate column (2x3)
         cm_exp_counts_all = confusion_across_experiment(df_all, decided_only=False)
         cm_exp_counts_all.to_csv(outdir / "experiment_level_confusion_counts_with_uncertain.csv", index=False)
 
-        
-
-        # 3x3 including uncertain across experiment
         counts3 = confusion_counts_3x3(df_all)
         counts3.to_csv(outdir / "confusion_3x3_by_experiment.csv", index=False)
         plot_confusion_grid_3x3_pub(
@@ -1562,19 +1672,23 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
             plots_dir / "confusion_3x3_by_experiment.png",
             title=f"3×3 confusion (incl. uncertain) by experiment | eps={cfg.eps:g}, gamma={cfg.cred_level:.2f}",
         )
-        
+
     df_runs = pd.DataFrame(rows_run_summary)
+    if len(monitor_summaries) > 0:
+        df_mon_all = pd.concat(monitor_summaries, ignore_index=True)
+        df_mon_all.to_csv(outdir / "monitor_trace_stability_summary.csv", index=False)
+    else:
+        if cfg.verbose:
+            print("[INFO] No monitor.npz found (or monitor had no plottable 1D numeric traces).")
 
     if "dependence" in df_all.columns and df_all["dependence"].notna().any():
         df_pair, cm_pair = pair_level_confusion(df_all, thr=cfg.cred_level)
         df_pair.to_csv(outdir / "pair_level_predictions.csv", index=False)
         cm_pair.to_csv(outdir / "pair_level_confusion_counts.csv", index=False)
 
-    # Save CSVs
     df_all.to_csv(outdir / "bgtm_kld_per_pair_per_run.csv", index=False)
     df_runs.to_csv(outdir / "bgtm_kld_run_summaries.csv", index=False)
 
-    # Across-seed aggregation per pair
     agg_cols = ["pair"]
     if "dependence" in df_all.columns:
         agg_cols += ["dependence"]
@@ -1594,8 +1708,6 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
     )
     df_pair_across.to_csv(outdir / "bgtm_kld_per_pair_across_seeds.csv", index=False)
 
-    # Plots across seeds
-    
     if len(kld_pool_cat) > 0:
         plot_pooled_posterior_kld_boxplot(
             kld_pool_cat,
@@ -1604,7 +1716,7 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
             cred_level=cfg.cred_level,
             title=f"Posterior KLD per pair | exp={cfg.experiment_name}",
         )
-        
+
         plot_pooled_p_eps_bar(
             kld_pool_cat,
             plots_dir / "p_eps_pooled_across_seeds.png",
@@ -1615,10 +1727,10 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
 
     plot_boxplot_across_seeds(df_all, plots_dir / "boxplot_kld_per_pair_across_seeds.png", col="kld_mean")
     plot_scatter_pairs(df_all, plots_dir / "scatter_kld_pairs_across_seeds.png", col="kld_mean")
-    plot_scatter_pairs(df_all,plots_dir / "scatter_p_kld_le_eps_pairs_across_seeds.png",col="p_kld_le_eps", thr=cfg.cred_level,eps=cfg.eps)
+    plot_scatter_pairs(df_all, plots_dir / "scatter_p_kld_le_eps_pairs_across_seeds.png", col="p_kld_le_eps", thr=cfg.cred_level, eps=cfg.eps)
     plot_scatter_pairs_faceted_by_seed(df_all, plots_dir / "scatter_p_kld_le_eps_faceted_by_seed.png", col="p_kld_le_eps", thr=cfg.cred_level, eps=cfg.eps)
     plot_scatter_pairs_faceted_by_seed(df_all, plots_dir / "scatter_kld_pairs_faceted_by_seed.png", col="kld_mean", thr=cfg.cred_level, eps=cfg.eps)
-    
+
     plot_elbo_all_runs(cfg, outdir, plots_dir, elbo_traces, df_runs)
 
     print("\n[OK] Done.")
@@ -1627,6 +1739,7 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
     print(f"  - {outdir / 'bgtm_kld_run_summaries.csv'}")
     print(f"  - {outdir / 'bgtm_kld_per_pair_across_seeds.csv'}")
     print(f"  - plots in: {plots_dir}")
+
 
 # =============================================================================
 if __name__ == "__main__":
@@ -1640,23 +1753,20 @@ if __name__ == "__main__":
         max_runs=None
     )
 
-    # your experiments
     EXPERIMENTS = [
-        "C-Vine_5D_1000obs_bgtm",
-        "C-Vine_7D_1000obs_bgtm",
-        "C-Vine_10D_1000obs_bgtm",
-        "R-Vine_5D_1000obs_bgtm",
-        "R-Vine_7D_1000obs_bgtm",
-        "R-Vine_10D_1000obs_bgtm",
-        "D-Vine_5D_1000obs_bgtm",
-        "D-Vine_7D_1000obs_bgtm",
-        "D-Vine_10D_1000obs_bgtm",
+        "C-Vine_5D_ind_tree2_1000obs_bgtm",
+        "C-Vine_7D_ind_tree2_1000obs_bgtm",
+        "C-Vine_10D_ind_tree3_1000obs_bgtm",
+        "R-Vine_5D_ind_tree2_1000obs_bgtm",
+        "R-Vine_7D_ind_tree2_1000obs_bgtm",
+        "R-Vine_10D_ind_tree3_1000obs_bgtm",
+        "D-Vine_5D_ind_tree2_1000obs_bgtm",
+        "D-Vine_7D_ind_tree2_1000obs_bgtm",
+        "D-Vine_10D_ind_tree3_1000obs_bgtm",
     ]
 
-    # your credibility levels
-    CRED_LEVELS = [0.90, 0.95, 0.99]  # extend as you want
+    CRED_LEVELS = [0.90, 0.95, 0.99]
 
-    # optional CLI overrides still work
     args = parse_args_optional()
 
     for exp_name in EXPERIMENTS:
@@ -1672,4 +1782,3 @@ if __name__ == "__main__":
             print("=" * 80)
 
             main(cfg)
-
