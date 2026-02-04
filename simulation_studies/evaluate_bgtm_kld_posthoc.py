@@ -44,6 +44,7 @@ class Config:
     cred_level: float = 0.90
     eps: float = 1e-3
     require_truth: bool = True
+    elbo_only_once: bool = True
     # Debug verbosity
     verbose: bool = True
     # Limit runs processed (None = all). Helpful for debugging.
@@ -941,24 +942,103 @@ def plot_confusion_grid_2x2_pub(
     fig.savefig(outpath, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
+def _pretty_experiment_title(exp_name: str) -> str:
+    """
+    Turn e.g. 'R-Vine_10D_ind_tree3_1000obs_bgtm'
+    into something like 'R-Vine • d=10 • ind-tree=3 • n=1000 (BGTM)'.
+    Falls back safely if parsing fails.
+    """
+    if not exp_name:
+        return "BGTM"
+
+    s = str(exp_name)
+
+    # very lightweight parsing; won't crash if pattern changes
+    vine = s.split("_")[0] if "_" in s else s
+
+    d = None
+    m = __import__("re").search(r"_(\d+)D_", s)
+    if m:
+        d = m.group(1)
+
+    tree = None
+    m = __import__("re").search(r"ind_tree(\d+)", s)
+    if m:
+        tree = m.group(1)
+
+    n = None
+    m = __import__("re").search(r"_(\d+)obs", s)
+    if m:
+        n = m.group(1)
+
+    is_bgtm = ("bgtm" in s.lower())
+
+    parts = [vine]
+    if d is not None:
+        parts.append(f"d={d}")
+    if tree is not None:
+        parts.append(f"ind-tree={tree}")
+    if n is not None:
+        parts.append(f"n={n}")
+    if is_bgtm:
+        parts.append("BGTM")
+
+    return " • ".join(parts)
 
 def plot_elbo_all_runs(cfg, outdir, plots_dir, elbo_traces, df_runs):
-    if "has_elbo" in df_runs.columns and df_runs["has_elbo"].any():
-        df_runs.to_csv(outdir / "bgtm_kld_run_summaries_with_elbo.csv", index=False)
-
-        plt.figure()
-        for rid, rec in elbo_traces.items():
-            plt.plot(rec["elbo"], alpha=0.7)
-        plt.xlabel("Iteration")
-        plt.ylabel("ELBO")
-        plt.title(f"ELBO Convergence (all runs) | exp={cfg.experiment_name}")
-        plt.tight_layout()
-        plt.savefig(plots_dir / "elbo_convergence_all_runs.png", dpi=200)
-        plt.close()
-    else:
-        if cfg.verbose:
+    """
+    Thesis-friendly ELBO plot:
+      - thin lines per run (transparent)
+      - thick mean ELBO curve
+      - shaded mean ± 1 std band
+      - wrapped title that uses a prettier experiment descriptor
+    """
+    if not ("has_elbo" in df_runs.columns and df_runs["has_elbo"].any()):
+        if getattr(cfg, "verbose", False):
             print("[INFO] No ELBO traces found in training artifacts (gtm_bayes/training/*.npz).")
+        return
 
+    # keep the CSV you already write
+    df_runs.to_csv(outdir / "bgtm_kld_run_summaries_with_elbo.csv", index=False)
+
+    # collect ELBO arrays and align by the shortest length (robust)
+    traces = [np.asarray(rec["elbo"], dtype=float) for rec in elbo_traces.values() if rec.get("elbo") is not None]
+    if len(traces) == 0:
+        if getattr(cfg, "verbose", False):
+            print("[INFO] has_elbo=True but no usable ELBO arrays in elbo_traces.")
+        return
+
+    L = min(t.size for t in traces)
+    X = np.vstack([t[:L] for t in traces])  # shape (n_runs, L)
+
+    mean = np.nanmean(X, axis=0)
+    sd   = np.nanstd(X, axis=0)
+
+    # --- plot ---
+    fig, ax = plt.subplots(figsize=(8.0, 4.8))  # nicer thesis aspect ratio
+
+    # individual runs (thin + transparent)
+    for i in range(X.shape[0]):
+        ax.plot(X[i], alpha=0.25, linewidth=1.0)
+
+    # mean + band
+    ax.fill_between(np.arange(L), mean - sd, mean + sd, alpha=0.18, linewidth=0.0)
+    ax.plot(mean, linewidth=2.2, label=f"mean (n={X.shape[0]})")
+
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("ELBO")
+    ax.grid(True, alpha=0.25)
+
+    # nice title (wrapped, with proper experiment descriptor)
+    exp_title = _pretty_experiment_title(getattr(cfg, "experiment_name", ""))
+    title = f"ELBO convergence across runs\n{exp_title}"
+    ax.set_title(textwrap.fill(title, width=70), fontsize=12)
+
+    ax.legend(frameon=True, fontsize=9, loc="best")
+
+    fig.tight_layout()
+    fig.savefig(plots_dir / "elbo_convergence_all_runs.png", dpi=300)  # 300 dpi for thesis
+    plt.close(fig)
 
 def plot_monitor_grid(
     monitor: dict[str, np.ndarray],
@@ -1302,7 +1382,67 @@ def plot_scatter_pairs_faceted_by_seed(
     fig.tight_layout()
     fig.savefig(outpath, dpi=200, bbox_inches="tight")
     plt.close(fig)
+    
+def summarize_seed_confusion(seed_cm_table: pd.DataFrame) -> dict[str, float]:
+    """
+    seed_cm_table columns (from make_confusion_tables_from_counts):
+      TP_dep, FN_dep, FP_dep, TN_indep, accuracy_decided, balanced_accuracy, frac_uncertain (optional elsewhere)
+    Returns averaged confusion metrics across seeds for one (experiment, cred_level) setting.
+    """
+    if seed_cm_table is None or seed_cm_table.empty:
+        return {
+            "avg_TP": np.nan, "avg_FN": np.nan, "avg_FP": np.nan, "avg_TN": np.nan,
+            "avg_accuracy_decided": np.nan, "avg_balanced_accuracy": np.nan,
+            "n_seeds": 0.0,
+        }
 
+    return {
+        "avg_TP": float(seed_cm_table["TP_dep"].mean()) if "TP_dep" in seed_cm_table.columns else np.nan,
+        "avg_FN": float(seed_cm_table["FN_dep"].mean()) if "FN_dep" in seed_cm_table.columns else np.nan,
+        "avg_FP": float(seed_cm_table["FP_dep"].mean()) if "FP_dep" in seed_cm_table.columns else np.nan,
+        "avg_TN": float(seed_cm_table["TN_indep"].mean()) if "TN_indep" in seed_cm_table.columns else np.nan,
+        "avg_accuracy_decided": float(seed_cm_table["accuracy_decided"].mean()) if "accuracy_decided" in seed_cm_table.columns else np.nan,
+        "avg_balanced_accuracy": float(seed_cm_table["balanced_accuracy"].mean()) if "balanced_accuracy" in seed_cm_table.columns else np.nan,
+        "n_seeds": float(seed_cm_table["seed"].nunique()) if "seed" in seed_cm_table.columns else float(len(seed_cm_table)),
+    }
+    
+def summarize_elbo_runs(df_runs: pd.DataFrame, tol: float = 0.01) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Returns:
+      - df_elbo_runs: per-run ELBO stats subset
+      - df_elbo_exp : one-row per experiment with mean/sd across runs
+    """
+    if df_runs is None or df_runs.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    d = df_runs[df_runs["has_elbo"] == True].copy()
+    if d.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    # per-run subset
+    keep = ["experiment","run_id","seed","elbo_len","elbo_first","elbo_last","elbo_gain",
+            "elbo_tail_mean","elbo_tail_std","elbo_delta_tail_mean"]
+    keep = [c for c in keep if c in d.columns]
+    df_elbo_runs = d[keep].copy()
+
+    # convergence indicator
+    if "elbo_delta_tail_mean" in d.columns:
+        d["is_converged"] = d["elbo_delta_tail_mean"].abs() < tol
+    else:
+        d["is_converged"] = np.nan
+
+    df_elbo_exp = d.groupby("experiment").agg(
+        n_runs_elbo=("run_id","count"),
+        elbo_last_mean=("elbo_last","mean"),
+        elbo_last_sd=("elbo_last","std"),
+        elbo_tail_std_mean=("elbo_tail_std","mean"),
+        elbo_tail_std_sd=("elbo_tail_std","std"),
+        elbo_delta_tail_mean_mean=("elbo_delta_tail_mean","mean"),
+        elbo_delta_tail_mean_sd=("elbo_delta_tail_mean","std"),
+        frac_converged=("is_converged","mean"),
+    ).reset_index()
+
+    return df_elbo_runs, df_elbo_exp
 
 # =============================================================================
 # CLI OVERRIDES (OPTIONAL)
@@ -1345,7 +1485,9 @@ def merge_config(cfg: Config, args: argparse.Namespace) -> Config:
 # MAIN
 # =============================================================================
 
-def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> None:
+def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> dict | None:
+    exp_summary_row = None
+
     # Resolve mlruns root
     if cfg.mlruns_path is None:
         mlruns_root = find_project_mlruns(script_dir)
@@ -1369,8 +1511,15 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
 
     outdir = ensure_dir(outdir)
     clear_dir_contents(outdir, verbose=cfg.verbose)
-
     plots_dir = ensure_dir(outdir / "plots")
+    
+    elbo_outdir = ensure_dir(Path(cfg.outdir) / str(cfg.experiment_name) / "training_diagnostics") \
+        if cfg.outdir is not None else ensure_dir((project_root / "bgtm_kld_eval") / str(cfg.experiment_name) / "training_diagnostics")
+
+    # --- MONITOR diagnostics: same root as ELBO, independent of cred_level ---
+    monitor_outdir = elbo_outdir
+    elbo_plots_dir = ensure_dir(elbo_outdir / "plots")
+    monitor_plots_dir = ensure_dir(elbo_plots_dir / "monitor" / str(cfg.experiment_name))
 
     if cfg.verbose:
         print("=" * 80)
@@ -1511,9 +1660,8 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         elbo_npz = find_elbo_npz(run_dir)
         elbo = load_elbo_from_npz(elbo_npz) if elbo_npz is not None else None
 
-        # --- MONITOR: load training trace (optional) ---
         monitor_npz = find_monitor_npz(run_dir)
-        monitor = load_monitor_from_npz(monitor_npz)  # loader handles None safely
+        monitor = load_monitor_from_npz(monitor_npz)
 
         if monitor is not None and len(monitor) > 0:
             monitor_traces[run_id] = {"seed": seed, "experiment": exp, "monitor": monitor}
@@ -1524,14 +1672,7 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
                 df_mon.insert(0, "seed", seed)
                 df_mon.insert(0, "experiment", exp)
                 monitor_summaries.append(df_mon)
-
-            run_plot_dir = ensure_dir(plots_dir / "monitor" / exp / f"seed_{seed}")
-            plot_monitor_grid(
-                monitor,
-                run_plot_dir / f"monitor_grid_{run_id}.png",
-                title=f"Monitor traces | exp={exp} | seed={seed} | run={run_id}",
-                cols=3,
-            )
+        
 
         elbo_stats = {}
         if elbo is not None:
@@ -1574,7 +1715,8 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         )
 
     # ---------- NEW: monitor overlays (moved OUT of the run loop) ----------
-    if len(monitor_traces) > 0:
+    # ---------- monitor overlays: aggregated across runs/seeds (cred-independent) ----------
+    if (len(monitor_traces) > 0) and (not getattr(cfg, "skip_monitor", False)):
         by_exp = defaultdict(list)
         for rid, rec in monitor_traces.items():
             by_exp[rec["experiment"]].append(rid)
@@ -1582,23 +1724,26 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         for exp, run_ids in by_exp.items():
             key_counts = defaultdict(int)
             for rid in run_ids:
-                for k in monitor_traces[rid]["monitor"].keys():
-                    key_counts[k] += 1
+                for kk in monitor_traces[rid]["monitor"].keys():
+                    key_counts[kk] += 1
 
-            common_keys = [k for k, c in key_counts.items() if c >= max(2, int(0.7 * len(run_ids)))]
-            exp_dir = ensure_dir(plots_dir / "monitor" / exp)
+            common_keys = [kk for kk, c in key_counts.items() if c >= max(2, int(0.7 * len(run_ids)))]
 
-            for k in sorted(common_keys)[:8]:
-                outp = exp_dir / f"overlay_{k}.png"
+            # IMPORTANT: no seeds in the output path
+            exp_dir = ensure_dir(monitor_plots_dir)  # already .../monitor/<cfg.experiment_name>/
+
+            for kk in sorted(common_keys)[:8]:
+                outp = exp_dir / f"overlay_{kk}.png"
                 plot_monitor_key_overlay(
                     {rid: monitor_traces[rid] for rid in run_ids},
                     outp,
-                    key=k,
-                    title=f"Monitor convergence | exp={exp} | key={k}",
+                    key=kk,
+                    title=f"Monitor convergence | exp={exp} | key={kk}",
                 )
     else:
         if cfg.verbose:
             print("[INFO] No monitor traces collected; skipping overlay plots.")
+
 
     # concatenate across runs -> one pooled posterior per pair
     kld_pool_cat = {lab: np.concatenate(chunks, axis=0) for lab, chunks in kld_pool.items()}
@@ -1645,6 +1790,38 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         seed_cm_table = make_confusion_tables_from_counts(cm)
         seed_cm_table.to_csv(outdir / "seed_level_confusion_table_2x2.csv", index=False)
 
+        # ---- NEW: per-experiment summary averaged across seeds ----
+        summ = summarize_seed_confusion(seed_cm_table)
+
+        # also useful to report abstentions/coverage across seeds
+        avg_frac_uncertain = float(df_seed_metrics["frac_uncertain"].mean()) if "df_seed_metrics" in locals() and not df_seed_metrics.empty else np.nan
+        avg_coverage_decided = float(df_seed_metrics["coverage_decided"].mean()) if "df_seed_metrics" in locals() and not df_seed_metrics.empty else np.nan
+        avg_acc_with_abstain_wrong = float(df_seed_metrics["accuracy_with_abstain_as_wrong"].mean()) if "df_seed_metrics" in locals() and not df_seed_metrics.empty else np.nan
+
+        exp_summary_row = {
+            "experiment": str(cfg.experiment_name),
+            "cred_level": float(cfg.cred_level),   # this is (1 - alpha)
+            "eps": float(cfg.eps),
+
+            "avg_FP": summ["avg_FP"],
+            "avg_FN": summ["avg_FN"],
+            "avg_TN": summ["avg_TN"],
+            "avg_TP": summ["avg_TP"],
+
+            "avg_accuracy_decided": summ["avg_accuracy_decided"],
+            "avg_balanced_accuracy": summ["avg_balanced_accuracy"],
+
+            "avg_coverage_decided": avg_coverage_decided,
+            "avg_frac_uncertain": avg_frac_uncertain,
+            "avg_accuracy_with_abstain_as_wrong": avg_acc_with_abstain_wrong,
+
+            "n_seeds": summ["n_seeds"],
+        }
+
+        # store inside the experiment folder as well (handy for debugging)
+        pd.DataFrame([exp_summary_row]).to_csv(outdir / "experiment_summary_avg_over_seeds.csv", index=False)
+
+        
         pred_counts = (
             df_all.groupby(["experiment","seed","pred_ci"])
             .size().reset_index(name="count")
@@ -1674,13 +1851,25 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
         )
 
     df_runs = pd.DataFrame(rows_run_summary)
+    
+    # --- ELBO summaries (training diagnostic, independent of cred_level) ---
+    df_elbo_runs, df_elbo_exp = summarize_elbo_runs(df_runs, tol=1e-3)
+
+    if not getattr(cfg, "skip_elbo", False):
+        if not df_elbo_runs.empty:
+            df_elbo_runs.to_csv(elbo_outdir / "elbo_summary_by_run.csv", index=False)
+        if not df_elbo_exp.empty:
+            df_elbo_exp.to_csv(elbo_outdir / "elbo_summary_by_experiment.csv", index=False)
+
     if len(monitor_summaries) > 0:
         df_mon_all = pd.concat(monitor_summaries, ignore_index=True)
-        df_mon_all.to_csv(outdir / "monitor_trace_stability_summary.csv", index=False)
+
+        if not getattr(cfg, "skip_monitor", False):
+            df_mon_all.to_csv(monitor_outdir / "monitor_trace_stability_summary.csv", index=False)
     else:
         if cfg.verbose:
             print("[INFO] No monitor.npz found (or monitor had no plottable 1D numeric traces).")
-
+    
     if "dependence" in df_all.columns and df_all["dependence"].notna().any():
         df_pair, cm_pair = pair_level_confusion(df_all, thr=cfg.cred_level)
         df_pair.to_csv(outdir / "pair_level_predictions.csv", index=False)
@@ -1731,7 +1920,9 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
     plot_scatter_pairs_faceted_by_seed(df_all, plots_dir / "scatter_p_kld_le_eps_faceted_by_seed.png", col="p_kld_le_eps", thr=cfg.cred_level, eps=cfg.eps)
     plot_scatter_pairs_faceted_by_seed(df_all, plots_dir / "scatter_kld_pairs_faceted_by_seed.png", col="kld_mean", thr=cfg.cred_level, eps=cfg.eps)
 
-    plot_elbo_all_runs(cfg, outdir, plots_dir, elbo_traces, df_runs)
+    # Only write ELBO once per experiment if requested
+    if not getattr(cfg, "skip_elbo", False):
+        plot_elbo_all_runs(cfg, elbo_outdir, elbo_plots_dir, elbo_traces, df_runs)
 
     print("\n[OK] Done.")
     print(f"Outputs: {outdir}")
@@ -1739,6 +1930,9 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> Non
     print(f"  - {outdir / 'bgtm_kld_run_summaries.csv'}")
     print(f"  - {outdir / 'bgtm_kld_per_pair_across_seeds.csv'}")
     print(f"  - plots in: {plots_dir}")
+    
+    return exp_summary_row
+
 
 
 # =============================================================================
@@ -1768,17 +1962,70 @@ if __name__ == "__main__":
     CRED_LEVELS = [0.90, 0.95, 0.99]
 
     args = parse_args_optional()
-
+    all_summaries = []
+    all_elbo = []
+    
     for exp_name in EXPERIMENTS:
-        for cred in CRED_LEVELS:
+        for k,cred in enumerate(CRED_LEVELS):
             cfg = Config(**BASE.__dict__)
             cfg.experiment_name = exp_name
             cfg.cred_level = cred
 
             cfg = merge_config(cfg, args)
+            
+            cfg.skip_elbo = (k > 0)
+            cfg.skip_monitor = (k > 0)
+
 
             print("\n" + "=" * 80)
             print(f"[EVAL] experiment={cfg.experiment_name} | cred_level={cfg.cred_level}")
             print("=" * 80)
 
-            main(cfg)
+            row = main(cfg)
+            if row is not None:
+                all_summaries.append(row)
+                
+    
+        elbo_exp_csv = Path(BASE.outdir) / exp_name / "training_diagnostics" / "elbo_summary_by_experiment.csv"
+        if elbo_exp_csv.exists():
+            all_elbo.append(pd.read_csv(elbo_exp_csv))
+    
+    if len(all_elbo) > 0:
+        out_root = Path(BASE.outdir).expanduser().resolve()
+        out_root.mkdir(parents=True, exist_ok=True)
+        df_elbo_all = pd.concat(all_elbo, ignore_index=True)
+        df_elbo_all.to_csv(out_root / "summary_elbo_across_experiments.csv", index=False)
+
+    # ---- NEW: write combined summary outside experiment-specific folders ----
+    # Put it directly under BASE.outdir (the "root folder" you set)
+    out_root = Path(BASE.outdir).expanduser().resolve()
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    df_sum = pd.DataFrame(all_summaries)
+
+    # nice ordering for your LaTeX table
+    col_order = [
+        "experiment", "cred_level", "eps",
+        "avg_FP", "avg_FN", "avg_TN", "avg_TP",
+        "avg_accuracy_decided", "avg_balanced_accuracy",
+        "avg_coverage_decided", "avg_frac_uncertain", "avg_accuracy_with_abstain_as_wrong",
+        "n_seeds",
+    ]
+    df_sum = df_sum[[c for c in col_order if c in df_sum.columns]]
+
+    df_sum.to_csv(out_root / "summary_confusion_across_experiments.csv", index=False)
+
+    # optional: LaTeX-friendly header names (still CSV)
+    df_latex = df_sum.rename(columns={
+        "cred_level": "1-alpha",
+        "avg_FP": "Avg. FP",
+        "avg_FN": "Avg. FN",
+        "avg_TN": "Avg. TN",
+        "avg_TP": "Avg. TP",
+    })
+    df_latex.to_csv(out_root / "summary_confusion_across_experiments_latex_headers.csv", index=False)
+
+    print("\n[OK] Wrote global summary:")
+    print(f"  - {out_root / 'summary_confusion_across_experiments.csv'}")
+    print(f"  - {out_root / 'summary_confusion_across_experiments_latex_headers.csv'}")
+
