@@ -1022,8 +1022,15 @@ def plot_elbo_all_runs(cfg, outdir, plots_dir, elbo_traces, df_runs):
         ax.plot(X[i], alpha=0.25, linewidth=1.0)
 
     # mean + band
-    ax.fill_between(np.arange(L), mean - sd, mean + sd, alpha=0.18, linewidth=0.0)
-    ax.plot(mean, linewidth=2.2, label=f"mean (n={X.shape[0]})")
+    ax.fill_between(
+    np.arange(L),
+    mean - sd,
+    mean + sd,
+    alpha=0.18,
+    linewidth=0.0,
+    label=r"$\pm$ 1 SD across runs",
+    )
+    ax.plot(mean, linewidth=2.2, label=f"Mean ELBO (n={X.shape[0]} runs)")
 
     ax.set_xlabel("Iteration")
     ax.set_ylabel("ELBO")
@@ -1160,81 +1167,213 @@ def plot_boxplot_across_seeds(df_all: pd.DataFrame, outpath: Path, col: str) -> 
 
 def plot_scatter_pairs(
     df_all: pd.DataFrame,
-    outpath: Path,
+    outpath,
     col: str,
     *,
     thr: float = 0.95,
     eps: float | None = None,
+    experiment_name: str | None = None,   # optional: to show exp in title
+    order_by: str = "auto",               # "auto" | "kld_mean" | "p_kld_le_eps" | "truth_then_score"
+    format: str= None
 ) -> None:
+    """
+    Thesis-friendly scatter:
+      - x-axis ordered by an informative score (not arbitrary)
+      - color = ground truth (independent vs dependent)
+      - marker = decision (pred independent/dep/uncertain)
+      - thresholds are visually emphasized for p_kld_le_eps
+    """
     df = df_all.copy()
     df["pair"] = df["pair"].astype(str)
 
-    order = (
-        df.groupby("pair")[col]
-        .mean()
-        .sort_values(ascending=True)
-        .index.tolist()
-    )
+    # -------------------------------------------------------------------------
+    # 1) Choose an ordering score for the x-axis (Fix Issue 1)
+    # -------------------------------------------------------------------------
+    if order_by == "auto":
+        score_col = col  # natural: order by what you're plotting
+    elif order_by in {"kld_mean", "p_kld_le_eps"}:
+        score_col = order_by
+    else:
+        score_col = col
+
+    # build pair-level score
+    pair_score = df.groupby("pair")[score_col].mean()
+
+    # optional: group by truth first, then by score (when truth exists)
+    if order_by == "truth_then_score" and "dependence" in df.columns and df["dependence"].notna().any():
+        # truth: 0 -> independent first, 1 -> dependent second
+        truth_pair = df.groupby("pair")["dependence"].mean()  # should be 0/1 per pair
+        # sort by (truth, score)
+        order = (
+            pd.DataFrame({"truth": truth_pair, "score": pair_score})
+              .sort_values(["truth", "score"], ascending=[True, True])
+              .index.tolist()
+        )
+        order_note = "Pairs grouped by ground truth (indep first), then ordered by score."
+    else:
+        order = pair_score.sort_values(ascending=True).index.tolist()
+        order_note = f"Pairs ordered by mean({score_col}) across seeds."
+
     df["x"] = df["pair"].map({p: i for i, p in enumerate(order)})
 
-    plt.figure(figsize=(12, 4))
+    # -------------------------------------------------------------------------
+    # 2) Plot setup
+    # -------------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(12, 4))
     rng = np.random.default_rng(0)
 
-    hi_thr = thr
-    lo_thr = 1.0 - thr
+    # -------------------------------------------------------------------------
+    # 3) Threshold regions/lines (Fix Issue 3)
+    # -------------------------------------------------------------------------
+    if col == "p_kld_le_eps":
+        hi_thr = thr
+        lo_thr = 1.0 - thr
 
-    plt.axhspan(hi_thr, 1.0, alpha=0.08)
-    plt.axhspan(lo_thr, hi_thr, alpha=0.06)
-    plt.axhspan(0.0, lo_thr, alpha=0.08)
+        # clearer shaded decision regions (keep subtle but visible)
+        ax.axhspan(hi_thr, 1.0, alpha=0.10)      # confident independent
+        ax.axhspan(lo_thr, hi_thr, alpha=0.06)   # uncertain
+        ax.axhspan(0.0, lo_thr, alpha=0.10)      # confident dependent
 
-    plt.axhline(hi_thr, linewidth=1.2)
-    plt.axhline(lo_thr, linewidth=1.2, linestyle="--")
-    plt.axhline(0.5, linewidth=0.8, linestyle=":", alpha=0.7)
+        # thicker lines so they are unmissable
+        ax.axhline(hi_thr, linewidth=1.8)
+        ax.axhline(lo_thr, linewidth=1.8, linestyle="--")
+        ax.axhline(0.5,  linewidth=1.2, linestyle=":", alpha=0.8)
+    else:
+        # for kld_mean: only a zero reference line is meaningful
+        ax.axhline(0.0, linestyle="--", linewidth=1.2, alpha=0.8)
 
-    if "dependence" in df.columns and "pred_ci" in df.columns:
-        pred_mark = {"independent": "o", "dependent": "x", "uncertain": "s"}
+    # -------------------------------------------------------------------------
+    # 4) Styling: color = truth, marker = prediction (Fix Issue 2)
+    # -------------------------------------------------------------------------
+    has_truth = ("dependence" in df.columns) and df["dependence"].notna().any()
+    has_pred = ("pred_ci" in df.columns)
 
-        for tval, tname in [(0, "independent"), (1, "dependent"), (-1, "unknown")]:
-            sub = df.loc[df["dependence"].fillna(-1).astype(int) == tval]
+    # truth colors (simple and stable)
+    truth_color = {
+        "independent": "C0",
+        "dependent": "C3",
+        "unknown": "0.5",
+    }
+
+    # decision markers
+    pred_marker = {
+        "independent": "o",
+        "dependent": "x",
+        "uncertain": "s",
+    }
+
+    # derive labels
+    if has_truth:
+        df["true_ci"] = np.where(df["dependence"] == 0, "independent", "dependent")
+    else:
+        df["true_ci"] = "unknown"
+
+    if not has_pred:
+        df["pred_ci"] = "uncertain"
+
+    # scatter by (truth, pred)
+    for tname in ["independent", "dependent"]:
+        sub_t = df[df["true_ci"] == tname]
+        if sub_t.empty:
+            continue
+
+        for pname in ["independent", "dependent", "uncertain"]:
+            sub = sub_t[sub_t["pred_ci"] == pname]
             if sub.empty:
                 continue
 
-            for pname, marker in pred_mark.items():
-                sub2 = sub.loc[sub["pred_ci"] == pname]
-                if sub2.empty:
-                    continue
+            xj = sub["x"].to_numpy(float) + rng.uniform(-0.08, 0.08, size=len(sub))
 
-                xj = sub2["x"].to_numpy(float) + rng.uniform(-0.08, 0.08, size=len(sub2))
-
-                plt.scatter(
-                    xj,
-                    sub2[col],
+            # uncertain: make it lighter + hollow (reduces clutter)
+            if pname == "uncertain":
+                ax.scatter(
+                    xj, sub[col],
                     s=28,
-                    alpha=0.75,
-                    marker=marker,
-                    label=f"{tname} / pred={pname}",
+                    marker=pred_marker[pname],
+                    facecolors="none",
+                    edgecolors=truth_color[tname],
+                    linewidths=1.0,
+                    alpha=0.65,
                 )
+            else:
+                ax.scatter(
+                    xj, sub[col],
+                    s=28,
+                    marker=pred_marker[pname],
+                    color=truth_color[tname],
+                    alpha=0.80,
+                )
+
+    # -------------------------------------------------------------------------
+    # 5) Legend: split into "Truth" and "Decision" (small but big clarity)
+    # -------------------------------------------------------------------------
+    legend_handles = [
+        Line2D([0], [0], marker="o", linestyle="None", markersize=7,
+               markerfacecolor=truth_color["independent"], markeredgecolor=truth_color["independent"],
+               label="Truth: independent"),
+        Line2D([0], [0], marker="o", linestyle="None", markersize=7,
+               markerfacecolor=truth_color["dependent"], markeredgecolor=truth_color["dependent"],
+               label="Truth: dependent"),
+        Line2D([0], [0], marker="o", linestyle="None", markersize=7,
+               markerfacecolor="none", markeredgecolor=truth_color["unknown"],
+               label="Truth: unknown"),
+        Line2D([0], [0], marker="o", linestyle="None", markersize=7,
+               markerfacecolor="0.2", markeredgecolor="0.2",
+               label="Decision: pred independent"),
+        Line2D([0], [0], marker="x", linestyle="None", markersize=7,
+               markerfacecolor="0.2", markeredgecolor="0.2",
+               label="Decision: pred dependent"),
+        Line2D([0], [0], marker="s", linestyle="None", markersize=7,
+               markerfacecolor="none", markeredgecolor="0.2",
+               label="Decision: uncertain"),
+    ]
+    ax.legend(handles=legend_handles, fontsize=8, ncol=2, frameon=True, loc="best")
+
+    # -------------------------------------------------------------------------
+    # 6) X ticks: appendix vs main text
+    # -------------------------------------------------------------------------
+    if format == "appendix":
+        
+        ax.set_xticks(range(len(order)))
+        ax.set_xticklabels(order, rotation=90)
     else:
-        xj = df["x"].to_numpy(float) + rng.uniform(-0.08, 0.08, size=len(df))
-        plt.scatter(xj, df[col], s=22, alpha=0.7)
+        step = max(1, len(order) // 12)
+        xt = list(range(0, len(order), step))
+        ax.set_xticks(xt)
+        ax.set_xticklabels([order[i] for i in xt], rotation=0)
 
-    handles, labels = plt.gca().get_legend_handles_labels()
-    uniq = dict(zip(labels, handles))
-    plt.legend(uniq.values(), uniq.keys(), fontsize=8, ncol=2)
+    # -------------------------------------------------------------------------
+    # 7) Labels, limits, title (include experiment name if given)
+    # -------------------------------------------------------------------------
+    ax.set_ylim(-0.05, 1.05) if col == "p_kld_le_eps" else None
 
-    plt.xticks(range(len(order)), order, rotation=90)
-    plt.ylim(-0.05, 1.05)
+    ax.set_xlabel("Variable pair (ordered)")
+    ax.set_ylabel(
+        r"$p_{\varepsilon}(\mathrm{KLD}\leq \varepsilon)$" if col == "p_kld_le_eps"
+        else "Posterior mean KLD"
+    )
+    ax.grid(True, alpha=0.25)
 
-    plt.ylabel(r"$p_{\varepsilon}(\mathrm{KLD}\leq \varepsilon)$" if col == "p_kld_le_eps" else "Posterior mean KLD")
+    base_title = (
+        "Posterior practical-independence probability per pair across seeds"
+        if col == "p_kld_le_eps"
+        else "Posterior mean KLD per pair across seeds"
+    )
 
-    title = ("Posterior practical-independence probability per pair across seeds" if col == "p_kld_le_eps" else "Posterior mean KLD per pair across seeds")
-    if eps is not None:
-        title += f" (ε={eps:g}, γ={thr:.2f})"
-    plt.title(title)
+    subtitle_parts = []
+    if experiment_name:
+        subtitle_parts.append(str(experiment_name))
+    if (col == "p_kld_le_eps") and (eps is not None):
+        subtitle_parts.append(f"ε={eps:g}, γ={thr:.2f}")
+    subtitle_parts.append(order_note)
 
-    plt.tight_layout()
-    plt.savefig(outpath, dpi=200)
-    plt.close()
+    title = base_title + "\n" + " • ".join(subtitle_parts)
+    ax.set_title(textwrap.fill(title, width=95))
+
+    fig.tight_layout()
+    fig.savefig(outpath, dpi=300)
+    plt.close(fig)
+
 
 
 def plot_scatter_pairs_faceted_by_seed(
@@ -1915,8 +2054,15 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> dic
         )
 
     plot_boxplot_across_seeds(df_all, plots_dir / "boxplot_kld_per_pair_across_seeds.png", col="kld_mean")
-    plot_scatter_pairs(df_all, plots_dir / "scatter_kld_pairs_across_seeds.png", col="kld_mean")
-    plot_scatter_pairs(df_all, plots_dir / "scatter_p_kld_le_eps_pairs_across_seeds.png", col="p_kld_le_eps", thr=cfg.cred_level, eps=cfg.eps)
+    plot_scatter_pairs(df_all, plots_dir / "scatter_kld_pairs_across_seeds.pdf",
+                   col="kld_mean", experiment_name=_pretty_experiment_title(cfg.experiment_name),
+                   order_by="kld_mean")
+
+    plot_scatter_pairs(df_all, plots_dir / "scatter_p_kld_le_eps_pairs_across_seeds.pdf",
+                   col="p_kld_le_eps", thr=cfg.cred_level, eps=cfg.eps,
+                   experiment_name=_pretty_experiment_title(cfg.experiment_name),
+                   order_by="p_kld_le_eps")
+    
     plot_scatter_pairs_faceted_by_seed(df_all, plots_dir / "scatter_p_kld_le_eps_faceted_by_seed.png", col="p_kld_le_eps", thr=cfg.cred_level, eps=cfg.eps)
     plot_scatter_pairs_faceted_by_seed(df_all, plots_dir / "scatter_kld_pairs_faceted_by_seed.png", col="kld_mean", thr=cfg.cred_level, eps=cfg.eps)
 
