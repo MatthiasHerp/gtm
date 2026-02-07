@@ -1,0 +1,6 @@
+experiment,true_ci,pred_ci,count
+R-Vine_7D_ind_tree2_1000obs_bgtm,dependent,dependent,107
+R-Vine_7D_ind_tree2_1000obs_bgtm,dependent,uncertain,3
+R-Vine_7D_ind_tree2_1000obs_bgtm,independent,dependent,1
+R-Vine_7D_ind_tree2_1000obs_bgtm,independent,independent,24
+R-Vine_7D_ind_tree2_1000obs_bgtm,independent,uncertain,75

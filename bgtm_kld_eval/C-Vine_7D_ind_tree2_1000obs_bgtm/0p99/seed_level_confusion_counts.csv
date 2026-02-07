@@ -1,0 +1,12 @@
+experiment,seed,true_ci,pred_ci,count
+C-Vine_7D_ind_tree2_1000obs_bgtm,0,dependent,dependent,11
+C-Vine_7D_ind_tree2_1000obs_bgtm,1,dependent,dependent,11
+C-Vine_7D_ind_tree2_1000obs_bgtm,2,dependent,dependent,11
+C-Vine_7D_ind_tree2_1000obs_bgtm,3,dependent,dependent,8
+C-Vine_7D_ind_tree2_1000obs_bgtm,4,dependent,dependent,11
+C-Vine_7D_ind_tree2_1000obs_bgtm,5,dependent,dependent,8
+C-Vine_7D_ind_tree2_1000obs_bgtm,6,dependent,dependent,11
+C-Vine_7D_ind_tree2_1000obs_bgtm,7,dependent,dependent,11
+C-Vine_7D_ind_tree2_1000obs_bgtm,8,dependent,dependent,9
+C-Vine_7D_ind_tree2_1000obs_bgtm,9,dependent,dependent,11
+C-Vine_7D_ind_tree2_1000obs_bgtm,9,independent,independent,1

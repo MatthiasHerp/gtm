@@ -1,0 +1,5 @@
+experiment,true3,pred3,count
+D-Vine_10D_ind_tree3_1000obs_bgtm,dep,dep,132
+D-Vine_10D_ind_tree3_1000obs_bgtm,dep,uncertain,38
+D-Vine_10D_ind_tree3_1000obs_bgtm,indep,dep,53
+D-Vine_10D_ind_tree3_1000obs_bgtm,indep,uncertain,227

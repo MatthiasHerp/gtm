@@ -1,0 +1,6 @@
+experiment,true_ci,pred_ci,count
+C-Vine_10D_ind_tree3_1000obs_bgtm,dependent,dependent,131
+C-Vine_10D_ind_tree3_1000obs_bgtm,dependent,uncertain,39
+C-Vine_10D_ind_tree3_1000obs_bgtm,independent,dependent,57
+C-Vine_10D_ind_tree3_1000obs_bgtm,independent,independent,1
+C-Vine_10D_ind_tree3_1000obs_bgtm,independent,uncertain,222

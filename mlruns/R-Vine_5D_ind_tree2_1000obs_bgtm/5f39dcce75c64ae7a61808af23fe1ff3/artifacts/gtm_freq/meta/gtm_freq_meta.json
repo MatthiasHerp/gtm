@@ -1,0 +1,7 @@
+{
+  "inference": "frequentist",
+  "penalty_decorrelation_ridge_param_chosen": 0,
+  "penalty_decorrelation_ridge_first_difference_chosen": 0.893262629103349,
+  "penalty_decorrelation_ridge_second_difference_chosen": 9.303952247005011,
+  "penalty_transformation_ridge_second_difference_chosen": 0
+}

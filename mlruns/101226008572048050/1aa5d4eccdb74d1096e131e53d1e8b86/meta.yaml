@@ -1,0 +1,14 @@
+artifact_uri: file:///mnt/mlruns/R-Vine_5D_ind_tree2_1000obs_bgtm/1aa5d4eccdb74d1096e131e53d1e8b86/artifacts
+end_time: 1769779858013
+entry_point_name: ''
+experiment_id: '101226008572048050'
+lifecycle_stage: active
+run_id: 1aa5d4eccdb74d1096e131e53d1e8b86
+run_name: R-Vine_5D_ind_tree2_1000obs_bgtm_seed_5
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1769778701151
+status: 3
+tags: []
+user_id: root

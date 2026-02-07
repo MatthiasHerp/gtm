@@ -1,0 +1,2 @@
+experiment,cred_level,eps,avg_FP,avg_FN,avg_TN,avg_TP,avg_precision,avg_recall,avg_f1,avg_fpr,avg_fnr,avg_specificity,avg_accuracy_decided,avg_balanced_accuracy,avg_coverage_decided,avg_frac_uncertain,avg_accuracy_with_abstain_as_wrong,n_seeds
+C-Vine_10D_ind_tree3_1000obs_bgtm,0.9,0.001,7.0,0.0,1.7,15.4,0.6867833047958906,1.0,0.8133692851881047,0.820916305916306,0.0,0.17908369408369407,0.7097705627705626,0.5895418470418471,0.5355555555555556,0.4644444444444444,0.38,10.0

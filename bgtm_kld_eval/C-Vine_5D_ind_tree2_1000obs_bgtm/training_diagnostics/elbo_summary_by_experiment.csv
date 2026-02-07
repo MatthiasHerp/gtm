@@ -1,0 +1,2 @@
+experiment,n_runs_elbo,elbo_last_mean,elbo_last_sd,elbo_tail_std_mean,elbo_tail_std_sd,elbo_delta_tail_mean_mean,elbo_delta_tail_mean_sd,frac_converged
+C-Vine_5D_ind_tree2_1000obs_bgtm,10,7.444237030029297,0.19492314671332003,3.451308802081278,0.02456659974939163,,,0.0

@@ -1,0 +1,11 @@
+experiment,seed,TP_dep,FN_dep,FP_dep,TN_indep,n_decided,accuracy_decided,recall_dependent,recall_independent,balanced_accuracy,precision,recall,f1,fpr,fnr,specificity
+D-Vine_7D_ind_tree2_1000obs_bgtm,0,10,0,0,0,10,1.0,1.0,,,1.0,1.0,1.0,,0.0,
+D-Vine_7D_ind_tree2_1000obs_bgtm,1,11,0,0,0,11,1.0,1.0,,,1.0,1.0,1.0,,0.0,
+D-Vine_7D_ind_tree2_1000obs_bgtm,2,11,0,0,0,11,1.0,1.0,,,1.0,1.0,1.0,,0.0,
+D-Vine_7D_ind_tree2_1000obs_bgtm,3,10,0,0,0,10,1.0,1.0,,,1.0,1.0,1.0,,0.0,
+D-Vine_7D_ind_tree2_1000obs_bgtm,4,11,0,0,0,11,1.0,1.0,,,1.0,1.0,1.0,,0.0,
+D-Vine_7D_ind_tree2_1000obs_bgtm,5,10,0,0,0,10,1.0,1.0,,,1.0,1.0,1.0,,0.0,
+D-Vine_7D_ind_tree2_1000obs_bgtm,6,10,0,0,0,10,1.0,1.0,,,1.0,1.0,1.0,,0.0,
+D-Vine_7D_ind_tree2_1000obs_bgtm,7,9,0,0,0,9,1.0,1.0,,,1.0,1.0,1.0,,0.0,
+D-Vine_7D_ind_tree2_1000obs_bgtm,8,10,0,0,0,10,1.0,1.0,,,1.0,1.0,1.0,,0.0,
+D-Vine_7D_ind_tree2_1000obs_bgtm,9,11,0,0,1,12,1.0,1.0,1.0,1.0,1.0,1.0,1.0,0.0,0.0,1.0

@@ -1,0 +1,11 @@
+experiment,seed,n_pairs,coverage_decided,accuracy_on_decided,accuracy_with_abstain_as_wrong,indep_recall_decided,dep_recall_decided,frac_uncertain
+R-Vine_5D_ind_tree2_1000obs_bgtm,0,10.0,0.8,0.875,0.7,0.0,1.0,0.2
+R-Vine_5D_ind_tree2_1000obs_bgtm,1,10.0,0.7,1.0,0.7,,1.0,0.3
+R-Vine_5D_ind_tree2_1000obs_bgtm,2,10.0,0.8,1.0,0.8,1.0,1.0,0.2
+R-Vine_5D_ind_tree2_1000obs_bgtm,3,10.0,0.7,1.0,0.7,,1.0,0.3
+R-Vine_5D_ind_tree2_1000obs_bgtm,4,10.0,0.8,1.0,0.8,1.0,1.0,0.2
+R-Vine_5D_ind_tree2_1000obs_bgtm,5,10.0,0.7,1.0,0.7,,1.0,0.3
+R-Vine_5D_ind_tree2_1000obs_bgtm,6,10.0,0.7,1.0,0.7,,1.0,0.3
+R-Vine_5D_ind_tree2_1000obs_bgtm,7,10.0,0.7,1.0,0.7,1.0,1.0,0.3
+R-Vine_5D_ind_tree2_1000obs_bgtm,8,10.0,0.7,1.0,0.7,,1.0,0.3
+R-Vine_5D_ind_tree2_1000obs_bgtm,9,10.0,0.7,1.0,0.7,,1.0,0.3

@@ -1,0 +1,2 @@
+experiment,TN,FP,FN,TP,n_decided,accuracy,balanced_accuracy
+R-Vine_5D_ind_tree2_1000obs_bgtm,10,2,0,69,81,0.9753086419753086,0.9166666666666667

@@ -1,0 +1,2 @@
+experiment,n_runs_elbo,elbo_last_mean,elbo_last_sd,elbo_tail_std_mean,elbo_tail_std_sd,elbo_delta_tail_mean_mean,elbo_delta_tail_mean_sd,frac_converged
+R-Vine_10D_ind_tree3_1000obs_bgtm,10,90.12299311523438,0.5793707731292637,10.348073696831632,0.2183743534587326,,,0.0

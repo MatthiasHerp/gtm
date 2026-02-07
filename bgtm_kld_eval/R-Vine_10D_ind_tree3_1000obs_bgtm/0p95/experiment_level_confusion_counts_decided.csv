@@ -1,0 +1,4 @@
+experiment,true_ci,pred_ci,count
+R-Vine_10D_ind_tree3_1000obs_bgtm,dependent,dependent,145
+R-Vine_10D_ind_tree3_1000obs_bgtm,independent,dependent,62
+R-Vine_10D_ind_tree3_1000obs_bgtm,independent,independent,3
