@@ -1044,7 +1044,7 @@ def plot_elbo_all_runs(cfg, outdir, plots_dir, elbo_traces, df_runs):
     ax.legend(frameon=True, fontsize=9, loc="best")
 
     fig.tight_layout()
-    fig.savefig(plots_dir / "elbo_convergence_all_runs.png", dpi=300)  # 300 dpi for thesis
+    fig.savefig(plots_dir / "elbo_convergence_all_runs.pdf", dpi=300)  # 300 dpi for thesis
     plt.close(fig)
 
 def plot_monitor_grid(
@@ -1524,14 +1524,18 @@ def plot_scatter_pairs_faceted_by_seed(
     
 def summarize_seed_confusion(seed_cm_table: pd.DataFrame) -> dict[str, float]:
     """
-    seed_cm_table columns (from make_confusion_tables_from_counts):
-      TP_dep, FN_dep, FP_dep, TN_indep, accuracy_decided, balanced_accuracy, frac_uncertain (optional elsewhere)
-    Returns averaged confusion metrics across seeds for one (experiment, cred_level) setting.
+    seed_cm_table columns:
+      TP_dep, FN_dep, FP_dep, TN_indep,
+      accuracy_decided, balanced_accuracy,
+      + (new) precision, recall, f1, fpr, fnr, specificity
+    Returns averaged metrics across seeds for one (experiment, cred_level) setting.
     """
     if seed_cm_table is None or seed_cm_table.empty:
         return {
             "avg_TP": np.nan, "avg_FN": np.nan, "avg_FP": np.nan, "avg_TN": np.nan,
             "avg_accuracy_decided": np.nan, "avg_balanced_accuracy": np.nan,
+            "avg_precision": np.nan, "avg_recall": np.nan, "avg_f1": np.nan,
+            "avg_fpr": np.nan, "avg_fnr": np.nan, "avg_specificity": np.nan,
             "n_seeds": 0.0,
         }
 
@@ -1540,11 +1544,21 @@ def summarize_seed_confusion(seed_cm_table: pd.DataFrame) -> dict[str, float]:
         "avg_FN": float(seed_cm_table["FN_dep"].mean()) if "FN_dep" in seed_cm_table.columns else np.nan,
         "avg_FP": float(seed_cm_table["FP_dep"].mean()) if "FP_dep" in seed_cm_table.columns else np.nan,
         "avg_TN": float(seed_cm_table["TN_indep"].mean()) if "TN_indep" in seed_cm_table.columns else np.nan,
+
         "avg_accuracy_decided": float(seed_cm_table["accuracy_decided"].mean()) if "accuracy_decided" in seed_cm_table.columns else np.nan,
         "avg_balanced_accuracy": float(seed_cm_table["balanced_accuracy"].mean()) if "balanced_accuracy" in seed_cm_table.columns else np.nan,
+
+        # ---- NEW: averaged rates/scores across seeds ----
+        "avg_precision": float(seed_cm_table["precision"].mean()) if "precision" in seed_cm_table.columns else np.nan,
+        "avg_recall": float(seed_cm_table["recall"].mean()) if "recall" in seed_cm_table.columns else np.nan,
+        "avg_f1": float(seed_cm_table["f1"].mean()) if "f1" in seed_cm_table.columns else np.nan,
+        "avg_fpr": float(seed_cm_table["fpr"].mean()) if "fpr" in seed_cm_table.columns else np.nan,
+        "avg_fnr": float(seed_cm_table["fnr"].mean()) if "fnr" in seed_cm_table.columns else np.nan,
+        "avg_specificity": float(seed_cm_table["specificity"].mean()) if "specificity" in seed_cm_table.columns else np.nan,
+
         "n_seeds": float(seed_cm_table["seed"].nunique()) if "seed" in seed_cm_table.columns else float(len(seed_cm_table)),
     }
-    
+
 def summarize_elbo_runs(df_runs: pd.DataFrame, tol: float = 0.01) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Returns:
@@ -1927,6 +1941,28 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> dic
         cm.to_csv(outdir / "seed_level_confusion_counts.csv", index=False)
 
         seed_cm_table = make_confusion_tables_from_counts(cm)
+        
+        
+        # ---- NEW: per-seed derived metrics (positive class = dependent) ----
+        TP = seed_cm_table["TP_dep"].to_numpy(float)
+        FP = seed_cm_table["FP_dep"].to_numpy(float)
+        FN = seed_cm_table["FN_dep"].to_numpy(float)
+        TN = seed_cm_table["TN_indep"].to_numpy(float)
+
+        def _safe_div(num, den):
+            return np.where(den > 0, num / den, np.nan)
+
+        seed_cm_table["precision"] = _safe_div(TP, TP + FP)
+        seed_cm_table["recall"]    = _safe_div(TP, TP + FN)   # = TPR
+        seed_cm_table["f1"]        = _safe_div(2 * seed_cm_table["precision"] * seed_cm_table["recall"],
+                                            seed_cm_table["precision"] + seed_cm_table["recall"])
+
+        seed_cm_table["fpr"]       = _safe_div(FP, FP + TN)   # false positive rate
+        seed_cm_table["fnr"]       = _safe_div(FN, FN + TP)   # false negative rate
+
+        # (optional, often nice to report)
+        seed_cm_table["specificity"] = _safe_div(TN, TN + FP) # = 1 - FPR
+
         seed_cm_table.to_csv(outdir / "seed_level_confusion_table_2x2.csv", index=False)
 
         # ---- NEW: per-experiment summary averaged across seeds ----
@@ -1946,6 +1982,13 @@ def main(cfg: Config, script_dir: Path = Path(__file__).resolve().parent) -> dic
             "avg_FN": summ["avg_FN"],
             "avg_TN": summ["avg_TN"],
             "avg_TP": summ["avg_TP"],
+            "avg_precision": summ["avg_precision"],
+            "avg_recall": summ["avg_recall"],
+            "avg_f1": summ["avg_f1"],
+            "avg_fpr": summ["avg_fpr"],
+            "avg_fnr": summ["avg_fnr"],
+            
+            "avg_specificity": summ["avg_specificity"],
 
             "avg_accuracy_decided": summ["avg_accuracy_decided"],
             "avg_balanced_accuracy": summ["avg_balanced_accuracy"],
@@ -2151,12 +2194,14 @@ if __name__ == "__main__":
 
     # nice ordering for your LaTeX table
     col_order = [
-        "experiment", "cred_level", "eps",
-        "avg_FP", "avg_FN", "avg_TN", "avg_TP",
-        "avg_accuracy_decided", "avg_balanced_accuracy",
-        "avg_coverage_decided", "avg_frac_uncertain", "avg_accuracy_with_abstain_as_wrong",
-        "n_seeds",
-    ]
+            "experiment", "cred_level", "eps",
+            "avg_FP", "avg_FN", "avg_TN", "avg_TP",
+            "avg_precision", "avg_recall", "avg_f1",
+            "avg_fpr", "avg_fnr",
+            "avg_accuracy_decided", "avg_balanced_accuracy",
+            "avg_coverage_decided", "avg_frac_uncertain", "avg_accuracy_with_abstain_as_wrong",
+            "n_seeds",
+        ]
     df_sum = df_sum[[c for c in col_order if c in df_sum.columns]]
 
     df_sum.to_csv(out_root / "summary_confusion_across_experiments.csv", index=False)
