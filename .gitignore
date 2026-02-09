@@ -17,3 +17,4 @@ model_state_dict.pth
 demo.py
 mlruns/
 gtm_check_hydra.py
+.DS_Store
