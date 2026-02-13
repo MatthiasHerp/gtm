@@ -1,13 +1,11 @@
 # GTM Package including GTM and the plot functions
 import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import torch
 
 from gtm import *
 
 if __name__ == "__main__":
-
     # Get Simulated Data
     from gmm_simulated_data import create_simulated_data_gmm
 
@@ -38,7 +36,7 @@ if __name__ == "__main__":
     )
 
     hyperparametertune = False
-    if hyperparametertune == True:
+    if hyperparametertune:
         study = model.hyperparameter_tune_penalties(
             train_dataloader=dataloader_train,
             validate_dataloader=dataloader_validate,
@@ -80,7 +78,6 @@ if __name__ == "__main__":
         adaptive_lasso_weights_matrix = False
         lambda_penalty_params = False
     else:
-
         penalty_params = torch.tensor([0.0000, 0.0000, 0.0000, 0.0000])
         adaptive_lasso_weights_matrix = False
         lambda_penalty_params = False

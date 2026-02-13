@@ -1,9 +1,10 @@
-import numpy as np
 import torch
 
 from gtm.gtm_splines.bernstein_basis import kron
-from gtm.gtm_splines.splines_utils import (ReLULeR, adjust_ploynomial_range,
-                                           custom_sigmoid)
+from gtm.gtm_splines.splines_utils import (
+    ReLULeR,
+    custom_sigmoid,
+)
 
 ##################################################################################################################################################################################################################
 ########################## Naive ##########################
@@ -71,7 +72,6 @@ def B_derivativ_fixed_degree(x, p, i, t, derivativ):
 
 
 def Naive_fixed_degree(x, t, c, p, d):
-
     n = c.size(0)
 
     pred = torch.stack(
@@ -96,7 +96,6 @@ def B_varying_degree(x, k, i, t):
     :param t: Knot vector of shape [batch_size, num_knots]
     :return: Basis function values of shape [batch_size, num_x]
     """
-    device = x.device
 
     # Base case: k == 0 -> Indicator function for the knot interval
     if k == 0:
@@ -175,7 +174,7 @@ def Naive_Basis(x, spline_range, degree, span_factor, knots, derivativ=0, order=
     elif order == 3:
         n = degree + 2
 
-    distance_between_knots = (
+    (
         (spline_range[1] - spline_range[0]) * (1 + span_factor) / (n - 1)
     )
 
@@ -286,7 +285,6 @@ def deboor_algorithm_varying_degrees(x, k, t, c, p):
     # Recursive De Boor iterations
     for r in range(1, p + 1):
         for j in range(p, r - 1, -1):
-
             alpha = (x - torch.gather(t, 1, j + k - p)) / (
                 torch.gather(t, 1, j + 1 + k - r) - torch.gather(t, 1, j + k - p) + 1e-9
             )  # Avoid div by zero
@@ -402,7 +400,6 @@ def compute_k_fixed_degrees(x, t):  # , n
 
 
 def compute_update_alpha(x, t, k, r, d, j, p=3):
-
     alpha = (x - t[j + k - p]) / (
         t[j + 1 + k - r] - t[j + k - p] + 1e-9
     )  # Avoid div by zero
@@ -412,7 +409,6 @@ def compute_update_alpha(x, t, k, r, d, j, p=3):
 
 
 def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
-
     # batch_size, num_x = x.shape
 
     offsets = torch.arange(0, p + 1, device=k.device).view(
@@ -473,7 +469,6 @@ def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
 
 
 def compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3):
-
     right = j + 1 + k - r
     left = j + k - (p - 1)
     alpha = (x - t[left]) / (t[right] - t[left])
@@ -482,7 +477,6 @@ def compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3):
 
 
 def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p=3):
-
     # Constants
     B, N = k.shape
 
@@ -572,7 +566,6 @@ def bspline_prediction_vectorized(
     varying_degrees=True,
     params_a_mask=None,
 ):  # device=None
-
     input_a_clone = input_a
 
     if span_restriction == "sigmoid":
@@ -584,8 +577,7 @@ def bspline_prediction_vectorized(
         pass
 
     if calc_method == "deBoor":
-
-        if varying_degrees == True:
+        if varying_degrees:
             prediction = run_deBoor_varying_degrees(
                 x=input_a_clone.T, t=knots.T, c=params_a.T, p=order, d=derivativ
             )
@@ -594,7 +586,7 @@ def bspline_prediction_vectorized(
                 x=input_a_clone.T, t=knots.T, c=params_a.T, p=order, d=derivativ
             )
     elif calc_method == "Naive":
-        if varying_degrees == True:
+        if varying_degrees:
             prediction = Naive_varying_degree(
                 x=input_a_clone.T, t=knots.T, c=params_a, p=order, d=derivativ
             )
@@ -627,7 +619,7 @@ def bspline_prediction_vectorized(
         prediction = prediction * prediction_covariate
 
     if return_penalties:
-        if varying_degrees == False:
+        if not varying_degrees:
             second_order_ridge_pen = torch.sum(torch.diff(params_a, n=2, dim=0) ** 2)
             first_order_ridge_pen = torch.sum(torch.diff(params_a, n=1, dim=0) ** 2)
             param_ridge_pen = torch.sum(

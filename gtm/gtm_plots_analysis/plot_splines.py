@@ -1,5 +1,3 @@
-import warnings
-from itertools import combinations
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,17 +5,17 @@ import pandas as pd
 import seaborn as sns
 import torch
 
-from gtm.gtm_splines.bernstein_prediction_vectorized import \
-    bernstein_prediction_vectorized
+from gtm.gtm_splines.bernstein_prediction_vectorized import (
+    bernstein_prediction_vectorized,
+)
+
 # from gtm.gtm_splines.bspline_prediction_old import bspline_prediction
-from gtm.gtm_splines.bspline_prediction_vectorized import \
-    bspline_prediction_vectorized
+from gtm.gtm_splines.bspline_prediction_vectorized import bspline_prediction_vectorized
 
 
 def plot_splines(
     layer, covariate_exists=False, affine=False, storage=None, show_plot=True
 ):
-
     # num_variables = layer.number_variables
     # num_splines = int(num_variables * (num_variables-1) / 2)
     # num_splines = layer.params.size()[1]
@@ -210,12 +208,10 @@ def plot_splines(
                 else:
                     col_indices = lower_tri_indices[1][spline_num]
 
-                if affine == True:
-                    params = layer.params_multiplier[:, spline_num]
-                    degree = layer.degree_multi
+                if affine:
+                    layer.params_multiplier[:, spline_num]
                 else:
-                    params = layer.params[:, spline_num]
-                    degree = layer.degree
+                    layer.params[:, spline_num]
                 # output_splines[:, spline_num] = bspline_prediction(params,#layer.params[:, spline_num],
                 #                                            data_span_vec[:, col_indices],
                 #                                            degree=degree,#layer.degree,
@@ -396,5 +392,5 @@ def plot_splines(
 
     if storage:
         plt.savefig(storage, bbox_inches="tight")
-    if show_plot == True:
+    if show_plot:
         plt.show()

@@ -59,7 +59,7 @@ def plot_graph_conditional_independencies(
     plt.box(False)
     if storage is not None:
         plt.savefig(storage)
-    if show_plot == True:
+    if show_plot:
         plt.show()
     else:
         plt.close(fig)

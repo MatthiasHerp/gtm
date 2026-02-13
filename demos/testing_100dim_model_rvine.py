@@ -1,18 +1,17 @@
 # Other Stuff
-import numpy as np
+
 # Sample Copulas Package
 import pyvinecopulib as pv
 import torch
-from sklearn.metrics import roc_auc_score, roc_curve
 from torch.utils.data import DataLoader
 
 from demos.dataset_helpers import Generic_Dataset
+
 # Helpers to generate specfific vines and analyze there conditional independencies
 from demos.pyvinecopulib_simulation_helpers import *
 from gtm import *
 
 if __name__ == "__main__":
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     D = 100  # dimension

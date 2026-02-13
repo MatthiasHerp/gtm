@@ -38,7 +38,6 @@ def training_objective(
     lambda_penalty_mode="square",
     objective_type="negloglik",
 ):
-
     if objective_type == "negloglik":
         return_dict_model_loss = model.__log_likelihood_loss__(
             samples, mean_loss=True
@@ -70,9 +69,8 @@ def training_objective(
         # lambda_penalty_params is not False for the pretrain to work
     if (
         lambda_penalty_params is not False
-        and torch.all(lambda_penalty_params == 0) == False
+        and not torch.all(lambda_penalty_params == 0)
     ):
-
         precision_matrix = torch.matmul(
             torch.transpose(return_dict_model_loss["lambda_matrix_global"], 1, 2),
             return_dict_model_loss["lambda_matrix_global"],

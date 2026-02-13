@@ -20,7 +20,6 @@ def load_data_magic():
 
 
 def load_train_test_data_magic(train_portion=2 / 3, group="h"):
-
     data_g, data_h = load_data_magic()
 
     indices_g = int(np.ceil(data_g.shape[0] * train_portion))
@@ -101,7 +100,6 @@ def load_magic_data(
     validation_fold_index=4,
     split_random_state=25,
 ):
-
     (
         y_train_normed,
         y_test_normed,
@@ -137,7 +135,6 @@ def magic_classification_report(
     phi_h=False,
     return_auc=False,
 ):
-
     # data_g_test_normed = torch.tensor(data_g_test_normed)
     # data_h_test_normed = torch.tensor(data_h_test_normed)
 
@@ -153,16 +150,16 @@ def magic_classification_report(
         likelihood = likelihood_predictions[i]
         name = names[i]
         if likelihood.isnan().any():
-            nan_index = (likelihood.isnan() == True).nonzero(as_tuple=True)
+            nan_index = (likelihood.isnan()).nonzero(as_tuple=True)
             print(name, "is NAN at:", nan_index)
             print("the observation is:", data_g_test_normed[nan_index])
 
         if likelihood.isinf().any():
-            nan_index = (likelihood.isnan() == True).nonzero(as_tuple=True)
+            nan_index = (likelihood.isnan()).nonzero(as_tuple=True)
             print(name, "is INF at:", nan_index)
             print("the observation is:", data_g_test_normed[nan_index])
 
-    if phi_g == False:
+    if not phi_g:
         phi_g = data_g.shape[0] / (data_h.shape[0] + data_g.shape[0])
         phi_h = 1 - phi_g
 
@@ -170,15 +167,15 @@ def magic_classification_report(
     bayes_prediction_h_h = phi_h * fh_h / (phi_g * fg_h + phi_h * fh_h)
 
     if bayes_prediction_g_g.isnan().any():
-        nan_index = (bayes_prediction_g_g.isnan() == True).nonzero(as_tuple=True)
+        nan_index = (bayes_prediction_g_g.isnan()).nonzero(as_tuple=True)
         print("bayes_prediction_g_g is NAN at:", nan_index)
-        bayes_prediction_g_g[bayes_prediction_g_g.isnan() == True] = phi_g
+        bayes_prediction_g_g[bayes_prediction_g_g.isnan()] = phi_g
         print("Nan are replaced with prior probability phi_g", phi_g)
 
     if bayes_prediction_h_h.isnan().any():
-        nan_index = (bayes_prediction_h_h.isnan() == True).nonzero(as_tuple=True)
+        nan_index = (bayes_prediction_h_h.isnan()).nonzero(as_tuple=True)
         print("bayes_prediction_h_h is NAN at:", nan_index)
-        bayes_prediction_h_h[bayes_prediction_h_h.isnan() == True] = phi_h
+        bayes_prediction_h_h[bayes_prediction_h_h.isnan()] = phi_h
         print("Nan are replaced with prior probability phi_h", phi_h)
 
     # G=1, H=0
@@ -197,7 +194,7 @@ def magic_classification_report(
 
     table_roc_curve = pd.DataFrame({"fpr": fpr, "tpr": tpr})
 
-    if return_auc == True:
+    if return_auc:
         # Compute AUC-ROC
         auc_roc = roc_auc_score(y, y_pred_proba)
         return auc_roc
