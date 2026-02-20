@@ -6,7 +6,7 @@ def log_likelihood(model, samples, mean_loss=False):
     # train_covariates=False, train=True, evaluate=True,
 
     return_dict_nf_mctm = model.forward(
-        samples
+        samples, linear_extrapolation_transformation_layer=True
     )  # , covariate=train_covariates, train=train, evaluate=evaluate)
 
     log_likelihood_latent = Normal(0, 1).log_prob(return_dict_nf_mctm["output"])
