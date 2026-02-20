@@ -202,34 +202,34 @@ class Transformation(nn.Module):
 
         self.params_inverse = None
 
-    def compute_starting_values(self):
+    def compute_starting_values(self, categories=1):
         """
         Computes Starting Values for the Transformation layer with variable knots for different data dimensions.
 
         :return: starting values tensor
         """
         par_restricted_opts = []
+        for _ in range(categories):
+            for var_num in range(self.number_variables):
+                min_val = self.spline_range[0][var_num]
+                max_val = self.spline_range[1][var_num]
 
-        for var_num in range(self.number_variables):
-            min_val = self.spline_range[0][var_num]
-            max_val = self.spline_range[1][var_num]
+                par_unristricted = torch.linspace(
+                    min_val, max_val, self.degree[var_num] + self.spline_order - 1
+                )
+                par_restricted_opt = par_unristricted
+                par_unristricted[1:] = torch.log(
+                    torch.exp(par_restricted_opt[1:] - par_restricted_opt[:-1]) - 1
+                )
 
-            par_unristricted = torch.linspace(
-                min_val, max_val, self.degree[var_num] + self.spline_order - 1
-            )
-            par_restricted_opt = par_unristricted
-            par_unristricted[1:] = torch.log(
-                torch.exp(par_restricted_opt[1:] - par_restricted_opt[:-1]) - 1
-            )
+                if self.number_covariates == 1:
+                    par_unristricted = par_unristricted.repeat(
+                        self.degree[var_num] + self.spline_order - 1, 1
+                    ).T.flatten()
+                elif self.number_covariates > 1:
+                    raise NotImplementedError("Only implemented for 1 or No covariates!")
 
-            if self.number_covariates == 1:
-                par_unristricted = par_unristricted.repeat(
-                    self.degree[var_num] + self.spline_order - 1, 1
-                ).T.flatten()
-            elif self.number_covariates > 1:
-                raise NotImplementedError("Only implemented for 1 or No covariates!")
-
-            par_restricted_opts.append(nn.Parameter(par_unristricted))
+                par_restricted_opts.append(nn.Parameter(par_unristricted))
         return par_restricted_opts
 
     def create_return_dict_transformation(self, input):
