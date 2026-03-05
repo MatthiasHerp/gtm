@@ -30,6 +30,7 @@ class Transformation(nn.Module):
         span_restriction="reluler",
         spline_order=3,
         device="cpu",
+        number_of_categories=1,
     ):  # device=None
         super().__init__()
 
@@ -67,8 +68,11 @@ class Transformation(nn.Module):
         self.span_restriction = span_restriction
 
         self.spline = spline
+        
+        self.number_of_categories = number_of_categories
+        
         # param dims: 0: basis, 1: variable
-        self.params = nn.ParameterList(self.compute_starting_values())
+        self.params = nn.ParameterList(self.compute_starting_values(categories=self.number_of_categories))
 
         if spline == "bspline":
             self.spline_prediction = self.bspline_prediction_method
@@ -780,6 +784,74 @@ class Transformation(nn.Module):
         return_dict["log_d"] = torch.log(return_dict["log_d"])
 
         return return_dict
+    
+    def categorical_bernstein_forward(self, input, covariate, log_d=0, inverse=False):
+
+        if self.number_covariates > 1:
+            warnings.warn(
+                "Warning: With for-loop computation only implemented with one or no covariate."
+            )
+
+        return_dict = self.create_return_dict_transformation(input)
+
+        padded_params = torch.vstack(
+            [
+                torch.nn.functional.pad(
+                    p, (0, self.max_degree + self.number_of_categories - 1 - p.size(0))
+                )
+                for p in self.params
+            ]
+        ).T
+        
+        padded_params_restricted = restrict_parameters(
+            padded_params,  # .contiguous().unsqueeze(1),
+            covariate=False,
+            degree=self.max_degree,
+            monotonically_increasing=True,
+            device=input.device,
+        )
+        
+        input_a_clone = input
+        
+        from gtm.gtm_splines.splines_utils import ReLULeR, custom_sigmoid
+        from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_basis_batched
+
+        if self.span_restriction == "sigmoid":
+            input_a_clone = custom_sigmoid(input_a_clone, self.spline_range[:,0])
+        elif self.span_restriction == "reluler":
+            reluler = ReLULeR(self.spline_range[:,0])
+            input_a_clone = reluler.forward(input_a_clone)
+        else:
+            pass
+
+        n = self.max_degree+1 #padded_params_restricted.shape[0] -1 #params_a.shape[0] - 1
+
+        basis = bernstein_basis_batched(input_a_clone, n, binom=self.binom_n)  # (N, D, B)
+        basis_first_derivativ = bernstein_basis_batched(input_a_clone, n - 1, self.binom_n1) 
+
+        # define get right params
+        padded_params_restricted_3D = padded_params_restricted.reshape(self.degree[0]+2,self.number_variables,self.number_of_categories)
+        cat_dim_idx = covariate
+        padded_params_restricted_chosen = padded_params_restricted_3D[:,:,cat_dim_idx]
+
+        # multiply basis with appropriate params
+        #torch.matmul(basis, theta.unsqueeze(-1)).squeeze(-1) 
+        return_dict["second_order_ridge_pen_sum"] = torch.sum(
+            torch.diff(padded_params_restricted_3D, n=2, dim=0) ** 2
+        )
+        return_dict["output"] = (basis * padded_params_restricted_chosen.T).sum(2)
+        
+        padded_params_restricted_chosen_first_derivativ = n * (padded_params_restricted_chosen[1:,:,:] - padded_params_restricted_chosen[:-1,:,:])
+        return_dict["log_d"] = (basis_first_derivativ * padded_params_restricted_chosen_first_derivativ.T).sum(2)
+        return_dict["log_d"] = torch.log(return_dict["log_d"])
+        
+        return return_dict
+
+        
+        
+        
+        
+        
 
     def forward(
         self,
