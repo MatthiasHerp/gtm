@@ -2,11 +2,11 @@ import torch
 from torch.distributions import Normal
 
 
-def log_likelihood(model, samples, mean_loss=False):
+def log_likelihood(model, samples, covariates=False, mean_loss=False):
     # train_covariates=False, train=True, evaluate=True,
 
     return_dict_nf_mctm = model.forward(
-        samples, linear_extrapolation_transformation_layer=True
+        samples, linear_extrapolation_transformation_layer=True, covariate=covariates,
     )  # , covariate=train_covariates, train=train, evaluate=evaluate)
 
     log_likelihood_latent = Normal(0, 1).log_prob(return_dict_nf_mctm["output"])
@@ -41,7 +41,7 @@ def training_objective(
 
     if objective_type == "negloglik":
         return_dict_model_loss = model.__log_likelihood_loss__(
-            samples, mean_loss=True
+            samples, covariates=train_covariates, mean_loss=True
         )  # covariate=train_covariates, mean_loss=True)
         loss = return_dict_model_loss["negative_log_likelihood_data"]
     # elif objective_type == "vi":

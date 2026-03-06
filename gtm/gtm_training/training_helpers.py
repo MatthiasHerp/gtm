@@ -701,11 +701,12 @@ def train(
             y_validate = y_validate.to(model.device)
             model_val.load_state_dict(model.state_dict())
 
-            if objective_type is "negloglik":
+            if objective_type == "negloglik": #is "negloglik":
                 with torch.no_grad():
                     return_dict_model_objective_val = model_val.__training_objective__(
                         y_validate,
                         penalty_params,
+                        validate_covariates=validate_covariates,
                         lambda_penalty_params=lambda_penalty_params,
                         train_covariates=validate_covariates,
                         lambda_penalty_mode=lambda_penalty_mode,

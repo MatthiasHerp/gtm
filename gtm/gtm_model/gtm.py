@@ -95,6 +95,7 @@ class GTM(nn.Module):
         spline_decorrelation: Literal["bspline", "bernstein"] = "bspline",
         transformation_spline_range: Tuple[float, float] = (-15, 15),
         device: str | torch.device = "cpu",
+        number_of_categories=1
     ):
         """
         Parameters
@@ -153,6 +154,10 @@ class GTM(nn.Module):
         self.transform_only = transform_only
 
         self.number_variables = number_variables
+        
+        if number_of_categories > 1:
+            warnings.warn("Categorical Covariates is only implemented for transformation layers with berstein splines. Covariates are not yet used in decorrelation layers")
+        self.number_of_categories = number_of_categories
 
         # Repeat polynomial ranges for all variables as this is the range for the bsplines essentially
         self.transformation_spline_range = list(
@@ -212,6 +217,7 @@ class GTM(nn.Module):
                 span_restriction=self.span_restriction,
                 spline_order=self.spline_order,
                 device=device,
+                number_of_categories=self.number_of_categories
             )
 
         if self.num_trans_layers > 1:
@@ -284,7 +290,7 @@ class GTM(nn.Module):
             "der2_lambda_matrix_global": None,
         }
 
-    def forward(self, y, return_lambda_matrix=True, linear_extrapolation_transformation_layer=False):
+    def forward(self, y, return_lambda_matrix=True, linear_extrapolation_transformation_layer=False, covariate=None):
         """
         GTM forward pass.
 
@@ -304,7 +310,7 @@ class GTM(nn.Module):
         # Some left out arguements for the first release version
         # evaluate and train do not make sense anymore as we do not store basis in transformation layer
         # a main reason is that we now allow training bathwise which prevents this
-        covariate = False
+        #covariate = False
         return_scores_hessian = False
         train = True
         evaluate = True
@@ -330,7 +336,7 @@ class GTM(nn.Module):
                     # new input false to not recompute basis each iteration
                     return_dict_transformation = self.transformation(
                         y,
-                        covariate,
+                        covariate=covariate,
                         log_d=log_d,
                         return_log_d=True,
                         new_input=False,
@@ -352,7 +358,7 @@ class GTM(nn.Module):
                     # new input true as we need to recompute the basis for the validation/test set
                     return_dict_transformation = self.transformation(
                         y,
-                        covariate,
+                        covariate=covariate,
                         log_d=log_d,
                         return_log_d=True,
                         new_input=True,
@@ -560,11 +566,11 @@ class GTM(nn.Module):
         return_dict = self.forward(y)  # , covariate) #, train=False, evaluate=True)
         return return_dict["output"]
 
-    def __log_likelihood_loss__(self, y, mean_loss=True):
+    def __log_likelihood_loss__(self, y, covariates=False, mean_loss=True):
         # covariate=False, train=True, evaluate=True,
 
         return_dict_nf_mctm = log_likelihood(
-            model=self, samples=y, mean_loss=mean_loss
+            model=self, samples=y, mean_loss=mean_loss, covariates=covariates,
         )  # train_covariates=covariate, train=train, evaluate=evaluate,
 
         return_dict_nf_mctm["negative_log_likelihood_data"] = (
@@ -620,8 +626,8 @@ class GTM(nn.Module):
         self,
         train_dataloader: torch.utils.data.DataLoader,
         validate_dataloader: torch.utils.data.DataLoader | bool = False,
-        # train_covariates: torch.Tensor | bool = False,
-        # validate_covariates: torch.Tensor | bool = False,
+        train_covariates: torch.Tensor | bool = False,
+        validate_covariates: torch.Tensor | bool = False,
         penalty_splines_params: torch.FloatTensor = torch.FloatTensor([0, 0, 0, 0]),
         penalty_lasso_conditional_independence: float | bool = False,
         adaptive_lasso_weights_matrix: torch.Tensor | bool = False,
@@ -697,8 +703,8 @@ class GTM(nn.Module):
             - All additional outputs from the final model's forward pass
         """
         objective_type = "negloglik"
-        train_covariates = False
-        validate_covariates = False
+        #train_covariates = False
+        #validate_covariates = False
         verbose = False
         lambda_penalty_mode = "square"  # Literal["square", "absolute"]
         # ema_decay: float | bool = False, used to have ema_decay in training

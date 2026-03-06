@@ -14,6 +14,9 @@ from gtm.gtm_splines.bernstein_prediction_vectorized import (
 from gtm.gtm_splines.bspline_prediction_vectorized import (
     bspline_prediction_vectorized, compute_multivariate_bspline_basis)
 
+from gtm.gtm_splines.splines_utils import ReLULeR, custom_sigmoid
+from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_basis_batched
+
 
 class Transformation(nn.Module):
     def __init__(
@@ -812,9 +815,6 @@ class Transformation(nn.Module):
         )
         
         input_a_clone = input
-        
-        from gtm.gtm_splines.splines_utils import ReLULeR, custom_sigmoid
-        from gtm.gtm_splines.bernstein_prediction_vectorized import bernstein_basis_batched
 
         if self.span_restriction == "sigmoid":
             input_a_clone = custom_sigmoid(input_a_clone, self.spline_range[:,0])
@@ -870,8 +870,9 @@ class Transformation(nn.Module):
         # Important: set the default of new input to true, otherwise we might use training set for validation results by accident
         #            Thus only specifiy new_input=False during training
         #             store_basis to redefine the basis (needed for validation step and out of sample prediction as well as sampling)
-
-        if store_basis == True and self.store_basis_training == True:
+        if covariate is not False and self.number_of_categories>1:
+            return_dict = self.categorical_bernstein_forward(input, covariate, log_d=0, inverse=False)
+        elif store_basis == True and self.store_basis_training == True:
             if inverse:
                 new_input = True
                 warnings.warn(
