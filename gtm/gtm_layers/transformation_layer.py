@@ -799,9 +799,10 @@ class Transformation(nn.Module):
 
         padded_params = torch.vstack(
             [
-                torch.nn.functional.pad(
-                    p, (0, self.max_degree + self.number_of_categories - 1 - p.size(0))
-                )
+                p
+                #torch.nn.functional.pad(
+                #    p, (0, self.max_degree + self.number_of_categories - 1 - p.size(0))
+                #)
                 for p in self.params
             ]
         ).T
