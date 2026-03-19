@@ -270,8 +270,9 @@ class GTM(nn.Module):
         """
         self.device = device
         self.transformation.device = device
-        for decorrelation_layer in self.decorrelation_layers:
-            decorrelation_layer.device = device
+        if self.number_decorrelation_layers > 0:
+            for decorrelation_layer in self.decorrelation_layers:
+                decorrelation_layer.device = device
 
         return super().to(device)
 
@@ -622,7 +623,7 @@ class GTM(nn.Module):
             objective_type=objective_type,
         )
 
-    def train(
+    def train( #TODO: rename into fit as train is a nn.module variables saying if we are in train or eval mode
         self,
         train_dataloader: torch.utils.data.DataLoader,
         validate_dataloader: torch.utils.data.DataLoader | bool = False,
