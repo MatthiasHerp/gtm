@@ -8,15 +8,15 @@ Graphical Transformation Models (GTMs) are a class of probabilistic models desig
 
 Read the full paper on [arXiv](https://arxiv.org/abs/2503.17845).
 
-## 🎬 Demos 
+## 🎬 Demos
 
 In this repository, we provide demo scripts to replicate the results from our work. These scripts serve as tutorials and offer a good introduction to applying the model. They can also be used as a starting point for your own data.
 
-#### Simulations
+### Simulations
 
 For the simulation studies, we provide the [2D copula demo](demos/demo_2D_copula.ipynb) and the [10D copula demo](demos/demo_10D_rvine.ipynb). These demos illustrate how to train and evaluate the model using a simple 2D copula example, as well as on 10D R-vine data, where we also show how to identify the full conditional independence structure.
 
-#### Application to the MAGIC Dataset
+### Application to the MAGIC Dataset
 
 We also provide all the files needed to replicate our analysis on the MAGIC dataset. The [training script](demos/train_gtm_magic.py) is a Python script that runs all models used in the analysis and works on both CPU and CUDA. The choice of marginal degrees, based on a simple heuristic approach, is explained in this [notebook](demos/demo_magic_marginal_transformation_degrees.ipynb). The trained models are already stored, allowing you to directly access the analysis and run the respective notebooks.
 
@@ -25,6 +25,7 @@ The [classification notebook](demos/demo_magic_classification.ipynb) demonstrate
 ## 📥 Installation
 
 To clone the repository run:
+
 ```bash
 git clone https://github.com/MatthiasHerp/gtm.git
 cd gtm
@@ -36,10 +37,15 @@ conda create -n gtm_env python=3.11.5
 Run the following command in the cloned repository root and in your python environment to install the package and its dependencies.
 We recommend using Python `3.11.5` .
 
-```python
+```bash
 pip install -e .
 ```
 
+To run the demo notebooks, you also need to install the ipython kernel:
+
+```bash
+pip install ipykernel ipywidgets
+```
 
 ## 🏋️‍♂️ Training
 
@@ -159,6 +165,7 @@ model.plot_conditional_dependence_graph(
                                         scatter_plot_size = 2.5)
 # vine_model.plot(tree=[0])
 ```
+
 ![Example Plot](demos/synthetic_plots/readme_graph.png)
 
 ## Scalability /Runtime Benchmark
@@ -167,7 +174,7 @@ We benchmarked the GTM on a 100-dimensional R-Vine model with 10,000 observation
 
 Note: Due to the de Boor implementation, B-spline training is less sensitive to the spline degree compared to Bernstein polynomials.
 
-#### Average Runtime per Iteration
+### Average Runtime per Iteration
 
 | Optimizer | Basis Type | Degree (Transf. / Decorrel.) | Pretraining Time (s) | Joint Training Time (s) |
 |-----------|------------|-------------------------------|-----------------------|--------------------------|
@@ -175,8 +182,6 @@ Note: Due to the de Boor implementation, B-spline training is less sensitive to 
 | Adam      | B-spline   | 15 / 20                       | 0.12                  | 2.50                     |
 | LBFGS     | Bernstein  | 10 / 10                       | 0.33                  | 2.95                     |
 | LBFGS     | B-spline   | 15 / 20                       | 0.33                  | 6.80                     |
-
-
 
 ## Contact and Contributing
 

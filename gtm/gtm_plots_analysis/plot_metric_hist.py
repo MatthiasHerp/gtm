@@ -1,4 +1,3 @@
-import warnings
 from itertools import combinations
 
 import matplotlib.pyplot as plt
@@ -8,7 +7,6 @@ import torch
 
 
 def plot_metric_hist(metric, covariate=False, bins=20, storage=None, show_plot=True):
-
     if torch.is_tensor(metric):
         metric = metric.detach().numpy()
 
@@ -71,7 +69,7 @@ def plot_metric_hist(metric, covariate=False, bins=20, storage=None, show_plot=T
 
     if storage:
         plt.savefig(storage, bbox_inches="tight")
-    if show_plot == True:
+    if show_plot:
         plt.show()
     else:
         plt.close(fig)

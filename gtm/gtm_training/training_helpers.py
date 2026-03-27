@@ -11,6 +11,7 @@ from functools import reduce
 # from torch import nn
 import numpy as np
 import torch
+
 # from torch.distributions import Normal, Laplace
 # import matplotlib.pyplot as plt
 from torch import optim
@@ -258,7 +259,7 @@ class LBFGS(Optimizer):
 
         if len(self.param_groups) != 1:
             raise ValueError(
-                "LBFGS doesn't support per-parameter options " "(parameter groups)"
+                "LBFGS doesn't support per-parameter options (parameter groups)"
             )
 
         self._params = self.param_groups[0]["params"]
@@ -615,14 +616,13 @@ def train(
 
         loss = return_dict_model_objective["loss_with_penalties"].mean()
 
-        if verbose == True:
+        if verbose:
             print("current_loss:", loss)
 
         # Note to myself:
         # retain Graph makes it much slower in negloglik training and retaining the graph increases memory usage more and more as iterations increase.
         # Further it also seems to make the cuda usage more instable in the sense of having spikes, now it runs super smooth and with literaly no memory usage
         if objective_type == "score_matching":
-
             loss.backward(retain_graph=True)
         else:
             loss.backward()
@@ -680,7 +680,7 @@ def train(
                 opt.step()
                 scheduler.step()
                 current_loss = loss
-                if verbose == True:
+                if verbose:
                     print("current_loss:", loss)
             elif optimizer == "LBFGS":
                 current_loss = opt.step(closure)
@@ -701,7 +701,7 @@ def train(
             y_validate = y_validate.to(model.device)
             model_val.load_state_dict(model.state_dict())
 
-            if objective_type is "negloglik":
+            if objective_type == "negloglik":
                 with torch.no_grad():
                     return_dict_model_objective_val = model_val.__training_objective__(
                         y_validate,
@@ -792,7 +792,6 @@ def train(
 
 
 def if_float_create_lambda_penalisation_matrix(lambda_penalty_params, num_vars):
-
     lambda_penalty_params = torch.tensor(lambda_penalty_params, dtype=torch.float32)
     if lambda_penalty_params.size() == torch.Size([]):
         lambda_penalty_params = (

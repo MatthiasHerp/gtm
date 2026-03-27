@@ -19,7 +19,6 @@ from demos.load_analyze_magic_data_helpers import *
 from gtm import *
 
 if __name__ == "__main__":
-
     for num_decorr_layers in [3, 4, 5, 6, 7, 8, 9]:
         for group in ["h", "g"]:
             print(

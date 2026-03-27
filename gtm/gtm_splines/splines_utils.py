@@ -1,11 +1,9 @@
-import warnings
 
 import torch
 from torch import nn
 
 
 def adjust_ploynomial_range(polynomial_range: object, span_factor: object) -> object:
-
     span = polynomial_range[1] - polynomial_range[0]
     span_change = torch.tensor(
         [-span_factor * span, span_factor * span],
