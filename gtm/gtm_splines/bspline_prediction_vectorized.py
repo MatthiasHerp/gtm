@@ -185,7 +185,7 @@ def Naive_Basis(x, spline_range=[-10,10], degree=10, span_factor=0., knots=torch
 
     t = knots
 
-    n = len(t) - p - 1 - 1
+    n = len(t) - p - 1 #######################- 1
     return torch.vstack(
         [B_derivativ_fixed_degree(x, p, i, t, derivativ=derivativ) for i in range(n)]
     ).T
@@ -241,7 +241,8 @@ def compute_multivariate_bspline_basis(
 ##################################################################################################################################################################################################################
 
 
-def compute_k_varying_degrees(x, t):
+def compute_k_varying_degrees(x, t#):
+                              , p, n_ctrl):
     """
     Finds the knot interval index for each x in a batch-friendly way.
 
@@ -256,6 +257,10 @@ def compute_k_varying_degrees(x, t):
 
     # Vectorized searchsorted
     k = torch.searchsorted(t, x.contiguous(), right=False) - 1
+    
+    # clamp to valid span indices
+    k = torch.clamp(k, min=p, max=n_ctrl - 1)
+
 
     return k
 
@@ -335,7 +340,9 @@ def deboor_algorithm_varying_degrees_first_derivativ(x, k, t, c, p):
 
 def run_deBoor_varying_degrees(x, t, c, p, d):
     # Compute knot indices
-    k = compute_k_varying_degrees(x, t)  # , n)
+    #k = compute_k_varying_degrees(x, t)  # , n)
+    n_ctrl = c.shape[1]  # c is (batch, n_ctrl)
+    k = compute_k_varying_degrees(x, t, p, n_ctrl)
 
     if d == 0:
         # Compute B-spline outputs
