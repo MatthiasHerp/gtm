@@ -31,12 +31,12 @@ if __name__ == "__main__":
     ####### Define GTM Model and Train #######
 
     model = GTM(
-        transformation_spline_range=list([[-10], [10]]),
-        decorrelation_spline_range=list([[-10], [10]]),
+        transformation_spline_range = (-10, 10),
+        decorrelation_spline_range = (-10, 10),
         degree_decorrelation=30,
         degree_transformations=10,
-        num_decorr_layers=3,
-        num_trans_layers=1,
+        number_transformation_layers=1,
+        number_decorrelation_layers=3,
         number_variables=10,
         spline_decorrelation="bspline",
         spline_transformation="bspline",
@@ -92,7 +92,7 @@ if __name__ == "__main__":
         lambda_penalty_params = False
 
     # pretrain the marginal transformations
-    _ = model.pretrain_tranformation_layer(
+    _ = model.pretrain_transformation_layer(
         dataloader_train,
         iterations=1000,
         max_batches_per_iter=False,
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     )
 
     # train the joint model
-    _ = model.__train__(
+    _ = model.train(
         train_dataloader=dataloader_train,
         validate_dataloader=dataloader_validate,
         iterations=1000,

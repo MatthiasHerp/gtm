@@ -160,7 +160,9 @@ def compute_conditional_independence_kld(
                     - under_ci_assumption_log_distribution_glq
                 )
                 # handeling unstable numerics
-                ll_dev = ll_dev.nan_to_num(nan=0, posinf=0, neginf=0)
+                #ll_dev = ll_dev.nan_to_num(nan=0, posinf=0, neginf=0)
+                ll_dev = ll_dev.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
+                ll_dev = ll_dev[ll_dev > -torch.inf]
                 ll_dev = ll_dev[ll_dev.abs() < ll_dev.abs().quantile(0.99)]
                 kld = ll_dev.mean()
 
@@ -179,8 +181,12 @@ def compute_conditional_independence_kld(
                 )
                 # handeling unstable numerics
                 ll_dev2 = ll_dev2.nan_to_num(nan=0, posinf=0, neginf=0)
+                #ll_dev2 = ll_dev2.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
+                #ll_dev2 = ll_dev2[ll_dev2 > -torch.inf]
                 # correct
                 iae = ll_dev2 * weights
+                #iae = iae.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
+                #iae = iae[iae > -torch.inf]
                 iae = iae[iae < iae.quantile(0.99)]
                 iae = iae.mean() / 2
 

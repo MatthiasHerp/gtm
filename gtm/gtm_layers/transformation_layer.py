@@ -661,13 +661,13 @@ class Transformation(nn.Module):
                 )
                 for p in self.params
             ]
-        ).T
+        ).T  
 
         padded_params = restrict_parameters(
             padded_params,  # .contiguous().unsqueeze(1),
             covariate=covariate,
             degree=self.max_degree,
-            monotonically_increasing=True,
+            monotonically_increasing=True,# if inverse == False else False,
             device=input.device,
         )
 
@@ -840,11 +840,11 @@ class Transformation(nn.Module):
         # linear extrapolation outside of the spline range 
         # the 0.9* is from the reluler in the spline restriction where it waas but to not get to close to bounds
         if linear_extrapolation:
-            return_dict["output"] = torch.where((input-0.9*self.spline_range[0]) < 0, 
-                                                return_dict["output"] - (0.9*self.spline_range[0]-input) * torch.exp(return_dict["log_d"]), 
+            return_dict["output"] = torch.where((input-0.99*self.spline_range[0]) < 0, 
+                                                return_dict["output"] - (0.99*self.spline_range[0]-input) * torch.exp(return_dict["log_d"]), 
                                                 return_dict["output"])
-            return_dict["output"] = torch.where((input-0.9*self.spline_range[1]) > 0, 
-                                                return_dict["output"] + (input-0.9*self.spline_range[1]) * torch.exp(return_dict["log_d"]), 
+            return_dict["output"] = torch.where((input-0.99*self.spline_range[1]) > 0, 
+                                                return_dict["output"] + (input-0.99*self.spline_range[1]) * torch.exp(return_dict["log_d"]), 
                                                 return_dict["output"])
 
         return return_dict

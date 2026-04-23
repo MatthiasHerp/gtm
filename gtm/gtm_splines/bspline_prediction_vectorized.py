@@ -256,7 +256,7 @@ def compute_k_varying_degrees(x, t#):
     """
 
     # Vectorized searchsorted
-    k = torch.searchsorted(t, x.contiguous(), right=False) - 1
+    k = torch.searchsorted(t, x.contiguous(), right=True) - 1
     
     # clamp to valid span indices
     k = torch.clamp(k, min=p, max=n_ctrl - 1)
@@ -361,7 +361,8 @@ def run_deBoor_varying_degrees(x, t, c, p, d):
 ##################################################################################################################################################################################################################
 
 
-def compute_k_fixed_degrees(x, t):  # , n
+def compute_k_fixed_degrees(x, t#):  # , n
+                            ,p, n_ctrl): #
     """
     Finds the knot interval index for each x in a batch-friendly way.
 
@@ -373,7 +374,9 @@ def compute_k_fixed_degrees(x, t):  # , n
     Returns:
         k: (batch, num_x) - Indices of knot intervals
     """
-    k = torch.searchsorted(t, x.contiguous()) - 1
+    k = torch.searchsorted(t, x.contiguous(), right=True) - 1 
+    k = torch.clamp(k, min=p, max=n_ctrl - 1)
+    
     return k
 
 
@@ -408,53 +411,76 @@ def compute_k_fixed_degrees(x, t):  # , n
 #    return d[:,p]  # Final evaluated values
 
 
-def compute_update_alpha(x, t, k, r, d, j, p=3):
+#def compute_update_alpha(x, t, k, r, d, j, p=3):
+#
+#    alpha = (x - t[j + k - p]) / (
+#        t[j + 1 + k - r] - t[j + k - p] + 1e-9
+#    )  # Avoid div by zero
+#    new_d = d.clone()
+#    new_d[:, j] = (1 - alpha) * d[:, j - 1] + alpha * d[:, j]
+#    return new_d
+#
+#
+#def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
+#
+#    # batch_size, num_x = x.shape
+#
+#    offsets = torch.arange(0, p + 1, device=k.device).view(
+#        1, 1, p + 1
+#    )  # shape (1, 1, 4)
+#    ctrl_idx = k.unsqueeze(-1) - p + offsets  # shape (B, N, 4)
+#    # ctrl_idx = ctrl_idx.clamp(0, c.shape[1] - 1)  # prevent indexing out of bounds
+#
+#    # Expand `c` to gather control points for each (B, N, 4)
+#    d = torch.gather(
+#        c.unsqueeze(1).expand(-1, k.shape[1], -1),  # shape (B, N, M)
+#        2,
+#        ctrl_idx,  # shape (B, N, 4)
+#    ).mT
+#
+#    r = 1
+#    j = 3
+#    d = compute_update_alpha(x, t, k, r, d, j, p=3)
+#    j = 2
+#    d = compute_update_alpha(x, t, k, r, d, j, p=3)
+#    j = 1
+#    d = compute_update_alpha(x, t, k, r, d, j, p=3)
+#
+#    r = 2
+#    j = 3
+#    d = compute_update_alpha(x, t, k, r, d, j, p=3)
+#    j = 2
+#    d = compute_update_alpha(x, t, k, r, d, j, p=3)
+#
+#    r = 3
+#    j = 3
+#    d = compute_update_alpha(x, t, k, r, d, j, p=3)
+#
+#    return d[:, p]
 
-    alpha = (x - t[j + k - p]) / (
-        t[j + 1 + k - r] - t[j + k - p] + 1e-9
-    )  # Avoid div by zero
-    new_d = d.clone()
-    new_d[:, j] = (1 - alpha) * d[:, j - 1] + alpha * d[:, j]
-    return new_d
 
+def deboor_algorithm_fixed_degrees(x, k, t, c, p): # x: (B, N), k: (B, N), t: (M,), c: (B, n_ctrl) 
+    B, N = x.shape 
+    n_ctrl = c.shape[1]
+    # Gather initial control points: d_j = c[:, k - p + j], j=0..p
+    offsets = torch.arange(0, p + 1, device=x.device)
+    idx = (k.unsqueeze(-1) - p + offsets).clamp(0, n_ctrl - 1)   # (B, N, p+1)
+    d = torch.gather(c.unsqueeze(1).expand(-1, N, -1), 2, idx)   # (B, N, p+1)
+    d = d.transpose(1, 2).contiguous()                           # (B, p+1, N), contiguous
 
-def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
+    eps = 1e-9
+    for r in range(1, p + 1):
+        for j in range(p, r - 1, -1):
+            left = j + k - p
+            right = j + 1 + k - r
+            alpha = (x - t[left]) / (t[right] - t[left] + eps)   # (B, N)
+            updated = (1.0 - alpha) * d[:, j - 1] + alpha * d[:, j]
 
-    # batch_size, num_x = x.shape
+            new_d = d.clone()          # avoid in-place on view saved for backward
+            new_d[:, j] = updated
+            d = new_d
 
-    offsets = torch.arange(0, p + 1, device=k.device).view(
-        1, 1, p + 1
-    )  # shape (1, 1, 4)
-    ctrl_idx = k.unsqueeze(-1) - p + offsets  # shape (B, N, 4)
-    # ctrl_idx = ctrl_idx.clamp(0, c.shape[1] - 1)  # prevent indexing out of bounds
-
-    # Expand `c` to gather control points for each (B, N, 4)
-    d = torch.gather(
-        c.unsqueeze(1).expand(-1, k.shape[1], -1),  # shape (B, N, M)
-        2,
-        ctrl_idx,  # shape (B, N, 4)
-    ).mT
-
-    r = 1
-    j = 3
-    d = compute_update_alpha(x, t, k, r, d, j, p=3)
-    j = 2
-    d = compute_update_alpha(x, t, k, r, d, j, p=3)
-    j = 1
-    d = compute_update_alpha(x, t, k, r, d, j, p=3)
-
-    r = 2
-    j = 3
-    d = compute_update_alpha(x, t, k, r, d, j, p=3)
-    j = 2
-    d = compute_update_alpha(x, t, k, r, d, j, p=3)
-
-    r = 3
-    j = 3
-    d = compute_update_alpha(x, t, k, r, d, j, p=3)
-
-    return d[:, p]
-
+    return d[:, p]  # (B, N)
 
 # def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p):
 #        batch_size, num_x = x.shape
@@ -479,79 +505,124 @@ def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
 #        return q[:,p-1]
 
 
-def compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3):
+#def compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3):
+#
+#    right = j + 1 + k - r
+#    left = j + k - (p - 1)
+#    alpha = (x - t[left]) / (t[right] - t[left])
+#    q[:, j] = (1.0 - alpha) * q[:, j - 1] + alpha * q[:, j]
+#    return q
+#
+#
+#def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p=3):
+#
+#    # Constants
+#    B, N = k.shape
+#
+#    # Step 1: Build the j-offsets for j in [0, 1, 2]
+#    j_offsets = torch.arange(p, device=k.device).view(1, 1, p)  # shape (1, 1, 3)
+#
+#    # Step 2: Compute control point indices
+#    idx_1 = k.unsqueeze(-1) - p + j_offsets  # shape (B, N, 3)
+#    idx_2 = idx_1 + 1  # shape (B, N, 3)
+#
+#    # Clamp to valid range for control point indexing
+#    # idx_1 = idx_1.clamp(0, c.shape[1] - 1)
+#    # idx_2 = idx_2.clamp(0, c.shape[1] - 1)
+#
+#    # Step 3: Gather control point differences
+#    c_expanded = c.unsqueeze(1).expand(-1, N, -1)  # shape (B, N, M)
+#    delta_c = torch.gather(c_expanded, 2, idx_2) - torch.gather(c_expanded, 2, idx_1)
+#
+#    # Step 4: Compute knot indices
+#    t_idx_1 = k.unsqueeze(-1) + j_offsets + 1  # shape (B, N, 3)
+#    t_idx_2 = k.unsqueeze(-1) - p + j_offsets + 1  # shape (B, N, 3)
+#
+#    # Clamp to valid range for knot indexing
+#    # t_idx_1 = t_idx_1.clamp(0, t.shape[0] - 1)
+#    # t_idx_2 = t_idx_2.clamp(0, t.shape[0] - 1)
+#
+#    # Step 5: Get knot differences
+#    t_diff = t[t_idx_1] - t[t_idx_2]  # shape (B, N, 3)
+#
+#    # Step 6: Compute final q values
+#    q = p * delta_c / (t_diff + 1e-9)
+#    q = q.mT
+#
+#    r = 1
+#    j = 2
+#    q = compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3)
+#
+#    j = 1
+#    q = compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3)
+#
+#    r = 2
+#    j = 2
+#    q = compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3)
+#
+#    return q[:, p - 1]
 
-    right = j + 1 + k - r
-    left = j + k - (p - 1)
-    alpha = (x - t[left]) / (t[right] - t[left])
-    q[:, j] = (1.0 - alpha) * q[:, j - 1] + alpha * q[:, j]
-    return q
+
+def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p): # x: (B, N), k: (B, N), t: (M,), c: (B, n_ctrl) 
+    B, N = x.shape 
+    n_ctrl = c.shape[1]
+    
+    # q_j = p * (c_{i+j+1} - c_{i+j}) / (t_{k+j+1} - t_{k - p + j + 1}), j=0..p-1
+    offsets = torch.arange(p, device=x.device)            # 0..p-1
+    i1 = (k.unsqueeze(-1) - p + offsets).clamp(0, n_ctrl - 1)
+    i2 = (i1 + 1).clamp(0, n_ctrl - 1)
+
+    c_exp = c.unsqueeze(1).expand(-1, N, -1)
+    delta_c = torch.gather(c_exp, 2, i2) - torch.gather(c_exp, 2, i1)  # (B, N, p)
+
+    t_idx1 = k.unsqueeze(-1) + offsets + 1
+    t_idx2 = k.unsqueeze(-1) - p + offsets + 1
+    t_diff = t[t_idx1] - t[t_idx2]                      # (B, N, p)
+
+    eps = 1e-9
+    q = (p * delta_c / (t_diff + eps)).transpose(1, 2).contiguous()  # (B, p, N)
+
+    for r in range(1, p):
+        for j in range(p - 1, r - 1, -1):
+            right = j + 1 + k - r
+            left = j + k - (p - 1)
+            alpha = (x - t[left]) / (t[right] - t[left] + eps)
+            updated = (1.0 - alpha) * q[:, j - 1] + alpha * q[:, j]
+
+            new_q = q.clone()
+            new_q[:, j] = updated
+            q = new_q
+
+    return q[:, p - 1]          
 
 
-def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p=3):
-
-    # Constants
-    B, N = k.shape
-
-    # Step 1: Build the j-offsets for j in [0, 1, 2]
-    j_offsets = torch.arange(p, device=k.device).view(1, 1, p)  # shape (1, 1, 3)
-
-    # Step 2: Compute control point indices
-    idx_1 = k.unsqueeze(-1) - p + j_offsets  # shape (B, N, 3)
-    idx_2 = idx_1 + 1  # shape (B, N, 3)
-
-    # Clamp to valid range for control point indexing
-    # idx_1 = idx_1.clamp(0, c.shape[1] - 1)
-    # idx_2 = idx_2.clamp(0, c.shape[1] - 1)
-
-    # Step 3: Gather control point differences
-    c_expanded = c.unsqueeze(1).expand(-1, N, -1)  # shape (B, N, M)
-    delta_c = torch.gather(c_expanded, 2, idx_2) - torch.gather(c_expanded, 2, idx_1)
-
-    # Step 4: Compute knot indices
-    t_idx_1 = k.unsqueeze(-1) + j_offsets + 1  # shape (B, N, 3)
-    t_idx_2 = k.unsqueeze(-1) - p + j_offsets + 1  # shape (B, N, 3)
-
-    # Clamp to valid range for knot indexing
-    # t_idx_1 = t_idx_1.clamp(0, t.shape[0] - 1)
-    # t_idx_2 = t_idx_2.clamp(0, t.shape[0] - 1)
-
-    # Step 5: Get knot differences
-    t_diff = t[t_idx_1] - t[t_idx_2]  # shape (B, N, 3)
-
-    # Step 6: Compute final q values
-    q = p * delta_c / (t_diff + 1e-9)
-    q = q.mT
-
-    r = 1
-    j = 2
-    q = compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3)
-
-    j = 1
-    q = compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3)
-
-    r = 2
-    j = 2
-    q = compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3)
-
-    return q[:, p - 1]
+#def run_deBoor_fixed_degrees(x, t, c, p, d):
+#    # Compute knot indices
+#    n_ctrl = c.shape[1]  # c is (batch, n_ctrl)
+#    k = compute_k_fixed_degrees(x, t, p, n_ctrl)  # , n
+#
+#    if d == 0:
+#        # Compute B-spline outputs
+#        prediction = deboor_algorithm_fixed_degrees(x, k, t, c, p).squeeze()
+#    elif d == 1:
+#        # Compute B-spline outputs
+#        prediction = deboor_algorithm_fixed_degrees_first_derivativ(
+#            x, k, t, c, p
+#        ).squeeze()
+#
+#    return prediction
 
 
-def run_deBoor_fixed_degrees(x, t, c, p, d):
-    # Compute knot indices
-    k = compute_k_fixed_degrees(x, t)  # , n
-
-    if d == 0:
-        # Compute B-spline outputs
-        prediction = deboor_algorithm_fixed_degrees(x, k, t, c, p).squeeze()
-    elif d == 1:
-        # Compute B-spline outputs
-        prediction = deboor_algorithm_fixed_degrees_first_derivativ(
-            x, k, t, c, p
-        ).squeeze()
-
-    return prediction
-
+def run_deBoor_fixed_degrees(x, t, c, p, d): # x: (B, N), t: (M,), c: (B, n_ctrl) 
+    n_ctrl = c.shape[1] 
+    k = compute_k_fixed_degrees(x, t, p, n_ctrl) 
+    if d == 0: 
+        pred = deboor_algorithm_fixed_degrees(x, k, t, c, p) 
+    elif d == 1: 
+        pred = deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p) 
+    else: 
+        raise ValueError("Only 0th and 1st derivatives are implemented for fixed degree.") 
+    return pred.squeeze()
 
 ##################################################################################################################################################################################################################
 ########################## B-Spline Prediction Method ##########################
