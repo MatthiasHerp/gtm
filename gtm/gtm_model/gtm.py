@@ -267,8 +267,9 @@ class GTM(nn.Module):
         """
         self.device = device
         self.transformation.device = device
-        for decorrelation_layer in self.decorrelation_layers:
-            decorrelation_layer.device = device
+        if self.number_decorrelation_layers > 0:
+            for decorrelation_layer in self.decorrelation_layers:
+                decorrelation_layer.device = device
 
         return super().to(device)
 
@@ -287,7 +288,7 @@ class GTM(nn.Module):
             "der2_lambda_matrix_global": None,
         }
 
-    def forward(self, y, return_lambda_matrix=True):
+    def forward(self, y, return_lambda_matrix=True, linear_extrapolation_transformation_layer=False):
         """
         GTM forward pass.
 
@@ -339,6 +340,7 @@ class GTM(nn.Module):
                         new_input=False,
                         store_basis=True,
                         return_scores_hessian=return_scores_hessian,
+                        linear_extrapolation=linear_extrapolation_transformation_layer
                     )
 
                     return_dict_nf_mctm["output"] = return_dict_transformation["output"]
@@ -360,6 +362,7 @@ class GTM(nn.Module):
                         new_input=True,
                         store_basis=True,
                         return_scores_hessian=return_scores_hessian,
+                        linear_extrapolation=linear_extrapolation_transformation_layer
                     )
 
                     return_dict_nf_mctm["output"] = return_dict_transformation["output"]
@@ -1104,7 +1107,7 @@ class GTM(nn.Module):
 
             if self.num_trans_layers > 0:
                 return_dict = self.transformation(
-                    z, covariate, new_input=True, inverse=True
+                    z, covariate, new_input=True, inverse=True, linear_extrapolation=True
                 )
                 y = return_dict["output"]
             else:
@@ -1124,7 +1127,7 @@ class GTM(nn.Module):
             pass
         if self.num_trans_layers > 0:
             # new input true as we need to recompute the basis for the validation/test set
-            return_dict = self.transformation(y, covariate, new_input=True)
+            return_dict = self.transformation(y, covariate, new_input=True,linear_extrapolation=True)
             output = return_dict["output"]
         else:
             output = y

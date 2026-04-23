@@ -166,7 +166,7 @@ def Naive_varying_degree(x, t, c, p, d):
 ##################################################################################################################################################################################################################
 
 
-def Naive_Basis(x, spline_range, degree, span_factor, knots, derivativ=0, order=3):
+def Naive_Basis(x, spline_range=[-10,10], degree=10, span_factor=0., knots=torch.linspace(-10,10,10), derivativ=0, order=3):
     # print("Naive_Basis spline_range", spline_range)
     # basic order is 3 (cubic spline) so that the third derivative is nonzero for score matching
     p = order
@@ -175,9 +175,9 @@ def Naive_Basis(x, spline_range, degree, span_factor, knots, derivativ=0, order=
     elif order == 3:
         n = degree + 2
 
-    distance_between_knots = (
-        (spline_range[1] - spline_range[0]) * (1 + span_factor) / (n - 1)
-    )
+    #distance_between_knots = (
+    #    (spline_range[1] - spline_range[0]) * (1 + span_factor) / (n - 1)
+    #)
 
     # knots = torch.linspace(spline_range[0] * (1+span_factor) - order * distance_between_knots,
     #                       spline_range[1] * (1+span_factor) + order * distance_between_knots,

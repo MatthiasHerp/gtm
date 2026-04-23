@@ -792,6 +792,7 @@ class Transformation(nn.Module):
         store_basis=False,
         return_derivatives=False,
         return_scores_hessian=False,
+        linear_extrapolation=False
     ):
         # input dims: 0: observaton number, 1: variable
         # Important: set the default of new input to true, otherwise we might use training set for validation results by accident
@@ -835,6 +836,16 @@ class Transformation(nn.Module):
                 return_dict = self.vmap_forward(
                     input, covariate, log_d=0, inverse=inverse
                 )
+                
+        # linear extrapolation outside of the spline range 
+        # the 0.9* is from the reluler in the spline restriction where it waas but to not get to close to bounds
+        if linear_extrapolation:
+            return_dict["output"] = torch.where((input-0.9*self.spline_range[0]) < 0, 
+                                                return_dict["output"] - (0.9*self.spline_range[0]-input) * torch.exp(return_dict["log_d"]), 
+                                                return_dict["output"])
+            return_dict["output"] = torch.where((input-0.9*self.spline_range[1]) > 0, 
+                                                return_dict["output"] + (input-0.9*self.spline_range[1]) * torch.exp(return_dict["log_d"]), 
+                                                return_dict["output"])
 
         return return_dict
 
@@ -876,7 +887,7 @@ class Transformation(nn.Module):
                 device=device,
             )
 
-        return_dict = self.forward(input=input_space, covariate=covariate_space)
+        return_dict = self.forward(input=input_space, covariate=covariate_space, linear_extrapolation=True)
         output_space = return_dict["output"]
 
         spline_range_inverse = torch.zeros(
