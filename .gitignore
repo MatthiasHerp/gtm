@@ -20,3 +20,5 @@ gtm_check_hydra.py
 .DS_Store
 seed_30_kld_warpspeed_bootstrap_10D.png
 seed_20_kld_warpspeed_bootstrap_20D.png
+test_bspline_border.ipynb
+.vscode/settings.json
