@@ -852,8 +852,9 @@ class Transformation(nn.Module):
     def approximate_inverse(
         self,
         spline_inverse="bspline",
-        degree_inverse=100,
-        span_factor_inverse=torch.tensor(0.2),
+        degree_inverse=0,
+        span_factor_inverse=torch.tensor(1),
+        span_factor_input_space=torch.tensor(1),
         input_covariate=False,
         num_samples=40000,
         device="cpu",
@@ -870,7 +871,7 @@ class Transformation(nn.Module):
             covariate_space = False
 
         if degree_inverse == 0:
-            degree_inverse = 2 * self.degree
+            degree_inverse = 3 * self.degree[0]
 
         self.monotonically_increasing_inverse = False
         self.span_factor_inverse = span_factor_inverse
@@ -881,8 +882,8 @@ class Transformation(nn.Module):
         )
         for var_number in range(self.number_variables):
             input_space[:, var_number] = torch.linspace(
-                self.spline_range[0, var_number].item(),
-                self.spline_range[1, var_number].max().item(),
+                self.spline_range[0, var_number].item() * (1+span_factor_input_space),
+                self.spline_range[1, var_number].max().item() * (1+span_factor_input_space),
                 num_samples,
                 device=device,
             )

@@ -1107,7 +1107,7 @@ class GTM(nn.Module):
 
             if self.num_trans_layers > 0:
                 return_dict = self.transformation(
-                    z, covariate, new_input=True, inverse=True, linear_extrapolation=True
+                    z, covariate, new_input=True, inverse=True, linear_extrapolation=False
                 )
                 y = return_dict["output"]
             else:
@@ -1177,7 +1177,7 @@ class GTM(nn.Module):
 
             return accepted_samples
 
-    def approximate_transformation_inverse(self) -> None:
+    def approximate_transformation_inverse(self,degree_inverse=0) -> None:
         """
         Approximates the inverse of the transformation layer splines and stores the result.
 
@@ -1185,12 +1185,18 @@ class GTM(nn.Module):
         spline in the transformation layer. The resulting parameters are cached within
         the model and used during sampling to transform latent Gaussian samples back
         to the original data space.
+        
+        Parameters
+        ----------
+        degree_inverse : int
+            Degree of the inverse spline. Deafult is zero which results in 2 * degree of forward transformation (for dimension 0)
 
         Returns
         -------
         None
         """
-        self.transformation.approximate_inverse(device=self.device)
+        self.transformation.approximate_inverse(device=self.device,
+                                                degree_inverse=degree_inverse)
 
     def __return_objective_for_hyperparameters__(
         self,
@@ -1965,6 +1971,13 @@ class GTM(nn.Module):
         """
 
         dependence_metric_plotting = "pseudo_conditional_correlation"
+        
+        # drop all observations outside the x_lim for every dimension
+        mask = torch.all((data >= x_lim[0]) & (data <= x_lim[1]), axis=1)
+        data = data[mask,:]
+        # same for y_lim
+        mask = torch.all((data >= y_lim[0]) & (data <= y_lim[1]), axis=1)
+        data = data[mask,:]
 
         # Taking internally stored one from last run
         if conditional_independence_table is False:

@@ -70,7 +70,7 @@ def plot_splines(
                 z_tilde_derivativ = torch.exp(log_d)
                 # data_span_vec_estimated = layer.forward(z_tilde, covariate=covariate_value,  inverse=True)
                 return_dict_inverse = layer.forward(
-                    z_tilde, covariate=covariate_value, inverse=True, linear_extrapolation=True
+                    z_tilde, covariate=covariate_value, inverse=True, linear_extrapolation=False
                 )
                 data_span_vec_estimated = return_dict_inverse["output"]
 
@@ -107,7 +107,7 @@ def plot_splines(
 
             z_tilde_derivativ = torch.exp(log_d)
             # data_span_vec_estimated = layer.forward(z_tilde, covariate=False, inverse=True)
-            return_dict_inverse = layer.forward(z_tilde, covariate=False, inverse=True, linear_extrapolation=True)
+            return_dict_inverse = layer.forward(z_tilde, covariate=False, inverse=True, linear_extrapolation=False)
             data_span_vec_estimated = return_dict_inverse["output"]
             # data_span_vec_estimated = data_span_vec_estimated.detach().numpy()
 

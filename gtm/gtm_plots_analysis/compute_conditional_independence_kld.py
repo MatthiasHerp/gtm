@@ -33,9 +33,14 @@ def compute_conditional_independence_kld(
     elif evaluation_data_type == "uniform_random_samples":
         evaluation_data = torch.distributions.Uniform(min_val, max_val).sample(
             [sample_size, self.y_train.size(1)]
-        )
+        )   
     elif evaluation_data_type == "samples_from_model":
         evaluation_data = self.sample(sample_size).detach()
+        # only data within the bound otherwise drop datapoints
+        bool_mask = (evaluation_data >= min_val) & (evaluation_data <= max_val)
+        if bool_mask.all(dim=1).sum() < sample_size:
+            print(f"Warning: Only {bool_mask.all(dim=1).sum().item()} samples are within the specified bounds. Others are dropped.")
+        evaluation_data = evaluation_data[bool_mask.all(dim=1)]
         if copula_only == True:
             evaluation_data = self.after_transformation(evaluation_data).detach()
 
