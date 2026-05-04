@@ -277,24 +277,6 @@ def compute_pair_metrics(
         # handle numerical instability
         ll_dev = ll_dev.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
         ll_dev = ll_dev[ll_dev > -torch.inf]
-        
-        
-        print(f"two_var_marginal stats: min={two_var_marginal.min():.4f}, "
-            f"max={two_var_marginal.max():.4f}, "
-            f"nan={two_var_marginal.isnan().sum()}, "
-            f"inf={two_var_marginal.isinf().sum()}")
-
-        print(f"single_var_marginals stats: min={single_var_marginals.min():.4f}, "
-            f"max={single_var_marginals.max():.4f}, "
-            f"nan={single_var_marginals.isnan().sum()}, "
-            f"inf={single_var_marginals.isinf().sum()}")
-
-        print(f"ll_dev before filtering: size={ll_dev.shape}, "
-            f"nan={ll_dev.isnan().sum()}, "
-            f"inf={ll_dev.isinf().sum()}, "
-            f"neginf={(ll_dev == -torch.inf).sum()}")
-                
-        
         ll_dev = ll_dev[ll_dev.abs() < ll_dev.abs().quantile(0.99)]
         kld    = ll_dev.mean()                   # scalar
 
