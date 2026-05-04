@@ -105,137 +105,112 @@ def build_expanded_data(data, col_indices, quad_x, quad_w):
 
 
 def compute_single_var_marginals(model, data, quad_x, quad_w, batch_size=None):
-    """
-    Compute marginals for all D columns in one/chunked pass.
-    Integrates out each column one at a time, keeping results resident in memory.
-    
-    Args:
-        model:      model with log_likelihood method
-        data:       shape (N, D)
-        quad_x:     1D quadrature points, shape (Q,)
-        quad_w:     1D quadrature weights, shape (Q,)
-        batch_size: number of rows to process at once (None = all at once)
-    
-    Returns:
-        single_var_marginals: shape (D, N) - log marginals for each column
-    """
+
     N, D = data.shape
     Q = quad_x.shape[0]
     single_var_marginals = torch.zeros(D, N, device=model.device)
 
-    for col_idx in tqdm(range(D)):
-        # Build expanded data for this column
-        # expanded_data shape:    (N * Q, D)
-        # expanded_weights shape: (N * Q,)
-        expanded_data, expanded_weights = build_expanded_data(
-            data=data,
-            col_indices=[col_idx],
-            quad_x=quad_x,
-            quad_w=quad_w,
-        )
+    # log weights computed once
+    log_w = torch.log(quad_w)  # shape (Q,)
 
-        if batch_size is None:
-            # Process all at once
-            ll = model.log_likelihood(expanded_data, return_lambda_matrix=False)  # shape (N*Q,)
-            likelihood = torch.exp(ll)                                             # shape (N*Q,)
-            weighted_likelihood = likelihood * expanded_weights                    # shape (N*Q,)
-            
-            # Sum over Q points for each of N rows
-            # (N*Q,) -> (N, Q) -> (N,)
-            marginal = weighted_likelihood.view(N, Q).sum(dim=1)                  # shape (N,)
+    with tqdm(total=D, desc="Single var marginals", position=1, leave=False) as pbar:
+        for col_idx in range(D):
 
-        else:
-            # Process in chunks of batch_size rows
-            # each chunk: (batch_size * Q, D)
-            marginal = torch.zeros(N, device=model.device)
-            
-            for start_idx in range(0, N, batch_size):
-                end_idx = min(start_idx + batch_size, N)
+            if batch_size is None:
+                batch_size_eff = N
+            else:
+                batch_size_eff = batch_size
+
+            marginal_col = torch.zeros(N, device=model.device)
+
+            for start_idx in range(0, N, batch_size_eff):
+                end_idx = min(start_idx + batch_size_eff, N)
                 batch_n = end_idx - start_idx
 
-                # slice out this chunk
-                data_chunk   = expanded_data[start_idx * Q : end_idx * Q]     # shape (batch_n * Q, D)
-                weights_chunk = expanded_weights[start_idx * Q : end_idx * Q]  # shape (batch_n * Q,)
+                # build chunk on the fly
+                data_chunk = data[start_idx:end_idx]                                          # shape (batch_n, D)
+                expanded_data_chunk = data_chunk.unsqueeze(1).expand(
+                    batch_n, Q, D
+                ).reshape(batch_n * Q, D).clone()                                             # shape (batch_n*Q, D)
 
-                ll_chunk = model.log_likelihood(data_chunk, return_lambda_matrix=False)  # shape (batch_n*Q,)
-                likelihood_chunk = torch.exp(ll_chunk)                                    # shape (batch_n*Q,)
-                weighted_likelihood_chunk = likelihood_chunk * weights_chunk              # shape (batch_n*Q,)
+                # expand quad points and log weights
+                # (Q,) -> (batch_n, Q) -> (batch_n*Q,)
+                expanded_points     = quad_x.unsqueeze(0).expand(batch_n, Q).reshape(batch_n * Q)   # shape (batch_n*Q,)
+                expanded_log_w      = log_w.unsqueeze(0).expand(batch_n, Q).reshape(batch_n * Q)    # shape (batch_n*Q,)
 
-                # (batch_n*Q,) -> (batch_n, Q) -> (batch_n,)
-                marginal[start_idx:end_idx] = weighted_likelihood_chunk.view(batch_n, Q).sum(dim=1)
+                # replace column
+                expanded_data_chunk[:, col_idx] = expanded_points
 
-        single_var_marginals[col_idx] = torch.log(marginal)  # shape (N,)
+                # log likelihood
+                ll_chunk = model.log_likelihood(
+                    expanded_data_chunk, return_lambda_matrix=False
+                )                                                                              # shape (batch_n*Q,)
 
-    return single_var_marginals  # shape (D, N)
+                # log-sum-exp over Q points
+                # ll_chunk + log_w: shape (batch_n*Q,) -> (batch_n, Q)
+                log_integrand = (ll_chunk + expanded_log_w).view(batch_n, Q)                  # shape (batch_n, Q)
+                marginal_col[start_idx:end_idx] = torch.logsumexp(log_integrand, dim=1)       # shape (batch_n,)
+
+            single_var_marginals[col_idx] = marginal_col
+            pbar.update(1)
+
+    return single_var_marginals  # shape (D, N) - already in log space
 
 
 def compute_two_var_marginal(model, data, col_idx_1, col_idx_2, quad_x, quad_w, batch_size=None):
-    """
-    Compute marginal for a single pair of columns (col_idx_1, col_idx_2).
-    Integrates out both columns simultaneously.
-    Builds expanded data chunk by chunk to avoid materialising full (N * Q², D) tensor.
-    Called inside the pair loop and result immediately consumed.
-    
-    Args:
-        model:      model with log_likelihood method
-        data:       shape (N, D)
-        col_idx_1:  first column index to integrate out
-        col_idx_2:  second column index to integrate out
-        quad_x:     1D quadrature points, shape (Q,)
-        quad_w:     1D quadrature weights, shape (Q,)
-        batch_size: number of rows N to process at once (None = all at once)
-    
-    Returns:
-        log_marginal: shape (N,) - log marginal for this pair
-    """
+
     N, D = data.shape
     Q = quad_x.shape[0]
-    Q2 = Q * Q  # number of 2D quadrature points
+    Q2 = Q * Q
 
-    # Construct 2D grid of quadrature points and weights once
-    # points shape: (Q², 2), weights shape: (Q²,)
-    points_i = quad_x.unsqueeze(1).expand(Q, Q).reshape(-1)          # shape (Q²,)
-    points_j = quad_x.unsqueeze(0).expand(Q, Q).reshape(-1)          # shape (Q²,)
-    points   = torch.stack([points_i, points_j], dim=1)               # shape (Q², 2)
-    weights  = (quad_w.unsqueeze(1) * quad_w.unsqueeze(0)).reshape(-1) # shape (Q²,)
+    # construct 2D grid once
+    points_i = quad_x.unsqueeze(1).expand(Q, Q).reshape(-1)           # shape (Q²,)
+    points_j = quad_x.unsqueeze(0).expand(Q, Q).reshape(-1)           # shape (Q²,)
+    points   = torch.stack([points_i, points_j], dim=1)                # shape (Q², 2)
+
+    # 2D log weights via outer sum in log space
+    log_w    = torch.log(quad_w)                                       # shape (Q,)
+    log_w_2d = (log_w.unsqueeze(1) + log_w.unsqueeze(0)).reshape(-1)  # shape (Q²,)
 
     if batch_size is None:
-        batch_size = N
+        batch_size_eff = N
+    else:
+        batch_size_eff = batch_size
 
     marginal = torch.zeros(N, device=model.device)
 
-    for start_idx in range(0, N, batch_size):
-        end_idx = min(start_idx + batch_size, N)
+    for start_idx in range(0, N, batch_size_eff):
+        end_idx = min(start_idx + batch_size_eff, N)
         batch_n = end_idx - start_idx
 
-        # Build expanded data chunk on the fly
-        # data chunk: (batch_n, D) -> (batch_n, 1, D) -> (batch_n, Q², D) -> (batch_n*Q², D)
-        data_chunk = data[start_idx:end_idx]                                              # shape (batch_n, D)
-        expanded_data_chunk = data_chunk.unsqueeze(1).expand(batch_n, Q2, D).reshape(batch_n * Q2, D).clone()
-                                                                                          # shape (batch_n*Q², D)
+        # build chunk on the fly
+        data_chunk = data[start_idx:end_idx]                                               # shape (batch_n, D)
+        expanded_data_chunk = data_chunk.unsqueeze(1).expand(
+            batch_n, Q2, D
+        ).reshape(batch_n * Q2, D).clone()                                                 # shape (batch_n*Q², D)
 
-        # Expand quad points and weights for this chunk
-        # (Q², 2) -> (1, Q², 2) -> (batch_n, Q², 2) -> (batch_n*Q², 2)
-        expanded_points  = points.unsqueeze(0).expand(batch_n, Q2, 2).reshape(batch_n * Q2, 2)
-                                                                                          # shape (batch_n*Q², 2)
-        # (Q²,) -> (1, Q²) -> (batch_n, Q²) -> (batch_n*Q²,)
-        expanded_weights = weights.unsqueeze(0).expand(batch_n, Q2).reshape(batch_n * Q2) # shape (batch_n*Q²,)
+        # expand points and log weights
+        expanded_points  = points.unsqueeze(0).expand(
+            batch_n, Q2, 2
+        ).reshape(batch_n * Q2, 2)                                                         # shape (batch_n*Q², 2)
+        expanded_log_w   = log_w_2d.unsqueeze(0).expand(
+            batch_n, Q2
+        ).reshape(batch_n * Q2)                                                            # shape (batch_n*Q²,)
 
-        # Replace columns with quadrature points
+        # replace columns
         expanded_data_chunk[:, col_idx_1] = expanded_points[:, 0]
         expanded_data_chunk[:, col_idx_2] = expanded_points[:, 1]
 
-        # Compute likelihood
-        ll_chunk = model.log_likelihood(expanded_data_chunk, return_lambda_matrix=False)  # shape (batch_n*Q²,)
-        likelihood_chunk          = torch.exp(ll_chunk)                                   # shape (batch_n*Q²,)
-        weighted_likelihood_chunk = likelihood_chunk * expanded_weights                    # shape (batch_n*Q²,)
+        # log likelihood
+        ll_chunk = model.log_likelihood(
+            expanded_data_chunk, return_lambda_matrix=False
+        )                                                                                   # shape (batch_n*Q²,)
 
-        # Sum over Q² points for each row in batch
-        # (batch_n*Q²,) -> (batch_n, Q²) -> (batch_n,)
-        marginal[start_idx:end_idx] = weighted_likelihood_chunk.view(batch_n, Q2).sum(dim=1)
+        # log-sum-exp over Q² points
+        log_integrand = (ll_chunk + expanded_log_w).view(batch_n, Q2)                     # shape (batch_n, Q²)
+        marginal[start_idx:end_idx] = torch.logsumexp(log_integrand, dim=1)               # shape (batch_n,)
 
-    return torch.log(marginal)  # shape (N,)
-
+    return marginal  # shape (N,) - already in log space
 
 def compute_pair_metrics(
     model_ll,
@@ -302,6 +277,24 @@ def compute_pair_metrics(
         # handle numerical instability
         ll_dev = ll_dev.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
         ll_dev = ll_dev[ll_dev > -torch.inf]
+        
+        
+        print(f"two_var_marginal stats: min={two_var_marginal.min():.4f}, "
+            f"max={two_var_marginal.max():.4f}, "
+            f"nan={two_var_marginal.isnan().sum()}, "
+            f"inf={two_var_marginal.isinf().sum()}")
+
+        print(f"single_var_marginals stats: min={single_var_marginals.min():.4f}, "
+            f"max={single_var_marginals.max():.4f}, "
+            f"nan={single_var_marginals.isnan().sum()}, "
+            f"inf={single_var_marginals.isinf().sum()}")
+
+        print(f"ll_dev before filtering: size={ll_dev.shape}, "
+            f"nan={ll_dev.isnan().sum()}, "
+            f"inf={ll_dev.isinf().sum()}, "
+            f"neginf={(ll_dev == -torch.inf).sum()}")
+                
+        
         ll_dev = ll_dev[ll_dev.abs() < ll_dev.abs().quantile(0.99)]
         kld    = ll_dev.mean()                   # scalar
 
@@ -314,6 +307,7 @@ def compute_pair_metrics(
         )                                                   # shape (N,)
         ll_dev2 = ll_dev2.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
         ll_dev2 = ll_dev2[ll_dev2 > -torch.inf]
+        weights = weights[ll_dev2 > -torch.inf]
         iae     = ll_dev2 * weights                         # shape (N,)
         iae     = iae[iae < iae.quantile(0.99)]
         iae     = iae.mean() / 2                            # scalar
