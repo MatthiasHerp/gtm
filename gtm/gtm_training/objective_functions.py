@@ -79,7 +79,10 @@ def training_objective(
         )
         if adaptive_lasso_weights_matrix is False:
             pen_lambda_lasso = (
-                (lambda_penalty_params * (torch.square(precision_matrix).sum(0)) ** 0.5)
+                (
+                    lambda_penalty_params
+                    * 1 / samples.size(0) * (torch.square(precision_matrix).sum(0)) ** 0.5
+                )
                 .tril(-1)
                 .mean()
             )
@@ -88,7 +91,7 @@ def training_objective(
                 (
                     lambda_penalty_params
                     * adaptive_lasso_weights_matrix
-                    * (torch.square(precision_matrix).sum(0)) ** 0.5
+                    * 1 / samples.size(0) * (torch.square(precision_matrix).sum(0)) ** 0.5
                 )
                 .tril(-1)
                 .mean()
