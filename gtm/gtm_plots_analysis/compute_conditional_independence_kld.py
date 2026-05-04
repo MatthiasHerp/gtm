@@ -185,9 +185,8 @@ def compute_conditional_independence_kld(
                     - torch.exp(under_ci_assumption_log_distribution_glq)
                 )
                 # handeling unstable numerics
-                ll_dev2 = ll_dev2.nan_to_num(nan=0, posinf=0, neginf=0)
-                #ll_dev2 = ll_dev2.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
-                #ll_dev2 = ll_dev2[ll_dev2 > -torch.inf]
+                ll_dev2 = ll_dev2.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
+                ll_dev2 = ll_dev2[ll_dev2 > -torch.inf]
                 # correct
                 iae = ll_dev2 * weights
                 #iae = iae.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
@@ -207,19 +206,19 @@ def compute_conditional_independence_kld(
                     actual_log_distribution_glq
                     - under_ci_assumption_log_distribution_glq
                 )
-                ll_dev = ll_dev[~torch.isnan(ll_dev)]
-                ll_dev = ll_dev[~torch.isinf(ll_dev)]
+                ll_dev = ll_dev.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
+                ll_dev = ll_dev[ll_dev > -torch.inf]
+                ll_dev = ll_dev[ll_dev.abs() < ll_dev.abs().quantile(0.99)]
                 kld = ll_dev.mean()
 
                 ll_dev2 = torch.abs(
                     torch.exp(actual_log_distribution_glq)
                     - torch.exp(under_ci_assumption_log_distribution_glq)
                 )
-                ll_dev2 = ll_dev2[~torch.isnan(ll_dev2)]
-                ll_dev2 = ll_dev2[~torch.isinf(ll_dev2)]
-                iae = ll_dev2
-                iae = iae[iae < iae.quantile(0.99)]
-                iae = iae.mean() / 2
+                ll_dev2 = ll_dev2.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
+                ll_dev2 = ll_dev2[ll_dev2 > -torch.inf]
+                iae     = ll_dev2[ll_dev2 < ll_dev2.quantile(0.99)]
+                iae     = iae.mean() / 2    
 
             kld_list.append(kld.item())
             iae_list.append(iae.item())

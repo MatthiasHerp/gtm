@@ -381,122 +381,154 @@ def run_experiment_dragon(
     mlflow.log_param(key="min_val", value=min_val)
     mlflow.log_param(key="max_val", value=max_val)
     
+    import time
     
-    if max_num_ci_sample_size < sample_size:
-        # Compute number of chunks
-        n_chunks = math.ceil(sample_size / max_num_ci_sample_size)
-        print("needs to chunk synthetic sample ci computation, uses {} chunks of size ".format(n_chunks) + str(max_num_ci_sample_size))
-        print("is be more then sample_size if sample_size / max_num_ci_sample_size not an integer")
-
-        result_tables = []
-        for i in range(n_chunks):
-            print(f"Processing chunk {i+1}/{n_chunks} ({max_num_ci_sample_size} samples)...")
-            chunk_table = model.compute_conditional_independence_table(
-                y=None,
-                evaluation_data_type="samples_from_model",
-                num_processes=num_processes,
-                sample_size=max_num_ci_sample_size,
-                num_points_quad=num_points_quad,
-                copula_only=copula_only,
-                min_val=min_val,
-                max_val=max_val
-            )
-            result_tables.append(chunk_table)
-
-        # Concatenate all results into one dataframe
-        all_results = pd.concat(result_tables, ignore_index=True)
-
-        # Aggregate (average) using groupby:
-        conditional_independence_table_samples = (
-            all_results
-            .groupby(["var_row", "var_col"], as_index=False)
-            .agg({
-                "precision_abs_mean": "mean",
-                "precision_square_mean": "mean",
-                "cond_correlation_abs_mean": "mean",
-                "cond_correlation_square_mean": "mean",
-                "kld": "mean",
-                "iae": "mean"
-            })
-        )
-    else:  
-        conditional_independence_table_samples = model.compute_conditional_independence_table(
+    timer_start = time.time()
+    conditional_independence_table_samples2 = model.compute_conditional_independence_table_v2(
                                             y = None,
                                             evaluation_data_type = "samples_from_model",
-                                            num_processes=num_processes,
-                                            sample_size = sample_size,
+                                            #num_processes=num_processes,
+                                            sample_size = 1000,
                                             num_points_quad=num_points_quad,
                                             copula_only=copula_only,
                                             min_val=min_val,
                                             max_val=max_val)
+    timer_end = time.time()
+    print(f"Time taken to compute conditional independence table v2 with {sample_size} samples: {timer_end - timer_start} seconds")
     
-
-    conditional_independence_table_data_train = model.compute_conditional_independence_table(
-                                        y = synthetic_data_dict['train_data'].detach(),
-                                        evaluation_data_type = "data",
-                                        num_processes=num_processes,
-                                        sample_size = sample_size,
-                                        num_points_quad=num_points_quad,
-                                        copula_only=copula_only,
-                                        min_val=min_val,
-                                        max_val=max_val)
+    timer_start = time.time()
+    conditional_independence_table_samples = model.compute_conditional_independence_table(
+                                            y = None,
+                                            evaluation_data_type = "samples_from_model",
+                                            num_processes=num_processes,
+                                            sample_size = 1000,
+                                            num_points_quad=num_points_quad,
+                                            copula_only=copula_only,
+                                            min_val=min_val,
+                                            max_val=max_val)
+    timer_end = time.time()
+    print(f"Time taken to compute conditional independence table with {sample_size} samples: {timer_end - timer_start} seconds")
     
-
-    conditional_independence_table_data_val = model.compute_conditional_independence_table(
-                                        y = synthetic_data_dict['validate_data'].detach(),
-                                        evaluation_data_type = "data",
-                                        num_processes=num_processes,
-                                        sample_size = sample_size,
-                                        num_points_quad=num_points_quad,
-                                        copula_only=copula_only,
-                                        min_val=min_val,
-                                        max_val=max_val)
     
-    ### 6. Identifying the Conditional Independence Graph 
-    # We compare the true known conditional independence Graph to the one learned by the GTM. To do so we first merge the true structure table with our learned one.
     
-    #merged_ci_tables_samples = pd.merge(
-    #    conditional_independence_table_samples,
-    #    synthetic_data_dict["df_true_structure"],
-    #    on=["var_row", "var_col"]
-    #)
-#
-    #merged_ci_tables_data_train = pd.merge(
-    #    conditional_independence_table_data_train,
-    #    synthetic_data_dict["df_true_structure"],
-    #    on=["var_row", "var_col"]
-    #)
-    
-    merged_ci_tables_samples = conditional_independence_table_samples
-    merged_ci_tables_data_train = conditional_independence_table_data_train
-    
-
-    # the iae makes no sense when using the true data, and the kld is the log likelihood ratio so we del iae and rename kld into ll_diff
-    del merged_ci_tables_data_train["iae"]
-    merged_ci_tables_data_train["ll_diff"] = merged_ci_tables_data_train["kld"]
-    del merged_ci_tables_data_train["kld"]
-    
-    #merged_ci_tables_data_val = pd.merge(
-    #    conditional_independence_table_data_val,
-    #    synthetic_data_dict["df_true_structure"],
-    #    on=["var_row", "var_col"]
-    #)
-    del merged_ci_tables_data_val["iae"]
-    merged_ci_tables_data_val["ll_diff"] = merged_ci_tables_data_val["kld"]
-    del merged_ci_tables_data_val["kld"]
-    
-    merged_ci_tables_data_val = conditional_independence_table_data_val
-    
-    # store the merged table as an artifact
-    merged_ci_tables_samples.to_csv(temp_folder+"/conditional_independence_table_model_samples.csv", index=False)
-    mlflow.log_artifact(temp_folder+"/conditional_independence_table_model_samples.csv")   
-    
-    conditional_independence_table_data_train.to_csv(temp_folder+"/conditional_independence_table_data_train.csv", index=False)
-    mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_train.csv")   
-    
-    conditional_independence_table_data_val.to_csv(temp_folder+"/conditional_independence_table_data_validate.csv", index=False)
-    mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_validate.csv")   
-
+    ##
+    ##
+    ##
+    ##if max_num_ci_sample_size < sample_size:
+    ##    # Compute number of chunks
+    ##    n_chunks = math.ceil(sample_size / max_num_ci_sample_size)
+    ##    print("needs to chunk synthetic sample ci computation, uses {} chunks of size ".format(n_chunks) + str(max_num_ci_sample_size))
+    ##    print("is be more then sample_size if sample_size / max_num_ci_sample_size not an integer")
+##
+    ##    result_tables = []
+    ##    for i in range(n_chunks):
+    ##        print(f"Processing chunk {i+1}/{n_chunks} ({max_num_ci_sample_size} samples)...")
+    ##        chunk_table = model.compute_conditional_independence_table(
+    ##            y=None,
+    ##            evaluation_data_type="samples_from_model",
+    ##            num_processes=num_processes,
+    ##            sample_size=max_num_ci_sample_size,
+    ##            num_points_quad=num_points_quad,
+    ##            copula_only=copula_only,
+    ##            min_val=min_val,
+    ##            max_val=max_val
+    ##        )
+    ##        result_tables.append(chunk_table)
+##
+    ##    # Concatenate all results into one dataframe
+    ##    all_results = pd.concat(result_tables, ignore_index=True)
+##
+    ##    # Aggregate (average) using groupby:
+    ##    conditional_independence_table_samples = (
+    ##        all_results
+    ##        .groupby(["var_row", "var_col"], as_index=False)
+    ##        .agg({
+    ##            "precision_abs_mean": "mean",
+    ##            "precision_square_mean": "mean",
+    ##            "cond_correlation_abs_mean": "mean",
+    ##            "cond_correlation_square_mean": "mean",
+    ##            "kld": "mean",
+    ##            "iae": "mean"
+    ##        })
+    ##    )
+    ##else:  
+    ##    conditional_independence_table_samples = model.compute_conditional_independence_table(
+    ##                                        y = None,
+    ##                                        evaluation_data_type = "samples_from_model",
+    ##                                        num_processes=num_processes,
+    ##                                        sample_size = sample_size,
+    ##                                        num_points_quad=num_points_quad,
+    ##                                        copula_only=copula_only,
+    ##                                        min_val=min_val,
+    ##                                        max_val=max_val)
+    ##
+##
+    ##conditional_independence_table_data_train = model.compute_conditional_independence_table(
+    ##                                    y = synthetic_data_dict['train_data'].detach(),
+    ##                                    evaluation_data_type = "data",
+    ##                                    num_processes=num_processes,
+    ##                                    sample_size = sample_size,
+    ##                                    num_points_quad=num_points_quad,
+    ##                                    copula_only=copula_only,
+    ##                                    min_val=min_val,
+    ##                                    max_val=max_val)
+    ##
+##
+    ##conditional_independence_table_data_val = model.compute_conditional_independence_table(
+    ##                                    y = synthetic_data_dict['validate_data'].detach(),
+    ##                                    evaluation_data_type = "data",
+    ##                                    num_processes=num_processes,
+    ##                                    sample_size = sample_size,
+    ##                                    num_points_quad=num_points_quad,
+    ##                                    copula_only=copula_only,
+    ##                                    min_val=min_val,
+    ##                                    max_val=max_val)
+    ##
+    ##### 6. Identifying the Conditional Independence Graph 
+    ### We compare the true known conditional independence Graph to the one learned by the GTM. To do so we first merge the true structure table with our learned one.
+    ##
+    ###merged_ci_tables_samples = pd.merge(
+    ###    conditional_independence_table_samples,
+    ###    synthetic_data_dict["df_true_structure"],
+    ###    on=["var_row", "var_col"]
+    ###)
+###
+    ###merged_ci_tables_data_train = pd.merge(
+    ###    conditional_independence_table_data_train,
+    ###    synthetic_data_dict["df_true_structure"],
+    ###    on=["var_row", "var_col"]
+    ###)
+    ##
+    ##merged_ci_tables_samples = conditional_independence_table_samples
+    ##merged_ci_tables_data_train = conditional_independence_table_data_train
+    ##
+##
+    ### the iae makes no sense when using the true data, and the kld is the log likelihood ratio so we del iae and rename kld into ll_diff
+    ##del merged_ci_tables_data_train["iae"]
+    ##merged_ci_tables_data_train["ll_diff"] = merged_ci_tables_data_train["kld"]
+    ##del merged_ci_tables_data_train["kld"]
+    ##
+    ###merged_ci_tables_data_val = pd.merge(
+    ###    conditional_independence_table_data_val,
+    ###    synthetic_data_dict["df_true_structure"],
+    ###    on=["var_row", "var_col"]
+    ###)
+    ##del merged_ci_tables_data_val["iae"]
+    ##merged_ci_tables_data_val["ll_diff"] = merged_ci_tables_data_val["kld"]
+    ##del merged_ci_tables_data_val["kld"]
+    ##
+    ##merged_ci_tables_data_val = conditional_independence_table_data_val
+    ##
+    ### store the merged table as an artifact
+    ##merged_ci_tables_samples.to_csv(temp_folder+"/conditional_independence_table_model_samples.csv", index=False)
+    ##mlflow.log_artifact(temp_folder+"/conditional_independence_table_model_samples.csv")   
+    ##
+    ##conditional_independence_table_data_train.to_csv(temp_folder+"/conditional_independence_table_data_train.csv", index=False)
+    ##mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_train.csv")   
+    ##
+    ##conditional_independence_table_data_val.to_csv(temp_folder+"/conditional_independence_table_data_validate.csv", index=False)
+    ##mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_validate.csv")   
+##
     mlflow.end_run()
     
     clear_temp_folder(temp_folder)

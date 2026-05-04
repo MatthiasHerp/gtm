@@ -28,6 +28,8 @@ from gtm.gtm_training.objective_functions import (log_likelihood,
 from gtm.gtm_training.training_helpers import (
     if_float_create_lambda_penalisation_matrix, train)
 
+from gtm.gtm_plots_analysis.compute_conditional_independence_kld_v2 import compute_conditional_independence_kld_v2
+
 # from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
 
 
@@ -1650,6 +1652,35 @@ class GTM(nn.Module):
             study.optimize(optuna_objective, n_trials=n_trials)
             print("hyperparameter_tuning done")
             return study
+        
+    
+    def compute_conditional_independence_table_v2(
+        self,
+        y: torch.Tensor | None = None,
+        evaluation_data_type: Literal[
+            "data", "uniform_random_samples", "samples_from_model"
+        ] = "data",
+        ##num_processes: int = 10,
+        sample_size: int = 10000,
+        num_points_quad: int = 20,
+        copula_only: bool = False,
+        min_val: float = -5,
+        max_val: float = 5,
+        #likelihood_based_metrics: bool = True,
+        batch_size=None
+    ):    
+        
+        return compute_conditional_independence_kld_v2(
+                                                self,
+                                                data=y,
+                                                num_points_quad=num_points_quad,
+                                                min_val=min_val,
+                                                max_val=max_val,
+                                                batch_size=batch_size,
+                                                evaluation_data_type=evaluation_data_type,
+                                                sample_size=sample_size,
+                                                copula_only=False
+                                            )
 
     def compute_conditional_independence_table(
         self,
