@@ -46,7 +46,18 @@ def setup_quadrature(num_points, min_val, max_val, device):
     x = torch.FloatTensor(x).squeeze().to(device)  # shape (Q,)
     w = torch.FloatTensor(w).squeeze().to(device)  # shape (Q,)
     
-    return x, w
+    Q = num_points
+    Q2 = num_points * num_points
+    # construct 2D grid once
+    points_i = x.unsqueeze(1).expand(Q, Q).reshape(-1)           # shape (Q²,)
+    points_j = x.unsqueeze(0).expand(Q, Q).reshape(-1)           # shape (Q²,)
+    x_2d   = torch.stack([points_i, points_j], dim=1)                # shape (Q², 2)
+
+    # 2D log weights via outer sum in log space
+    log_w    = torch.log(w)                                       # shape (Q,)
+    log_w_2d = (log_w.unsqueeze(1) + log_w.unsqueeze(0)).reshape(-1)  # shape (Q²,)
+    
+    return x, w, x_2d, log_w_2d
 
 
 def build_expanded_data(data, col_indices, quad_x, quad_w):
@@ -157,20 +168,25 @@ def compute_single_var_marginals(model, data, quad_x, quad_w, batch_size=None):
     return single_var_marginals  # shape (D, N) - already in log space
 
 
-def compute_two_var_marginal(model, data, col_idx_1, col_idx_2, quad_x, quad_w, batch_size=None):
+def compute_two_var_marginal(model, data, col_idx_1, col_idx_2, 
+                             #quad_x, quad_w, 
+                             quad_x_2d, log_quad_w_2d,
+                             batch_size=None):
 
     N, D = data.shape
-    Q = quad_x.shape[0]
-    Q2 = Q * Q
+    Q2 = quad_x_2d.shape[0]
 
-    # construct 2D grid once
-    points_i = quad_x.unsqueeze(1).expand(Q, Q).reshape(-1)           # shape (Q²,)
-    points_j = quad_x.unsqueeze(0).expand(Q, Q).reshape(-1)           # shape (Q²,)
-    points   = torch.stack([points_i, points_j], dim=1)                # shape (Q², 2)
-
-    # 2D log weights via outer sum in log space
-    log_w    = torch.log(quad_w)                                       # shape (Q,)
-    log_w_2d = (log_w.unsqueeze(1) + log_w.unsqueeze(0)).reshape(-1)  # shape (Q²,)
+    ## construct 2D grid once
+    #points_i = quad_x.unsqueeze(1).expand(Q, Q).reshape(-1)           # shape (Q²,)
+    #points_j = quad_x.unsqueeze(0).expand(Q, Q).reshape(-1)           # shape (Q²,)
+    #points   = torch.stack([points_i, points_j], dim=1)                # shape (Q², 2)
+#
+    ## 2D log weights via outer sum in log space
+    #log_w    = torch.log(quad_w)                                       # shape (Q,)
+    #log_w_2d = (log_w.unsqueeze(1) + log_w.unsqueeze(0)).reshape(-1)  # shape (Q²,)
+    
+    points = quad_x_2d.to(model.device)  # shape (Q², 2)
+    log_w_2d = log_quad_w_2d.to(model.device)
 
     if batch_size is None:
         batch_size_eff = N
@@ -401,12 +417,13 @@ def compute_conditional_independence_kld_v2(
 
         #setup_pbar.set_description("Setting up quadrature points")
         print("Setting up quadrature points")
-        quad_x, quad_w = setup_quadrature(
+        quad_x, quad_w, quad_x_2d, log_quad_w_2d = setup_quadrature(
             num_points=num_points_quad,
             min_val=min_val,
             max_val=max_val,
             device=device,
         )
+        
         # quad_x: shape (Q,)
         # quad_w: shape (Q,)
         #setup_pbar.update(1)
@@ -429,7 +446,7 @@ def compute_conditional_independence_kld_v2(
             data=evaluation_data,
             quad_x=quad_x,
             quad_w=quad_w,
-            batch_size=batch_size,
+            #batch_size=batch_size,
         )
         # single_var_marginals: shape (D, N)
         #setup_pbar.update(1)
@@ -461,8 +478,10 @@ def compute_conditional_independence_kld_v2(
                     data=evaluation_data,
                     col_idx_1=col_idx_1,
                     col_idx_2=col_idx_2,
-                    quad_x=quad_x,
-                    quad_w=quad_w,
+                    #quad_x=quad_x,
+                    #quad_w=quad_w,
+                    quad_x_2d = quad_x_2d, 
+                    log_quad_w_2d=log_quad_w_2d,
                     batch_size=batch_size,
                 )
                 # shape (N,)

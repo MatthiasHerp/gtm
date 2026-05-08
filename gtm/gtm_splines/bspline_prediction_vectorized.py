@@ -459,6 +459,41 @@ def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
     return d[:, p]
 
 
+# new option by claude
+def deboor_algorithm_fixed_degrees(x, k, t, c, p=3):
+
+    offsets  = torch.arange(0, p + 1, device=k.device).view(1, 1, p + 1)
+    ctrl_idx = k.unsqueeze(-1) - p + offsets
+
+    d = torch.gather(
+        c.unsqueeze(1).expand(-1, k.shape[1], -1),
+        2,
+        ctrl_idx,
+    ).mT                                                                    # shape (D, 4, N)
+
+    # precompute all alphas upfront
+    # all shapes: (D, N)
+    alpha_1_3 = (x - t[k + 3 - p]) / (t[k + 1 + 3 - 1] - t[k + 3 - p] + 1e-9)
+    alpha_1_2 = (x - t[k + 2 - p]) / (t[k + 1 + 2 - 1] - t[k + 2 - p] + 1e-9)
+    alpha_1_1 = (x - t[k + 1 - p]) / (t[k + 1 + 1 - 1] - t[k + 1 - p] + 1e-9)
+    alpha_2_3 = (x - t[k + 3 - p]) / (t[k + 1 + 3 - 2] - t[k + 3 - p] + 1e-9)
+    alpha_2_2 = (x - t[k + 2 - p]) / (t[k + 1 + 2 - 2] - t[k + 2 - p] + 1e-9)
+    alpha_3_3 = (x - t[k + 3 - p]) / (t[k + 1 + 3 - 3] - t[k + 3 - p] + 1e-9)
+
+    # r=1 sweep: create new tensors instead of modifying in place
+    d3 = (1 - alpha_1_3) * d[:, 2, :] + alpha_1_3 * d[:, 3, :]   # shape (D, N)
+    d2 = (1 - alpha_1_2) * d[:, 1, :] + alpha_1_2 * d[:, 2, :]   # shape (D, N)
+    d1 = (1 - alpha_1_1) * d[:, 0, :] + alpha_1_1 * d[:, 1, :]   # shape (D, N)
+
+    # r=2 sweep: use previous results
+    d3 = (1 - alpha_2_3) * d2 + alpha_2_3 * d3                    # shape (D, N)
+    d2 = (1 - alpha_2_2) * d1 + alpha_2_2 * d2                    # shape (D, N)
+
+    # r=3 sweep
+    d3 = (1 - alpha_3_3) * d2 + alpha_3_3 * d3                    # shape (D, N)
+
+    return d3  # shape (D, N) == d[:, p, :]
+
 ############## def deboor_algorithm_fixed_degrees(x, k, t, c, p): # x: (B, N), k: (B, N), t: (M,), c: (B, n_ctrl) 
 ##############     B, N = x.shape 
 ##############     n_ctrl = c.shape[1]
@@ -561,6 +596,63 @@ def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p=3):
     q = compute_update_alpha_frist_derivativ(x, t, k, r, q, j, p=3)
 
     return q[:, p - 1]
+
+
+# new option by claude
+def deboor_algorithm_fixed_degrees_first_derivative(x, k, t, c, p=3):
+
+    B, N = k.shape
+
+    # Step 1: Build j-offsets for j in [0, 1, 2]
+    j_offsets = torch.arange(p, device=k.device).view(1, 1, p)  # shape (1, 1, 3)
+
+    # Step 2: Compute control point indices
+    idx_1 = k.unsqueeze(-1) - p + j_offsets                     # shape (B, N, 3)
+    idx_2 = idx_1 + 1                                            # shape (B, N, 3)
+
+    # Step 3: Gather control point differences
+    c_expanded = c.unsqueeze(1).expand(-1, N, -1)                # shape (B, N, M)
+    delta_c    = torch.gather(c_expanded, 2, idx_2) - torch.gather(c_expanded, 2, idx_1)
+                                                                  # shape (B, N, 3)
+
+    # Step 4: Compute knot indices
+    t_idx_1 = k.unsqueeze(-1) + j_offsets + 1                   # shape (B, N, 3)
+    t_idx_2 = k.unsqueeze(-1) - p + j_offsets + 1               # shape (B, N, 3)
+
+    # Step 5: Get knot differences
+    t_diff = t[t_idx_1] - t[t_idx_2]                            # shape (B, N, 3)
+
+    # Step 6: Compute initial q values
+    q = p * delta_c / (t_diff + 1e-9)                           # shape (B, N, 3)
+    q = q.mT                                                     # shape (B, 3, N)
+
+    # precompute all alphas upfront
+    # r=1, j=2
+    right_1_2  = 2 + 1 + k - 1                                  # k + 2
+    left_1_2   = 2 + k - (p - 1)                                # k + 1 - (p-1) = k - 1 + 1
+    alpha_1_2  = (x - t[left_1_2]) / (t[right_1_2] - t[left_1_2] + 1e-9)
+                                                                  # shape (B, N)
+
+    # r=1, j=1
+    right_1_1  = 1 + 1 + k - 1                                  # k + 1
+    left_1_1   = 1 + k - (p - 1)                                # k - p + 2
+    alpha_1_1  = (x - t[left_1_1]) / (t[right_1_1] - t[left_1_1] + 1e-9)
+                                                                  # shape (B, N)
+
+    # r=2, j=2
+    right_2_2  = 2 + 1 + k - 2                                  # k + 1
+    left_2_2   = 2 + k - (p - 1)                                # k - p + 3
+    alpha_2_2  = (x - t[left_2_2]) / (t[right_2_2] - t[left_2_2] + 1e-9)
+                                                                  # shape (B, N)
+
+    # r=1 sweep: new tensors, no in-place ops
+    q2 = (1 - alpha_1_2) * q[:, 1, :] + alpha_1_2 * q[:, 2, :]  # shape (B, N)
+    q1 = (1 - alpha_1_1) * q[:, 0, :] + alpha_1_1 * q[:, 1, :]  # shape (B, N)
+
+    # r=2 sweep
+    q2 = (1 - alpha_2_2) * q1 + alpha_2_2 * q2                   # shape (B, N)
+
+    return q2  # shape (B, N) == q[:, p-1, :]
 
 
 ############## def deboor_algorithm_fixed_degrees_first_derivativ(x, k, t, c, p): # x: (B, N), k: (B, N), t: (M,), c: (B, n_ctrl) 
