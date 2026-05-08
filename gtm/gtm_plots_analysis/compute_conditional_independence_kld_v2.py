@@ -458,61 +458,29 @@ def compute_conditional_independence_kld_v2(
         # -----------------------------------------------------------------
         results = []
 
-        with tqdm(
-            total=len(pairs),
-            desc="Computing pair metrics",
-            position=0,
-            leave=True,
-        ) as pair_pbar:
-
-            for pair_num, (col_idx_1, col_idx_2) in enumerate(pairs):
-
-                pair_pbar.set_description(
-                    f"Pair {pair_num+1}/{len(pairs)}: ({col_idx_1}, {col_idx_2})"
-                )
-
-                # compute two var marginal for this pair
-                # built and consumed chunk by chunk
-                two_var_marginal = compute_two_var_marginal(
-                    model=model,
-                    data=evaluation_data,
-                    col_idx_1=col_idx_1,
-                    col_idx_2=col_idx_2,
-                    #quad_x=quad_x,
-                    #quad_w=quad_w,
-                    quad_x_2d = quad_x_2d, 
-                    log_quad_w_2d=log_quad_w_2d,
-                    batch_size=batch_size,
-                )
-                # shape (N,)
-
-                # immediately compute metrics and discard two_var_marginal
-                kld, iae = compute_pair_metrics(
+        results = [
+            {
+                "var_col": col_idx_1,
+                "var_row": col_idx_2,
+                **dict(zip(["kld", "iae"], compute_pair_metrics(
                     model_ll=model_ll,
                     single_var_marginals=single_var_marginals,
-                    two_var_marginal=two_var_marginal,
+                    two_var_marginal=compute_two_var_marginal(
+                        model=model,
+                        data=evaluation_data,
+                        col_idx_1=col_idx_1,
+                        col_idx_2=col_idx_2,
+                        quad_x_2d=quad_x_2d,
+                        log_quad_w_2d=log_quad_w_2d,
+                        batch_size=batch_size,
+                    ),
                     col_idx_1=col_idx_1,
                     col_idx_2=col_idx_2,
                     evaluation_data_type=evaluation_data_type,
-                )
-
-                # store only scalars
-                results.append({
-                    "var_col": col_idx_1,
-                    "var_row": col_idx_2,
-                    "kld":       kld,
-                    "iae":       iae,
-                })
-
-                # two_var_marginal goes out of scope here and is freed
-                del two_var_marginal
-
-                # update progress bar with current metrics
-                pair_pbar.set_postfix({
-                    "kld": f"{kld:.4f}",
-                    "iae": f"{iae:.4f}",
-                })
-                pair_pbar.update(1)
+                )))
+            }
+            for col_idx_1, col_idx_2 in tqdm(pairs, desc="Computing pair metrics", position=0, leave=True)
+        ]
 
         # -----------------------------------------------------------------
         # Step 5: Assemble results
