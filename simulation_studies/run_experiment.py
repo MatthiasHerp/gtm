@@ -45,6 +45,7 @@ def run_experiment(
     transformation_spline_range = (-10, 10),
     decorrelation_spline_range = (-10, 10),
     device = "cpu",
+    hyperparameter_tune=True,
     penalty_decorrelation_ridge_param = None,
     penalty_decorrelation_ridge_first_difference = "sample",
     penalty_decorrelation_ridge_second_difference = "sample",
@@ -196,26 +197,27 @@ def run_experiment(
         device = device)
     model.to(device=device)
 
-    study = model.hyperparameter_tune_penalties( 
-        train_dataloader = dataloader_train,
-        validate_dataloader = dataloader_validate,
-        penalty_decorrelation_ridge_param = penalty_decorrelation_ridge_param,
-        penalty_decorrelation_ridge_first_difference = penalty_decorrelation_ridge_first_difference,
-        penalty_decorrelation_ridge_second_difference = penalty_decorrelation_ridge_second_difference,
-        penalty_transformation_ridge_second_difference = penalty_transformation_ridge_second_difference,
-        penalty_lasso_conditional_independence = penalty_lasso_conditional_independence,
-        adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
-        optimizer=optimizer,
-        learning_rate=learning_rate,
-        iterations=iterations,
-        patience=patience,
-        min_delta=min_delta,
-        seperate_copula_training=seperate_copula_training,
-        max_batches_per_iter=max_batches_per_iter,
-        pretrained_transformation_layer=pretrained_transformation_layer,
-        n_trials=n_trials,
-        temp_folder=temp_folder,
-        study_name=study_name)
+    if hyperparameter_tune == True:
+        study = model.hyperparameter_tune_penalties( 
+            train_dataloader = dataloader_train,
+            validate_dataloader = dataloader_validate,
+            penalty_decorrelation_ridge_param = penalty_decorrelation_ridge_param,
+            penalty_decorrelation_ridge_first_difference = penalty_decorrelation_ridge_first_difference,
+            penalty_decorrelation_ridge_second_difference = penalty_decorrelation_ridge_second_difference,
+            penalty_transformation_ridge_second_difference = penalty_transformation_ridge_second_difference,
+            penalty_lasso_conditional_independence = penalty_lasso_conditional_independence,
+            adaptive_lasso_weights_matrix=adaptive_lasso_weights_matrix,
+            optimizer=optimizer,
+            learning_rate=learning_rate,
+            iterations=iterations,
+            patience=patience,
+            min_delta=min_delta,
+            seperate_copula_training=seperate_copula_training,
+            max_batches_per_iter=max_batches_per_iter,
+            pretrained_transformation_layer=pretrained_transformation_layer,
+            n_trials=n_trials,
+            temp_folder=temp_folder,
+            study_name=study_name)
         
     # for every penalty if we pass a none the set penalty to zero
     if penalty_decorrelation_ridge_param is None:
@@ -257,7 +259,7 @@ def run_experiment(
     
     if penalty_lasso_conditional_independence is None:
         penalty_lasso_conditional_independence_chosen = False
-    elif penalty_lasso_conditional_independence is float:
+    elif type(penalty_lasso_conditional_independence) is float:
         penalty_lasso_conditional_independence_chosen = penalty_lasso_conditional_independence
     else:
         penalty_lasso_conditional_independence_chosen = study.best_params["penalty_lasso_conditional_independence"]
