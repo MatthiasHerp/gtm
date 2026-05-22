@@ -196,7 +196,6 @@ def run_experiment(
         device = device)
     model.to(device=device)
 
-
     study = model.hyperparameter_tune_penalties( 
         train_dataloader = dataloader_train,
         validate_dataloader = dataloader_validate,
@@ -221,28 +220,28 @@ def run_experiment(
     # for every penalty if we pass a none the set penalty to zero
     if penalty_decorrelation_ridge_param is None:
         penalty_decorrelation_ridge_param_chosen = 0
-    elif penalty_decorrelation_ridge_param is float:
+    elif type(penalty_decorrelation_ridge_param) is float:
         penalty_decorrelation_ridge_param_chosen = penalty_decorrelation_ridge_param
     else:
         penalty_decorrelation_ridge_param_chosen = study.best_params["penalty_decorrelation_ridge_param"]
 
     if penalty_decorrelation_ridge_first_difference is None:
         penalty_decorrelation_ridge_first_difference_chosen = 0
-    elif penalty_decorrelation_ridge_first_difference is float:
+    elif type(penalty_decorrelation_ridge_first_difference) is float:
         penalty_decorrelation_ridge_first_difference_chosen = penalty_decorrelation_ridge_first_difference
     else:
         penalty_decorrelation_ridge_first_difference_chosen = study.best_params["penalty_decorrelation_ridge_first_difference"]
 
     if penalty_decorrelation_ridge_second_difference is None:
         penalty_decorrelation_ridge_second_difference_chosen = 0
-    elif penalty_decorrelation_ridge_second_difference is float:
+    elif type(penalty_decorrelation_ridge_second_difference) is float:
         penalty_decorrelation_ridge_second_difference_chosen = penalty_decorrelation_ridge_second_difference
     else:
         penalty_decorrelation_ridge_second_difference_chosen = study.best_params["penalty_decorrelation_ridge_second_difference"]
     
     if penalty_transformation_ridge_second_difference is None:
         penalty_transformation_ridge_second_difference_chosen = 0
-    elif penalty_transformation_ridge_second_difference is float:
+    elif type(penalty_transformation_ridge_second_difference) is float:
         penalty_transformation_ridge_second_difference_chosen = penalty_transformation_ridge_second_difference
     else:
         penalty_transformation_ridge_second_difference_chosen = study.best_params["penalty_transformation_ridge_second_difference"]
