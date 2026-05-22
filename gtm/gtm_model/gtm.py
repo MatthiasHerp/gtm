@@ -29,7 +29,8 @@ from gtm.gtm_training.training_helpers import (
     if_float_create_lambda_penalisation_matrix, train)
 
 from gtm.gtm_plots_analysis.compute_conditional_independence_kld_v2 import compute_conditional_independence_kld_v2
-
+from gtm.gtm_plots_analysis.compute_local_loglikelihood_hessian import compute_local_loglikelihood_hessian
+from gtm.gtm_plots_analysis.compute_normalised_hessian_metric import pairwise_blockwise_nuclear_normalize_vectorised
 # from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
 
 
@@ -2302,3 +2303,21 @@ class GTM(nn.Module):
             show_ticks=show_ticks,
             show_plot=show_plot,
         )
+        
+    def compute_local_loglikelihood_hessian(self,
+                              y,
+                              copula_only=True):
+        
+        return compute_local_loglikelihood_hessian(self,
+                              y,
+                              copula_only=True)
+        
+    def compute_local_relative_hessian_metric(self,y,copula_only=True):
+        
+        hessians = self.compute_local_loglikelihood_hessian(y,copula_only=copula_only)
+        
+        return pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12)
+        
+        
+        
+        
