@@ -304,8 +304,8 @@ def compute_pair_metrics(
             torch.exp(actual_log) - torch.exp(under_ci_log)
         )                                                   # shape (N,)
         ll_dev2 = ll_dev2.nan_to_num(nan=-torch.inf, posinf=-torch.inf, neginf=-torch.inf)
-        ll_dev2 = ll_dev2[ll_dev2 > -torch.inf]
         weights = weights[ll_dev2 > -torch.inf]
+        ll_dev2 = ll_dev2[ll_dev2 > -torch.inf]
         iae     = ll_dev2 * weights                         # shape (N,)
         iae     = iae[iae < iae.quantile(0.99)]
         iae     = iae.mean() / 2                            # scalar
