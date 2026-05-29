@@ -1680,7 +1680,7 @@ class GTM(nn.Module):
                                                 batch_size=batch_size,
                                                 evaluation_data_type=evaluation_data_type,
                                                 sample_size=sample_size,
-                                                copula_only=False
+                                                copula_only=copula_only
                                             )
 
     def compute_conditional_independence_table(
@@ -2317,6 +2317,41 @@ class GTM(nn.Module):
         hessians = self.compute_local_loglikelihood_hessian(y,copula_only=copula_only)
         
         return pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12)
+    
+    
+    def compute_conditional_independence_table_local_relative_hessian(self,y=None,
+                                                                      evaluation_data_type="data",
+                                                                      sample_size=1000,
+                                                                      min_val=-torch.inf,
+                                                                      max_val=+torch.inf,
+                                                                      copula_only=True):
+        
+        if evaluation_data_type == "data":
+            if y==None:
+                print("if evaluation_data_type=data then you need to pass data using arguement y.")
+            else:
+                evaluation_data=y
+        elif evaluation_data_type == "samples_from_model":
+            evaluation_data = self.sample(sample_size).detach()
+            # only data within the bound otherwise drop datapoints
+            bool_mask = (evaluation_data >= min_val) & (evaluation_data <= max_val)
+            if bool_mask.all(dim=1).sum() < sample_size:
+                print(f"Warning: Only {bool_mask.all(dim=1).sum().item()} samples are within the specified bounds. Others are dropped.")
+            evaluation_data = evaluation_data[bool_mask.all(dim=1)]
+        
+        normed_hessian = self.compute_local_relative_hessian_metric(evaluation_data,copula_only=copula_only)
+        
+        table = compute_precision_matrix_summary_statistics(normed_hessian.detach())
+        
+        table["normed_hessian_abs_mean"] = table["abs_mean"]
+        
+        table = table[[
+                "var_row",
+                "var_col",
+                "normed_hessian_abs_mean",
+            ]]
+        
+        return table
         
         
         

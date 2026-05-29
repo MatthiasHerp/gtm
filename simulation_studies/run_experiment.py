@@ -6,6 +6,7 @@ import pyvinecopulib as pv
 from demos.pyvinecopulib_simulation_helpers import *
 from simulation_studies.generate_synthetic_vine_data import generate_synthetic_vine_data
 from simulation_studies.mlflow_plot_storage_helpers import log_mlflow_plot, create_temp_folder, clear_temp_folder
+from simulation_studies.tail_assesment import kld_tails_assessment
 
 # Other Stuff
 import mlflow as mlflow
@@ -20,7 +21,6 @@ import torch
 import matplotlib.pyplot as plt
 
 import pandas as pd
-import numpy as np
 import math
 
 def run_experiment(
@@ -72,7 +72,8 @@ def run_experiment(
     copula_only=False,
     min_val=-6,
     max_val=6,
-    bootstrap_warpspeed=False
+    bootstrap_warpspeed=False,
+    threshhold_kld_tails = np.linspace(0, 5, 500)
 ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
@@ -344,6 +345,25 @@ def run_experiment(
     mlflow.log_metric(key="kld_gaussian_test", value=kld_gaussian_test)
     mlflow.log_metric(key="kld_vine_oracle_test", value=kld_vine_oracle_test)
     mlflow.log_metric(key="relative_kld_gtm_test", value=rel_kld_gtm_test)
+    
+    
+    # store test set log likelihood e.g. kld for the tails    
+    df_gtm_tail_kld = kld_tails_assessment(synthetic_data_dict['test_data'],
+                             synthetic_data_dict["loglik_true_test"],
+                             log_likelihood_test_gtm,
+                             thresholds = threshhold_kld_tails)
+
+    df_ggm_tail_kld = kld_tails_assessment(synthetic_data_dict['test_data'],
+                                synthetic_data_dict["loglik_true_test"],
+                                log_likelihood_test_gaussian,
+                                thresholds = threshhold_kld_tails)
+    
+    df_gtm_tail_kld.to_csv(temp_folder+"/gtm_tail_kld_table.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/gtm_tail_kld_table.csv")  
+    
+    df_ggm_tail_kld.to_csv(temp_folder+"/ggm_tail_kld_table.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/ggm_tail_kld_table.csv")  
+            
 
     ### 5. Evaluate and Plot GTM Results
     # We evaluate the model further by showing how to generate synthetic samples, plot the conditional correlation patterns as well as identify conditional independencies.
@@ -369,10 +389,10 @@ def run_experiment(
         result_tables = []
         for i in range(n_chunks):
             print(f"Processing chunk {i+1}/{n_chunks} ({max_num_ci_sample_size} samples)...")
-            chunk_table = model.compute_conditional_independence_table(
+            chunk_table = model.compute_conditional_independence_table_v2(
                 y=None,
                 evaluation_data_type="samples_from_model",
-                num_processes=num_processes,
+                #num_processes=num_processes,
                 sample_size=max_num_ci_sample_size,
                 num_points_quad=num_points_quad,
                 copula_only=copula_only,
@@ -398,116 +418,195 @@ def run_experiment(
             })
         )
     else:  
-        conditional_independence_table_samples = model.compute_conditional_independence_table(
+        conditional_independence_table_samples = model.compute_conditional_independence_table_v2(
                                             y = None,
                                             evaluation_data_type = "samples_from_model",
-                                            num_processes=num_processes,
+                                            #num_processes=num_processes,
                                             sample_size = sample_size,
                                             num_points_quad=num_points_quad,
                                             copula_only=copula_only,
                                             min_val=min_val,
                                             max_val=max_val)
-    
+        
 
-    conditional_independence_table_data_train = model.compute_conditional_independence_table(
+    conditional_independence_table_train = model.compute_conditional_independence_table_v2(
                                         y = synthetic_data_dict['train_data'].detach(),
                                         evaluation_data_type = "data",
-                                        num_processes=num_processes,
+                                        #num_processes=num_processes,
                                         sample_size = sample_size,
                                         num_points_quad=num_points_quad,
                                         copula_only=copula_only,
                                         min_val=min_val,
                                         max_val=max_val)
     
-
-    conditional_independence_table_data_val = model.compute_conditional_independence_table(
+    
+    conditional_independence_table_val = model.compute_conditional_independence_table_v2(
                                         y = synthetic_data_dict['validate_data'].detach(),
                                         evaluation_data_type = "data",
-                                        num_processes=num_processes,
+                                        #num_processes=num_processes,
                                         sample_size = sample_size,
                                         num_points_quad=num_points_quad,
                                         copula_only=copula_only,
                                         min_val=min_val,
                                         max_val=max_val)
+    
+    
+    # creating the joint data train and validation evaluation
+    portion_val = N_validate / (N_train+N_validate)
+    portion_train = N_train / (N_train+N_validate)
+    
+    conditional_independence_table_data = conditional_independence_table_train
+    conditional_independence_table_data["kld"]                       = portion_train * conditional_independence_table_train["kld"] + portion_val * conditional_independence_table_val["kld"]
+    conditional_independence_table_data["cond_correlation_abs_mean"]        = portion_train * conditional_independence_table_train["cond_correlation_abs_mean"] + portion_val * conditional_independence_table_val["cond_correlation_abs_mean"]
+    conditional_independence_table_data["precision_abs_mean"] = portion_train * conditional_independence_table_train["precision_abs_mean"] + portion_val * conditional_independence_table_val["precision_abs_mean"]
+    
+    
+    # Relative Hessian Metric
+    
+    ci_table_hessian_samples = model.compute_conditional_independence_table_local_relative_hessian(y=None,
+                                                                      evaluation_data_type="samples_from_model",
+                                                                      sample_size=sample_size,
+                                                                      min_val=min_val,
+                                                                      max_val=max_val,
+                                                                      copula_only=copula_only)
+    
+    ci_table_relative_hessian_train = model.compute_conditional_independence_table_local_relative_hessian(y=synthetic_data_dict['train_data'].detach(),copula_only=True)
+    
+    ci_table_relative_hessian_val = model.compute_conditional_independence_table_local_relative_hessian(y=synthetic_data_dict['validate_data'].detach(),copula_only=True)
+    
+    ci_table_relative_hessian_data = ci_table_relative_hessian_train
+    ci_table_relative_hessian_data["normed_hessian_abs_mean"] = portion_train * ci_table_relative_hessian_train["normed_hessian_abs_mean"] + portion_val * ci_table_relative_hessian_val["normed_hessian_abs_mean"]
+    
     
     ### 6. Identifying the Conditional Independence Graph 
     # We compare the true known conditional independence Graph to the one learned by the GTM. To do so we first merge the true structure table with our learned one.
     
+    #################### Synth
     merged_ci_tables_samples = pd.merge(
         conditional_independence_table_samples,
         synthetic_data_dict["df_true_structure"],
         on=["var_row", "var_col"]
     )
+    merged_ci_tables_samples = pd.merge(
+        merged_ci_tables_samples,
+        ci_table_hessian_samples,
+        on=["var_row", "var_col"]
+    )
+    ####################
 
-    merged_ci_tables_data_train = pd.merge(
-        conditional_independence_table_data_train,
+    #################### Joint Data
+    merged_ci_tables_data = pd.merge(
+        conditional_independence_table_data,
         synthetic_data_dict["df_true_structure"],
+        on=["var_row", "var_col"]
+    )
+    merged_ci_tables_data = pd.merge(
+        merged_ci_tables_data,
+        ci_table_relative_hessian_data,
         on=["var_row", "var_col"]
     )
     # the iae makes no sense when using the true data, and the kld is the log likelihood ratio so we del iae and rename kld into ll_diff
-    del merged_ci_tables_data_train["iae"]
-    merged_ci_tables_data_train["ll_diff"] = merged_ci_tables_data_train["kld"]
-    del merged_ci_tables_data_train["kld"]
+    del merged_ci_tables_data["iae"]
+    merged_ci_tables_data["ll_diff"] = merged_ci_tables_data["kld"]
+    del merged_ci_tables_data["kld"]
+    ####################
     
-    merged_ci_tables_data_val = pd.merge(
-        conditional_independence_table_data_val,
+    #################### Train Data
+    merged_ci_tables_train = pd.merge(
+        conditional_independence_table_train,
         synthetic_data_dict["df_true_structure"],
         on=["var_row", "var_col"]
     )
-    del merged_ci_tables_data_val["iae"]
-    merged_ci_tables_data_val["ll_diff"] = merged_ci_tables_data_val["kld"]
-    del merged_ci_tables_data_val["kld"]
+    merged_ci_tables_train = pd.merge(
+        merged_ci_tables_train,
+        ci_table_relative_hessian_train,
+        on=["var_row", "var_col"]
+    )
+    # the iae makes no sense when using the true data, and the kld is the log likelihood ratio so we del iae and rename kld into ll_diff
+    del merged_ci_tables_train["iae"]
+    merged_ci_tables_train["ll_diff"] = merged_ci_tables_train["kld"]
+    del merged_ci_tables_train["kld"]
+    ####################
+    
+    #################### Validate Data
+    merged_ci_tables_val = pd.merge(
+        conditional_independence_table_val,
+        synthetic_data_dict["df_true_structure"],
+        on=["var_row", "var_col"]
+    )
+    merged_ci_tables_val = pd.merge(
+        merged_ci_tables_val,
+        ci_table_relative_hessian_val,
+        on=["var_row", "var_col"]
+    )
+    # the iae makes no sense when using the true data, and the kld is the log likelihood ratio so we del iae and rename kld into ll_diff
+    del merged_ci_tables_val["iae"]
+    merged_ci_tables_val["ll_diff"] = merged_ci_tables_val["kld"]
+    del merged_ci_tables_val["kld"]
+    ####################
+    
     
     # store the merged table as an artifact
     merged_ci_tables_samples.to_csv(temp_folder+"/conditional_independence_table_model_samples.csv", index=False)
     mlflow.log_artifact(temp_folder+"/conditional_independence_table_model_samples.csv")   
     
-    conditional_independence_table_data_train.to_csv(temp_folder+"/conditional_independence_table_data_train.csv", index=False)
-    mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_train.csv")   
+    conditional_independence_table_data.to_csv(temp_folder+"/conditional_independence_table_data.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_data.csv")   
     
-    conditional_independence_table_data_val.to_csv(temp_folder+"/conditional_independence_table_data_validate.csv", index=False)
-    mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_validate.csv")   
+    conditional_independence_table_train.to_csv(temp_folder+"/conditional_independence_table_train.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_train.csv")   
+    
+    conditional_independence_table_val.to_csv(temp_folder+"/conditional_independence_table_val.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_val.csv")   
 
     # Store metrics based on synthetic samples
     auc_iae = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["iae"])
     auc_kld = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["kld"])
     auc_corr = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["cond_correlation_abs_mean"])
     auc_pmat = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["precision_abs_mean"])
+    auc_nhess = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["normed_hessian_abs_mean"])
     
     mlflow.log_metric(key="auc_iae", value=auc_iae)
     mlflow.log_metric(key="auc_kld", value=auc_kld)
     mlflow.log_metric(key="auc_cond_corr", value=auc_corr)
     mlflow.log_metric(key="auc_precision_matrix", value=auc_pmat)
+    mlflow.log_metric(key="auc_normed_hessian", value=auc_nhess)
 
-    # Store metrics based on true data
-    auc_corr_train = roc_auc_score(merged_ci_tables_data_train["dependence"], merged_ci_tables_data_train["cond_correlation_abs_mean"])
-    auc_pmat_train = roc_auc_score(merged_ci_tables_data_train["dependence"], merged_ci_tables_data_train["precision_abs_mean"])
-    auc_corr_val = roc_auc_score(merged_ci_tables_data_val["dependence"], merged_ci_tables_data_val["cond_correlation_abs_mean"])
-    auc_pmat_val = roc_auc_score(merged_ci_tables_data_val["dependence"], merged_ci_tables_data_val["precision_abs_mean"])
+    # Store metrics based on true data joint
+    auc_ll_diff_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["ll_diff"])
+    auc_corr_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["cond_correlation_abs_mean"])
+    auc_pmat_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["precision_abs_mean"])
+    auc_nhess_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["normed_hessian_abs_mean"])
 
-    auc_ll_diff_train = roc_auc_score(merged_ci_tables_data_train["dependence"], merged_ci_tables_data_train["ll_diff"])
-    auc_ll_diff_val = roc_auc_score(merged_ci_tables_data_val["dependence"], merged_ci_tables_data_val["ll_diff"])
+    mlflow.log_metric(key="auc_loglik_diff_data", value=auc_ll_diff_data)
+    mlflow.log_metric(key="auc_cond_corr_data", value=auc_corr_data)
+    mlflow.log_metric(key="auc_precision_matrix_data", value=auc_pmat_data)
+    mlflow.log_metric(key="auc_normed_hessian_data", value=auc_nhess_data)
+    
+    
+    # Store metrics based on training data
+    auc_ll_diff_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["ll_diff"])
+    auc_corr_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["cond_correlation_abs_mean"])
+    auc_pmat_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["precision_abs_mean"])
+    auc_nhess_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["normed_hessian_abs_mean"])
 
+    mlflow.log_metric(key="auc_loglik_diff_train", value=auc_ll_diff_train)
     mlflow.log_metric(key="auc_cond_corr_train", value=auc_corr_train)
     mlflow.log_metric(key="auc_precision_matrix_train", value=auc_pmat_train)
-    mlflow.log_metric(key="auc_cond_corr_val", value=auc_corr_val)
-    mlflow.log_metric(key="auc_precision_matrix_val", value=auc_pmat_val)    
-    
-    mlflow.log_metric(key="auc_loglik_diff_train", value=auc_ll_diff_train)
-    mlflow.log_metric(key="auc_loglik_diff_val", value=auc_ll_diff_val)
-    
-    # joint metrics computed by simple weighting of means
-    N = N_train + N_validate
-    proportion_train = N_train / N
-    proportion_val = N_validate / N
-    
-    mlflow.log_metric(key="auc_cond_corr_data", value=auc_corr_train*proportion_train + auc_corr_val*proportion_val)
-    mlflow.log_metric(key="auc_precision_matrix_data", value=auc_pmat_train*proportion_train + auc_pmat_val*proportion_val)
-    
-    mlflow.log_metric(key="auc_loglik_diff_data", value=auc_ll_diff_train*proportion_train + auc_ll_diff_val*proportion_val)
+    mlflow.log_metric(key="auc_normed_hessian_train", value=auc_nhess_train)
     
     
+    # Store metrics based on true data joint
+    auc_ll_diff_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["ll_diff"])
+    auc_corr_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["cond_correlation_abs_mean"])
+    auc_pmat_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["precision_abs_mean"])
+    auc_nhess_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["normed_hessian_abs_mean"])
 
+    mlflow.log_metric(key="auc_loglik_diff_val", value=auc_ll_diff_val)
+    mlflow.log_metric(key="auc_cond_corr_val", value=auc_corr_val)
+    mlflow.log_metric(key="auc_precision_matrix_val", value=auc_pmat_val)
+    mlflow.log_metric(key="auc_normed_hessian_val", value=auc_nhess_val)
+    
     mlflow.end_run()
     
     clear_temp_folder(temp_folder)
