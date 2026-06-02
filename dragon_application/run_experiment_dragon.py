@@ -383,10 +383,11 @@ def run_experiment_dragon(
     
     import time
     
+    
     timer_start = time.time()
     conditional_independence_table_samples2 = model.compute_conditional_independence_table_v2(
-                                            y = None,
-                                            evaluation_data_type = "samples_from_model",
+                                            y = synthetic_data_dict['train_data'],
+                                            evaluation_data_type = "data",
                                             #num_processes=num_processes,
                                             sample_size = 1000,
                                             num_points_quad=num_points_quad,
@@ -396,18 +397,28 @@ def run_experiment_dragon(
     timer_end = time.time()
     print(f"Time taken to compute conditional independence table v2 with {sample_size} samples: {timer_end - timer_start} seconds")
     
+    conditional_independence_table_samples2.to_csv(temp_folder+"/conditional_independence_table_samples2_train.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_samples2_train.csv")
+    
+    mlflow.log_metric(key="conditional_independence_table_samples2_train_time", value=timer_end - timer_start)
+    
     timer_start = time.time()
     conditional_independence_table_samples = model.compute_conditional_independence_table(
-                                            y = None,
-                                            evaluation_data_type = "samples_from_model",
+                                            y = synthetic_data_dict['train_data'],
+                                            evaluation_data_type = "data",
                                             num_processes=num_processes,
-                                            sample_size = 1000,
+                                            #sample_size = 1000,
                                             num_points_quad=num_points_quad,
                                             copula_only=copula_only,
                                             min_val=min_val,
                                             max_val=max_val)
     timer_end = time.time()
     print(f"Time taken to compute conditional independence table with {sample_size} samples: {timer_end - timer_start} seconds")
+    
+    conditional_independence_table_samples.to_csv(temp_folder+"/conditional_independence_table_samples_train.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_samples_train.csv")
+    
+    mlflow.log_metric(key="conditional_independence_table_samples_train_time", value=timer_end - timer_start)
     
     
     
