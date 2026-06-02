@@ -623,7 +623,7 @@ class GTM(nn.Module):
             objective_type=objective_type,
         )
 
-    def train(
+    def train_method(
         self,
         train_dataloader: torch.utils.data.DataLoader,
         validate_dataloader: torch.utils.data.DataLoader | bool = False,
@@ -919,7 +919,7 @@ class GTM(nn.Module):
                     #                                        self.transformation_spline_range[1][dimension]])
                     tm_model.subset_dimension = dimension
 
-                    train_dict = tm_model.train(
+                    train_dict = tm_model.train_method(
                         train_dataloader=train_dataloader,
                         validate_dataloader=train_dataloader,
                         iterations=iterations,
@@ -1268,7 +1268,7 @@ class GTM(nn.Module):
                         gtm_tuning.state_dict()
                     )
 
-        gtm_tuning.train(
+        gtm_tuning.train_method(
             train_dataloader=train_dataloader,
             validate_dataloader=validate_dataloader,
             # train_covariates=train_covariates,

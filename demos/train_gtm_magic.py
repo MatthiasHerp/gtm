@@ -110,7 +110,7 @@ if __name__ == "__main__":
             )
 
             # train the joint model
-            _ = model.train(
+            _ = model.train_method(
                 train_dataloader=dataloader_train,
                 validate_dataloader=dataloader_validate,
                 iterations=1000,

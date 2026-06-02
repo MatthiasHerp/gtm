@@ -90,7 +90,7 @@ if __name__ == "__main__":
     _ = model.pretrain_transformation_layer(dataloader_train, iterations=1000)
 
     # train the joint model
-    _ = model.train(
+    _ = model.train_method(
         train_dataloader=dataloader_train,
         validate_dataloader=dataloader_validate,
         iterations=1000,
