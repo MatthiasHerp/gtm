@@ -1,4 +1,6 @@
 from dev_indep_vines_helpers import *
+from demos.pyvinecopulib_simulation_helpers import *
+
 
 def plot_auc_score_boxplot_experiment(experiment_name="rvine_10_dim", 
                                       name_ending_look_for=False, 

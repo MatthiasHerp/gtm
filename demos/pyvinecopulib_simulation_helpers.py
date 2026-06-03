@@ -107,7 +107,7 @@ import re
 import pandas as pd
 
 
-def compute_conditional_dependence_table(vine_model):
+def compute_conditional_dependence_table(vine_model,Independence_tree):
 
     text = vine_model.format()
 
@@ -186,6 +186,6 @@ def compute_conditional_dependence_table(vine_model):
         )
         for i in range(df.shape[0])
     ]
-    df["dependence"] = [1 if df["tree"][i] < 3 else 0 for i in range(df.shape[0])]
+    df["dependence"] = [1 if df["tree"][i] <= Independence_tree else 0 for i in range(df.shape[0])]
 
     return df

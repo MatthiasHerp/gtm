@@ -65,7 +65,7 @@ def generate_synthetic_vine_data(seed_value=1,
     
     pair_copulas = sample_random_pair_copulas(dimensionality,Independence_tree=Independence_tree)
     vine_model = pv.Vinecop.from_structure(structure=vine_structure, pair_copulas=pair_copulas)
-    df = compute_conditional_dependence_table(vine_model)
+    df = compute_conditional_dependence_table(vine_model, Independence_tree=Independence_tree)
 
     # creating a table to compare the true dependence structure later on to what the gtm learned
     df_true_structure = df[["tree","edge","conditioned variables", "conditioned variable 1", "conditioned variable 2", "dependence", "var_row", "var_col", "tau", "family", "rotation"]]
@@ -129,3 +129,6 @@ def generate_synthetic_vine_data(seed_value=1,
         "loglik_true_est_test": loglik_true_est_test,
         "df_true_structure": df_true_structure_sub   
     }
+    
+
+    

@@ -16,6 +16,7 @@ demos/demo_3D_jji_rvine.ipynb
 model_state_dict.pth
 demo.py
 mlruns/
+mlruns_v1/
 gtm_check_hydra.py
 .DS_Store
 seed_30_kld_warpspeed_bootstrap_10D.png
