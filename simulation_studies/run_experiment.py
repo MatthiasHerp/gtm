@@ -70,8 +70,8 @@ def run_experiment(
     max_num_ci_sample_size = 10000,
     num_points_quad=15,
     copula_only=False,
-    min_val=-6,
-    max_val=6,
+    min_val=-5,
+    max_val=5,
     bootstrap_warpspeed=False,
     threshhold_kld_tails = np.linspace(0, 5, 500)
 ):
