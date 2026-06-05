@@ -410,9 +410,9 @@ def run_experiment(
             .groupby(["var_row", "var_col"], as_index=False)
             .agg({
                 "precision_abs_mean": "mean",
-                "precision_square_mean": "mean",
+                #"precision_square_mean": "mean",
                 "cond_correlation_abs_mean": "mean",
-                "cond_correlation_square_mean": "mean",
+                #"cond_correlation_square_mean": "mean",
                 "kld": "mean",
                 "iae": "mean"
             })
