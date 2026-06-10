@@ -73,7 +73,10 @@ def run_experiment(
     min_val=-5,
     max_val=5,
     bootstrap_warpspeed=False,
-    threshhold_kld_tails = np.linspace(0, 5, 500)
+    threshhold_kld_tails = np.linspace(0, 5, 500),
+    tau_mean=0.3,
+    tau_range=0.2,
+    negative_tau=True
 ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
@@ -109,7 +112,10 @@ def run_experiment(
                   "N_train": N_train,
                   "N_validate": N_validate,
                   "N_test": N_test,
-                  "bootstrap_warpspeed": bootstrap_warpspeed})
+                  "bootstrap_warpspeed": bootstrap_warpspeed,
+                  "tau_mean": tau_mean,
+                  "tau_range": tau_range,
+                  "negative_tau": negative_tau})
     
     
     synthetic_data_dict = generate_synthetic_vine_data(
@@ -120,7 +126,10 @@ def run_experiment(
         vine_type=vine_type,
         N_train=N_train,
         N_validate=N_validate,
-        N_test=N_test
+        N_test=N_test,
+        tau_mean=tau_mean,
+        tau_range=tau_range,
+        negative_tau=negative_tau
     )
     
     # Create dataset and DataLoader, if bootstrapped note that

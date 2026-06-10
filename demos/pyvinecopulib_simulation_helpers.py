@@ -22,13 +22,22 @@ def set_seeds(seed_int):
     random.seed(seed_int)
 
 
-def sample_random_pair_copulas(D, Independence_tree=2):
+def sample_random_pair_copulas(D, Independence_tree=2, tau_mean=0.3, tau_range=0.2, negative_tau = True):
     pair_copulas = []
 
     # List of families to sample from (can add/remove)
     families = [
-        # pv.BicopFamily.indep,
-        #pv.BicopFamily.gaussian,
+        pv.BicopFamily.indep,
+        pv.BicopFamily.gaussian,
+        pv.BicopFamily.student,
+        pv.BicopFamily.clayton,
+        pv.BicopFamily.gumbel,
+        pv.BicopFamily.frank,
+        pv.BicopFamily.joe,
+    ]
+    families_no_independent = [
+        #pv.BicopFamily.indep,
+        pv.BicopFamily.gaussian,
         pv.BicopFamily.student,
         pv.BicopFamily.clayton,
         pv.BicopFamily.gumbel,
@@ -47,10 +56,17 @@ def sample_random_pair_copulas(D, Independence_tree=2):
             pair_copulas.append(bicop_list)
         else:
             for _ in range(num_edges):
-                fam = np.random.choice(families)
+                # we dont want independence copula in last tree otherwise they would induce a conditional independence
+                if tree < Independence_tree:
+                    fam = np.random.choice(families_no_independent)
+                else:
+                    fam = np.random.choice(families)
 
-                tau = 0.3 + 0.2 * np.random.random() #0.4 * np.random.random()
-                neg = np.random.choice([-1, 1])
+                tau = tau_mean + tau_range * np.random.random() #0.4 * np.random.random()
+                if negative_tau:
+                    neg = np.random.choice([-1, 1])
+                else:
+                    neg = 1
 
                 # Sample rotation 0-3 for asymmetric families (e.g., Clayton, Gumbel, Frank)
                 if fam in [
@@ -58,7 +74,10 @@ def sample_random_pair_copulas(D, Independence_tree=2):
                     pv.BicopFamily.gumbel,
                     pv.BicopFamily.joe,
                 ]:
-                    rotation = np.random.choice([0, 90, 180, 270])
+                    if negative_tau:
+                        rotation = np.random.choice([0, 90, 180, 270])
+                    else:
+                        rotation = np.random.choice([0, 180])
                 else:
                     rotation = 0
                 if fam == pv.BicopFamily.student:
