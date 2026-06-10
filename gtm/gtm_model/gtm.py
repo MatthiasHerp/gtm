@@ -2314,6 +2314,7 @@ class GTM(nn.Module):
         
     def compute_local_relative_hessian_metric(self,y,copula_only=True):
         
+        y= y.to(self.device)
         hessians = self.compute_local_loglikelihood_hessian(y,copula_only=copula_only)
         
         return pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12)
@@ -2339,9 +2340,9 @@ class GTM(nn.Module):
                 print(f"Warning: Only {bool_mask.all(dim=1).sum().item()} samples are within the specified bounds. Others are dropped.")
             evaluation_data = evaluation_data[bool_mask.all(dim=1)]
         
-        normed_hessian = self.compute_local_relative_hessian_metric(evaluation_data,copula_only=copula_only)
+        normed_hessian = self.compute_local_relative_hessian_metric(evaluation_data,copula_only=copula_only).detach().cpu()
         
-        table = compute_precision_matrix_summary_statistics(normed_hessian.detach())
+        table = compute_precision_matrix_summary_statistics(normed_hessian)
         
         table["normed_hessian_abs_mean"] = table["abs_mean"]
         
