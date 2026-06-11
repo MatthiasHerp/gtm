@@ -437,7 +437,6 @@ def run_experiment(
                                             min_val=min_val,
                                             max_val=max_val)
         
-
     conditional_independence_table_train = model.compute_conditional_independence_table_v2(
                                         y = synthetic_data_dict['train_data'].detach(),
                                         evaluation_data_type = "data",
@@ -570,7 +569,10 @@ def run_experiment(
 
     # Store metrics based on synthetic samples
     auc_iae = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["iae"])
-    auc_kld = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["kld"])
+    try:
+        auc_kld = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["kld"])
+    except:
+        auc_kld = np.nan
     auc_corr = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["cond_correlation_abs_mean"])
     auc_pmat = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["precision_abs_mean"])
     auc_nhess = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["normed_hessian_abs_mean"])
