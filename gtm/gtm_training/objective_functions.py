@@ -78,25 +78,25 @@ def training_objective(
             return_dict_model_loss["lambda_matrix_global"],
         )
         
-        ################################################################################
-        #### New ####
-        ################################################################################
-        
-        synth_samples = 1000
-        z_tilde_gauss = (torch.distributions.Normal(0, 1)
-                .sample((synth_samples, model.number_variables))
-                .to(device=model.device))
-        return_dict_z_tilde_gauss = model.forward(
-            z_tilde_gauss, return_lambda_matrix=True
-        )  # covariate=covariate, evaluate=True, train=False, return_lambda_matrix=True)
-
-        precision_matrix_synth = torch.matmul(
-            torch.transpose(return_dict_z_tilde_gauss["lambda_matrix_global"], 1, 2),
-            return_dict_z_tilde_gauss["lambda_matrix_global"],
-        )
-        precision_matrix = torch.concatenate([precision_matrix,precision_matrix_synth],dim=0)
-        ################################################################################
-        ################################################################################
+        #################################################################################
+        ##### New ####
+        #################################################################################
+        #
+        #synth_samples = 1000
+        #z_tilde_gauss = (torch.distributions.Normal(0, 1)
+        #        .sample((synth_samples, model.number_variables))
+        #        .to(device=model.device))
+        #return_dict_z_tilde_gauss = model.forward(
+        #    z_tilde_gauss, return_lambda_matrix=True
+        #)  # covariate=covariate, evaluate=True, train=False, return_lambda_matrix=True)
+#
+        #precision_matrix_synth = torch.matmul(
+        #    torch.transpose(return_dict_z_tilde_gauss["lambda_matrix_global"], 1, 2),
+        #    return_dict_z_tilde_gauss["lambda_matrix_global"],
+        #)
+        #precision_matrix = torch.concatenate([precision_matrix,precision_matrix_synth],dim=0)
+        #################################################################################
+        #################################################################################
         
         if adaptive_lasso_weights_matrix is False:
             pen_lambda_lasso = (
