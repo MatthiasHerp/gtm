@@ -76,7 +76,8 @@ def run_experiment(
     threshhold_kld_tails = np.linspace(0, 5, 500),
     tau_mean=0.3,
     tau_range=0.2,
-    negative_tau=True
+    negative_tau=True,
+    likelihood_ratio_metrics=True
 ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
@@ -388,7 +389,7 @@ def run_experiment(
     mlflow.log_param(key="min_val", value=min_val)
     mlflow.log_param(key="max_val", value=max_val)
     
-    
+
     if max_num_ci_sample_size < sample_size:
         # Compute number of chunks
         n_chunks = math.ceil(sample_size / max_num_ci_sample_size)
@@ -406,7 +407,8 @@ def run_experiment(
                 num_points_quad=num_points_quad,
                 copula_only=copula_only,
                 min_val=min_val,
-                max_val=max_val
+                max_val=max_val,
+                likelihood_ratio_metrics=likelihood_ratio_metrics
             )
             result_tables.append(chunk_table)
 
@@ -435,7 +437,8 @@ def run_experiment(
                                             num_points_quad=num_points_quad,
                                             copula_only=copula_only,
                                             min_val=min_val,
-                                            max_val=max_val)
+                                            max_val=max_val,
+                                            likelihood_ratio_metrics=likelihood_ratio_metrics)
         
     conditional_independence_table_train = model.compute_conditional_independence_table_v2(
                                         y = synthetic_data_dict['train_data'].detach(),
@@ -445,7 +448,8 @@ def run_experiment(
                                         num_points_quad=num_points_quad,
                                         copula_only=copula_only,
                                         min_val=min_val,
-                                        max_val=max_val)
+                                        max_val=max_val,
+                                        likelihood_ratio_metrics=likelihood_ratio_metrics)
     
     
     conditional_independence_table_val = model.compute_conditional_independence_table_v2(
@@ -456,7 +460,8 @@ def run_experiment(
                                         num_points_quad=num_points_quad,
                                         copula_only=copula_only,
                                         min_val=min_val,
-                                        max_val=max_val)
+                                        max_val=max_val,
+                                        likelihood_ratio_metrics=likelihood_ratio_metrics)
     
     
     # creating the joint data train and validation evaluation
@@ -467,7 +472,7 @@ def run_experiment(
     conditional_independence_table_data["kld"]                       = portion_train * conditional_independence_table_train["kld"] + portion_val * conditional_independence_table_val["kld"]
     conditional_independence_table_data["cond_correlation_abs_mean"]        = portion_train * conditional_independence_table_train["cond_correlation_abs_mean"] + portion_val * conditional_independence_table_val["cond_correlation_abs_mean"]
     conditional_independence_table_data["precision_abs_mean"] = portion_train * conditional_independence_table_train["precision_abs_mean"] + portion_val * conditional_independence_table_val["precision_abs_mean"]
-    
+        
     
     # Relative Hessian Metric
     

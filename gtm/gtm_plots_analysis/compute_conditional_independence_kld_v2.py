@@ -340,7 +340,8 @@ def compute_conditional_independence_kld_v2(
     batch_size=None,
     evaluation_data_type="data",
     sample_size=10000,
-    copula_only=False
+    copula_only=False,
+    likelihood_ratio_metrics=True
 ):
     """
     Orchestrates the full conditional independence KLD computation.
@@ -401,87 +402,100 @@ def compute_conditional_independence_kld_v2(
             correlation_matrix
         )
         
-
         N, D = evaluation_data.shape
         device = model.device
 
         # move data to device once
         evaluation_data = evaluation_data.to(device)
-        
+            
         pairs = [(i, j) for i in range(D) for j in range(i + 1, D)] # all pairs
-
-        # -----------------------------------------------------------------
-        # Step 1: Setup quadrature points and weights once
-        # -----------------------------------------------------------------
-        #with tqdm(total=D, desc="Setup", position=0) as setup_pbar:
-
-        #setup_pbar.set_description("Setting up quadrature points")
-        print("Setting up quadrature points")
-        quad_x, quad_w, quad_x_2d, log_quad_w_2d = setup_quadrature(
-            num_points=num_points_quad,
-            min_val=min_val,
-            max_val=max_val,
-            device=device,
-        )
         
-        # quad_x: shape (Q,)
-        # quad_w: shape (Q,)
-        #setup_pbar.update(1)
+        if likelihood_ratio_metrics == True:
+            
 
-        # -----------------------------------------------------------------
-        # Step 2: Compute model log likelihood on data once
-        # -----------------------------------------------------------------
-        #setup_pbar.set_description("Computing model log likelihood")
-        print("Computing model log likelihood")
-        model_ll = model.log_likelihood(evaluation_data, return_lambda_matrix=False)  # shape (N,)
-        #setup_pbar.update(1)
+            # -----------------------------------------------------------------
+            # Step 1: Setup quadrature points and weights once
+            # -----------------------------------------------------------------
+            #with tqdm(total=D, desc="Setup", position=0) as setup_pbar:
 
-        # -----------------------------------------------------------------
-        # Step 3: Compute all D single variable marginals once
-        # -----------------------------------------------------------------
-        #setup_pbar.set_description("Computing single variable marginals")
-        print(("Computing single variable marginals"))
-        single_var_marginals = compute_single_var_marginals(
-            model=model,
-            data=evaluation_data,
-            quad_x=quad_x,
-            quad_w=quad_w,
-            #batch_size=batch_size,
-        )
-        # single_var_marginals: shape (D, N)
-        #setup_pbar.update(1)
-        #setup_pbar.set_description("Setup complete")
-        #setup_pbar.update(1)
+            #setup_pbar.set_description("Setting up quadrature points")
+            print("Setting up quadrature points")
+            quad_x, quad_w, quad_x_2d, log_quad_w_2d = setup_quadrature(
+                num_points=num_points_quad,
+                min_val=min_val,
+                max_val=max_val,
+                device=device,
+            )
+            
+            # quad_x: shape (Q,)
+            # quad_w: shape (Q,)
+            #setup_pbar.update(1)
 
-        # -----------------------------------------------------------------
-        # Step 4: Loop over pairs, compute two var marginal and metrics
-        # -----------------------------------------------------------------
-        results = []
+            # -----------------------------------------------------------------
+            # Step 2: Compute model log likelihood on data once
+            # -----------------------------------------------------------------
+            #setup_pbar.set_description("Computing model log likelihood")
+            print("Computing model log likelihood")
+            model_ll = model.log_likelihood(evaluation_data, return_lambda_matrix=False)  # shape (N,)
+            #setup_pbar.update(1)
 
-        results = [
-            {
-                "var_col": col_idx_1,
-                "var_row": col_idx_2,
-                **dict(zip(["kld", "iae"], compute_pair_metrics(
-                    model_ll=model_ll,
-                    single_var_marginals=single_var_marginals,
-                    two_var_marginal=compute_two_var_marginal(
-                        model=model,
-                        data=evaluation_data,
+            # -----------------------------------------------------------------
+            # Step 3: Compute all D single variable marginals once
+            # -----------------------------------------------------------------
+            #setup_pbar.set_description("Computing single variable marginals")
+            print(("Computing single variable marginals"))
+            single_var_marginals = compute_single_var_marginals(
+                model=model,
+                data=evaluation_data,
+                quad_x=quad_x,
+                quad_w=quad_w,
+                #batch_size=batch_size,
+            )
+            # single_var_marginals: shape (D, N)
+            #setup_pbar.update(1)
+            #setup_pbar.set_description("Setup complete")
+            #setup_pbar.update(1)
+
+            # -----------------------------------------------------------------
+            # Step 4: Loop over pairs, compute two var marginal and metrics
+            # -----------------------------------------------------------------
+            results = []
+
+            results = [
+                {
+                    "var_col": col_idx_1,
+                    "var_row": col_idx_2,
+                    **dict(zip(["kld", "iae"], compute_pair_metrics(
+                        model_ll=model_ll,
+                        single_var_marginals=single_var_marginals,
+                        two_var_marginal=compute_two_var_marginal(
+                            model=model,
+                            data=evaluation_data,
+                            col_idx_1=col_idx_1,
+                            col_idx_2=col_idx_2,
+                            quad_x_2d=quad_x_2d,
+                            log_quad_w_2d=log_quad_w_2d,
+                            batch_size=batch_size,
+                        ),
                         col_idx_1=col_idx_1,
                         col_idx_2=col_idx_2,
-                        quad_x_2d=quad_x_2d,
-                        log_quad_w_2d=log_quad_w_2d,
-                        batch_size=batch_size,
-                    ),
-                    col_idx_1=col_idx_1,
-                    col_idx_2=col_idx_2,
-                    evaluation_data_type=evaluation_data_type,
-                )))
-            }
-            for col_idx_1, col_idx_2 in tqdm(pairs, desc="Computing pair metrics", position=0, leave=True)
-        ]
-
+                        evaluation_data_type=evaluation_data_type,
+                    )))
+                }
+                for col_idx_1, col_idx_2 in tqdm(pairs, desc="Computing pair metrics", position=0, leave=True)
+            ]
+        else:
+            # if not computing likelihood ratio metrics
+            results = [
+                {
+                    "var_col": col_idx_1,
+                    "var_row": col_idx_2,
+                    "kld" : 0,
+                    "iae" : 0,
+                }
+                for col_idx_1, col_idx_2 in tqdm(pairs, desc="Computing pair metrics", position=0, leave=True)
+            ]
+        
         # -----------------------------------------------------------------
         # Step 5: Assemble results
         # -----------------------------------------------------------------

@@ -1668,7 +1668,8 @@ class GTM(nn.Module):
         min_val: float = -5,
         max_val: float = 5,
         #likelihood_based_metrics: bool = True,
-        batch_size=None
+        batch_size=None,
+        likelihood_ratio_metrics=True
     ):    
         
         return compute_conditional_independence_kld_v2(
@@ -1680,7 +1681,8 @@ class GTM(nn.Module):
                                                 batch_size=batch_size,
                                                 evaluation_data_type=evaluation_data_type,
                                                 sample_size=sample_size,
-                                                copula_only=copula_only
+                                                copula_only=copula_only,
+                                                likelihood_ratio_metrics=likelihood_ratio_metrics
                                             )
 
     def compute_conditional_independence_table(
