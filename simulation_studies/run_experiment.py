@@ -67,11 +67,11 @@ def run_experiment(
     #evaluation_data_type = "samples_from_model",
     num_processes=1,
     sample_size = 10000,
-    max_num_ci_sample_size = 10000,
-    num_points_quad=15,
-    copula_only=False,
-    min_val=-5,
-    max_val=5,
+    max_batchsize = 10000,
+    num_points_quad=10,
+    copula_only=True,
+    min_val=-4,
+    max_val=4,
     bootstrap_warpspeed=False,
     threshhold_kld_tails = np.linspace(0, 5, 500),
     tau_mean=0.3,
@@ -323,9 +323,9 @@ def run_experiment(
 
     # We compare the learned GTM to a Gaussian Approximation and the Oracle Model. We expect the GTM to lie between these two in terms of approximation the true underlying distribution.
     # We measure this by means of the Kullback Leibler Divergence which we approximate on the test set which is equivalent to the log likelihood ratio between the true distribution and an approximation of it..
-    log_likelihood_train_gtm = model.log_likelihood(synthetic_data_dict['train_data']).detach().cpu()
-    log_likelihood_validate_gtm = model.log_likelihood(synthetic_data_dict['validate_data']).detach().cpu()
-    log_likelihood_test_gtm = model.log_likelihood(synthetic_data_dict['test_data']).detach().cpu()
+    log_likelihood_train_gtm = model.log_likelihood(synthetic_data_dict['train_data'], batchsize=max_batchsize).detach().cpu()
+    log_likelihood_validate_gtm = model.log_likelihood(synthetic_data_dict['validate_data'], batchsize=max_batchsize).detach().cpu()
+    log_likelihood_test_gtm = model.log_likelihood(synthetic_data_dict['test_data'], batchsize=max_batchsize).detach().cpu()
     
     # estimate the Multivariate Normal Distribution as Model
     mean_mvn_model = synthetic_data_dict['train_data'].mean(0)
@@ -383,27 +383,27 @@ def run_experiment(
     #mlflow.log_param(key="evaluation_data_type", value=evaluation_data_type)
     mlflow.log_param(key="num_processes", value=num_processes)
     mlflow.log_param(key="sample_size", value=sample_size)
-    mlflow.log_param(key="max_num_ci_sample_size", value=max_num_ci_sample_size)
+    mlflow.log_param(key="max_batchsize", value=max_batchsize)
     mlflow.log_param(key="num_points_quad", value=num_points_quad)
     mlflow.log_param(key="copula_only", value=copula_only)
     mlflow.log_param(key="min_val", value=min_val)
     mlflow.log_param(key="max_val", value=max_val)
     
 
-    if max_num_ci_sample_size < sample_size:
+    if max_batchsize < sample_size:
         # Compute number of chunks
-        n_chunks = math.ceil(sample_size / max_num_ci_sample_size)
-        print("needs to chunk synthetic sample ci computation, uses {} chunks of size ".format(n_chunks) + str(max_num_ci_sample_size))
-        print("is be more then sample_size if sample_size / max_num_ci_sample_size not an integer")
+        n_chunks = math.ceil(sample_size / max_batchsize)
+        print("needs to chunk synthetic sample ci computation, uses {} chunks of size ".format(n_chunks) + str(max_batchsize))
+        print("is be more then sample_size if sample_size / max_batchsize not an integer")
 
         result_tables = []
         for i in range(n_chunks):
-            print(f"Processing chunk {i+1}/{n_chunks} ({max_num_ci_sample_size} samples)...")
+            print(f"Processing chunk {i+1}/{n_chunks} ({max_batchsize} samples)...")
             chunk_table = model.compute_conditional_independence_table_v2(
                 y=None,
                 evaluation_data_type="samples_from_model",
                 #num_processes=num_processes,
-                sample_size=max_num_ci_sample_size,
+                sample_size=max_batchsize,
                 num_points_quad=num_points_quad,
                 copula_only=copula_only,
                 min_val=min_val,
@@ -481,11 +481,12 @@ def run_experiment(
                                                                       sample_size=sample_size,
                                                                       min_val=min_val,
                                                                       max_val=max_val,
-                                                                      copula_only=copula_only)
+                                                                      copula_only=copula_only,
+                                                                      batchsize=max_batchsize)
     
-    ci_table_relative_hessian_train = model.compute_conditional_independence_table_local_relative_hessian(y=synthetic_data_dict['train_data'].detach(),copula_only=True)
+    ci_table_relative_hessian_train = model.compute_conditional_independence_table_local_relative_hessian(y=synthetic_data_dict['train_data'].detach(),copula_only=True, batchsize=max_batchsize)
     
-    ci_table_relative_hessian_val = model.compute_conditional_independence_table_local_relative_hessian(y=synthetic_data_dict['validate_data'].detach(),copula_only=True)
+    ci_table_relative_hessian_val = model.compute_conditional_independence_table_local_relative_hessian(y=synthetic_data_dict['validate_data'].detach(),copula_only=True, batchsize=max_batchsize)
     
     ci_table_relative_hessian_data = ci_table_relative_hessian_train
     ci_table_relative_hessian_data["normed_hessian_abs_mean"] = portion_train * ci_table_relative_hessian_train["normed_hessian_abs_mean"] + portion_val * ci_table_relative_hessian_val["normed_hessian_abs_mean"]
@@ -581,23 +582,27 @@ def run_experiment(
     auc_corr = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["cond_correlation_abs_mean"])
     auc_pmat = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["precision_abs_mean"])
     auc_nhess = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["normed_hessian_abs_mean"])
+    auc_hess = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["hessian_abs_mean"])
     
     mlflow.log_metric(key="auc_iae", value=auc_iae)
     mlflow.log_metric(key="auc_kld", value=auc_kld)
     mlflow.log_metric(key="auc_cond_corr", value=auc_corr)
     mlflow.log_metric(key="auc_precision_matrix", value=auc_pmat)
     mlflow.log_metric(key="auc_normed_hessian", value=auc_nhess)
+    mlflow.log_metric(key="auc_hessian", value=auc_hess)
 
     # Store metrics based on true data joint
     auc_ll_diff_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["ll_diff"])
     auc_corr_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["cond_correlation_abs_mean"])
     auc_pmat_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["precision_abs_mean"])
     auc_nhess_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["normed_hessian_abs_mean"])
+    auc_hess_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["hessian_abs_mean"])
 
     mlflow.log_metric(key="auc_loglik_diff_data", value=auc_ll_diff_data)
     mlflow.log_metric(key="auc_cond_corr_data", value=auc_corr_data)
     mlflow.log_metric(key="auc_precision_matrix_data", value=auc_pmat_data)
     mlflow.log_metric(key="auc_normed_hessian_data", value=auc_nhess_data)
+    mlflow.log_metric(key="auc_hessian_data", value=auc_hess_data)
     
     
     # Store metrics based on training data
@@ -605,11 +610,13 @@ def run_experiment(
     auc_corr_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["cond_correlation_abs_mean"])
     auc_pmat_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["precision_abs_mean"])
     auc_nhess_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["normed_hessian_abs_mean"])
+    auc_hess_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["hessian_abs_mean"])
 
     mlflow.log_metric(key="auc_loglik_diff_train", value=auc_ll_diff_train)
     mlflow.log_metric(key="auc_cond_corr_train", value=auc_corr_train)
     mlflow.log_metric(key="auc_precision_matrix_train", value=auc_pmat_train)
     mlflow.log_metric(key="auc_normed_hessian_train", value=auc_nhess_train)
+    mlflow.log_metric(key="auc_hessian_train", value=auc_hess_train)
     
     
     # Store metrics based on true data joint
@@ -617,11 +624,13 @@ def run_experiment(
     auc_corr_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["cond_correlation_abs_mean"])
     auc_pmat_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["precision_abs_mean"])
     auc_nhess_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["normed_hessian_abs_mean"])
+    auc_hess_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["hessian_abs_mean"])
 
     mlflow.log_metric(key="auc_loglik_diff_val", value=auc_ll_diff_val)
     mlflow.log_metric(key="auc_cond_corr_val", value=auc_corr_val)
     mlflow.log_metric(key="auc_precision_matrix_val", value=auc_pmat_val)
     mlflow.log_metric(key="auc_normed_hessian_val", value=auc_nhess_val)
+    mlflow.log_metric(key="auc_hessian_val", value=auc_hess_val)
     
     mlflow.end_run()
     

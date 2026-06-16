@@ -580,26 +580,62 @@ class GTM(nn.Module):
 
         return return_dict_nf_mctm
 
-    def log_likelihood(self, y, mean_loss=False, return_lambda_matrix=True):  # covariate=False,
+    def log_likelihood(self, y, mean_loss=False, return_lambda_matrix=True, batchsize=None):
         """
-        Returns the the log likelihood per sample for input Y.
+        Returns the log likelihood per sample for input Y.
 
         Parameters
         ----------
         y : torch.FloatTensor
             The input data for which to compute the log likelihood.
-        mean_loss: bool = False
+        mean_loss : bool = False
             Whether to return the mean of the log likelihood or not.
+        return_lambda_matrix : bool = True
+            Whether to return the lambda matrix or not.
+        batchsize : int or None
+            If None, compute in one pass (original behavior).
+            If int, compute log likelihoods in batches of this size
+            and concatenate results.
 
         Returns
         -------
-        Returns the the log likelihood per sample for input Y.
+        torch.Tensor : log likelihood per sample (or mean if mean_loss=True)
         """
         y = y.to(device=self.device)
-        return self.__log_likelihood_loss__(y, mean_loss=mean_loss, return_lambda_matrix=return_lambda_matrix)[
-            "log_likelihood_data"
-        ]  # covariate=False, train=False, evaluate=True
 
+        # ── Original single-pass behavior ─────────────────────────────────────
+        if batchsize is None:
+            return self.__log_likelihood_loss__(
+                y,
+                mean_loss=mean_loss,
+                return_lambda_matrix=return_lambda_matrix,
+            )["log_likelihood_data"]
+
+        # ── Batched computation ────────────────────────────────────────────────
+        n_samples = y.shape[0]
+        ll_list   = []
+
+        for start in range(0, n_samples, batchsize):
+            end     = min(start + batchsize, n_samples)
+            y_batch = y[start:end]
+
+            ll_batch = self.__log_likelihood_loss__(
+                y_batch,
+                mean_loss=False,                   # always False per batch — aggregate after
+                return_lambda_matrix=return_lambda_matrix,
+            )["log_likelihood_data"]
+
+            ll_list.append(ll_batch)
+
+        # ── Concatenate all batches ────────────────────────────────────────────
+        ll_all = torch.cat(ll_list, dim=0)  # shape: (n_samples,)
+
+        if mean_loss:
+            return ll_all.mean()
+
+        return ll_all
+    
+    
     def __training_objective__(
         self,
         samples,
@@ -2312,14 +2348,20 @@ class GTM(nn.Module):
         
         return compute_local_loglikelihood_hessian(self,
                               y,
-                              copula_only=True)
+                              copula_only=copula_only)
         
-    def compute_local_relative_hessian_metric(self,y,copula_only=True):
+    def compute_local_relative_hessian_metric(self,
+                                              y,
+                                              copula_only=True, 
+                                              including_unnormalized_hessians=False):
         
         y= y.to(self.device)
         hessians = self.compute_local_loglikelihood_hessian(y,copula_only=copula_only)
         
-        return pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12)
+        if including_unnormalized_hessians == False:
+            return pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12)
+        else:
+            return pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12), hessians
     
     
     def compute_conditional_independence_table_local_relative_hessian(self,y=None,
@@ -2342,16 +2384,21 @@ class GTM(nn.Module):
                 print(f"Warning: Only {bool_mask.all(dim=1).sum().item()} samples are within the specified bounds. Others are dropped.")
             evaluation_data = evaluation_data[bool_mask.all(dim=1)]
         
-        normed_hessian = self.compute_local_relative_hessian_metric(evaluation_data,copula_only=copula_only).detach().cpu()
+        normed_hessians, hessians = self.compute_local_relative_hessian_metric(evaluation_data, copula_only=copula_only, including_unnormalized_hessians=True)
+        normed_hessians = normed_hessians.detach().cpu()
+        hessians = hessians.detach().cpu()
         
-        table = compute_precision_matrix_summary_statistics(normed_hessian)
+        table = compute_precision_matrix_summary_statistics(normed_hessians)
+        table2 = compute_precision_matrix_summary_statistics(hessians)
         
         table["normed_hessian_abs_mean"] = table["abs_mean"]
+        table["hessian_abs_mean"] = table2["abs_mean"]
         
         table = table[[
                 "var_row",
                 "var_col",
                 "normed_hessian_abs_mean",
+                "hessian_abs_mean"
             ]]
         
         return table

@@ -60,13 +60,26 @@ def generate_synthetic_vine_data(seed_value=1,
     if vine_type == "R-Vine":
         vine_structure = pv.RVineStructure.simulate(dimensionality,seeds=[int(seed_value_copula)])
     elif vine_type == "C-Vine":
-        vine_structure = pv.CVineStructure.simulate(dimensionality,seeds=[int(seed_value_copula)])
+        order = list(range(1,dimensionality+1))
+        random.shuffle(order)
+        vine_structure = pv.CVineStructure(order)
+        #vine_structure = pv.CVineStructure.simulate(dimensionality,seeds=[int(seed_value_copula)])
     elif vine_type == "D-Vine":
-        vine_structure = pv.DVineStructure.simulate(dimensionality,seeds=[int(seed_value_copula)])
+        order = list(range(1,dimensionality+1))
+        random.shuffle(order)
+        vine_structure = pv.DVineStructure(order)
+        #vine_structure = pv.DVineStructure.simulate(dimensionality,seeds=[int(seed_value_copula)])
     else:
         raise ValueError("vine_type must be one of 'R-Vine', 'C-Vine', or 'D-Vine'")
     
     pair_copulas = sample_random_pair_copulas(dimensionality,Independence_tree=Independence_tree, tau_mean=tau_mean, tau_range=tau_range, negative_tau=negative_tau)
+    #for _ in range(0,100):
+    #    try:
+    #        vine_model = pv.Vinecop.from_structure(structure=vine_structure, pair_copulas=pair_copulas)
+    #        break
+    #    except: 
+    #        print("failure in pv.Vinecop.from_structure function")
+    #        pass
     vine_model = pv.Vinecop.from_structure(structure=vine_structure, pair_copulas=pair_copulas)
     df = compute_conditional_dependence_table(vine_model, Independence_tree=Independence_tree)
 
