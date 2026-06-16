@@ -2369,7 +2369,8 @@ class GTM(nn.Module):
                                                                       sample_size=1000,
                                                                       min_val=-torch.inf,
                                                                       max_val=+torch.inf,
-                                                                      copula_only=True):
+                                                                      copula_only=True,
+                                                                      batchsize=None):
         
         if evaluation_data_type == "data":
             if y==None:
@@ -2384,9 +2385,39 @@ class GTM(nn.Module):
                 print(f"Warning: Only {bool_mask.all(dim=1).sum().item()} samples are within the specified bounds. Others are dropped.")
             evaluation_data = evaluation_data[bool_mask.all(dim=1)]
         
-        normed_hessians, hessians = self.compute_local_relative_hessian_metric(evaluation_data, copula_only=copula_only, including_unnormalized_hessians=True)
-        normed_hessians = normed_hessians.detach().cpu()
-        hessians = hessians.detach().cpu()
+        # ── Original single-pass behavior ─────────────────────────────────────
+        if batchsize is None:
+            normed_hessians, hessians = self.compute_local_relative_hessian_metric(
+                evaluation_data,
+                copula_only=copula_only,
+                including_unnormalized_hessians=True,
+            )
+            normed_hessians = normed_hessians.detach().cpu()
+            hessians        = hessians.detach().cpu()
+            return normed_hessians, hessians
+
+        # ── Batched computation ────────────────────────────────────────────────
+        n_samples         = evaluation_data.shape[0]
+        normed_hessians_list = []
+        hessians_list        = []
+
+        for start in range(0, n_samples, batchsize):
+            end            = min(start + batchsize, n_samples)
+            batch          = evaluation_data[start:end]
+
+            normed_hess_batch, hess_batch = self.compute_local_relative_hessian_metric(
+                batch,
+                copula_only=copula_only,
+                including_unnormalized_hessians=True,
+            )
+
+            normed_hessians_list.append(normed_hess_batch.detach().cpu())
+            hessians_list.append(hess_batch.detach().cpu())
+
+        # ── Concatenate all batches ────────────────────────────────────────────
+        normed_hessians = torch.cat(normed_hessians_list, dim=0)
+        hessians        = torch.cat(hessians_list,        dim=0)
+        
         
         table = compute_precision_matrix_summary_statistics(normed_hessians)
         table2 = compute_precision_matrix_summary_statistics(hessians)
