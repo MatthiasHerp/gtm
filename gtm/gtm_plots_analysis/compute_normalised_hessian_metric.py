@@ -1,5 +1,12 @@
 import torch
 
+def global_nuclear_normalize_vectorised(hessians, eps=1e-12):
+    # Compute nuclear norm along the last two dims -> (N, D, D)
+    global_nuc_norm = torch.linalg.norm(hessians, ord='nuc', dim=(-2, -1)) + eps  # (N,D,D)
+    hessians_normed_global = hessians / global_nuc_norm.unsqueeze(1).unsqueeze(2)
+    
+    return hessians_normed_global
+
 def pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12):
     """Vectorized normalization of Hessians using pairwise 2x2 nuclear norms (off-diagonal only)."""
     # hessians: (N, D, D)

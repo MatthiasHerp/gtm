@@ -30,7 +30,7 @@ from gtm.gtm_training.training_helpers import (
 
 from gtm.gtm_plots_analysis.compute_conditional_independence_kld_v2 import compute_conditional_independence_kld_v2
 from gtm.gtm_plots_analysis.compute_local_loglikelihood_hessian import compute_local_loglikelihood_hessian
-from gtm.gtm_plots_analysis.compute_normalised_hessian_metric import pairwise_blockwise_nuclear_normalize_vectorised
+from gtm.gtm_plots_analysis.compute_normalised_hessian_metric import pairwise_blockwise_nuclear_normalize_vectorised, global_nuclear_normalize_vectorised
 # from gtm.simulation_study.simulation_study_helpers import plot_marginals, plot_densities
 
 
@@ -2361,7 +2361,8 @@ class GTM(nn.Module):
         if including_unnormalized_hessians == False:
             return pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12)
         else:
-            return pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12), hessians
+            
+            return hessians, global_nuclear_normalize_vectorised(hessians, eps=1e-12), pairwise_blockwise_nuclear_normalize_vectorised(hessians, eps=1e-12)
     
     
     def compute_conditional_independence_table_local_relative_hessian(self,y=None,
@@ -2387,47 +2388,54 @@ class GTM(nn.Module):
         
         # ── Original single-pass behavior ─────────────────────────────────────
         if batchsize is None:
-            normed_hessians, hessians = self.compute_local_relative_hessian_metric(
+            hessians, global_normed_hessians, pairwise_normed_hessians = self.compute_local_relative_hessian_metric(
                 evaluation_data,
                 copula_only=copula_only,
                 including_unnormalized_hessians=True,
             )
-            normed_hessians = normed_hessians.detach().cpu()
+            global_normed_hessians = global_normed_hessians.detach().cpu()
+            pairwise_normed_hessians = pairwise_normed_hessians.detach().cpu()
             hessians        = hessians.detach().cpu()
-            return normed_hessians, hessians
+            return hessians, global_normed_hessians, pairwise_normed_hessians
 
         # ── Batched computation ────────────────────────────────────────────────
         n_samples         = evaluation_data.shape[0]
-        normed_hessians_list = []
+        global_normed_hessians_list = []
+        pairwise_normed_hessians_list = []
         hessians_list        = []
 
         for start in range(0, n_samples, batchsize):
             end            = min(start + batchsize, n_samples)
             batch          = evaluation_data[start:end]
 
-            normed_hess_batch, hess_batch = self.compute_local_relative_hessian_metric(
+            hessians_batch, global_normed_hessians_batch, pairwise_normed_hessians_batch = self.compute_local_relative_hessian_metric(
                 batch,
                 copula_only=copula_only,
                 including_unnormalized_hessians=True,
             )
 
-            normed_hessians_list.append(normed_hess_batch.detach().cpu())
-            hessians_list.append(hess_batch.detach().cpu())
+            global_normed_hessians_list.append(global_normed_hessians_batch.detach().cpu())
+            pairwise_normed_hessians_list.append(pairwise_normed_hessians_batch.detach().cpu())
+            hessians_list.append(hessians_batch.detach().cpu())
 
         # ── Concatenate all batches ────────────────────────────────────────────
-        normed_hessians = torch.cat(normed_hessians_list, dim=0)
+        global_normed_hessians = torch.cat(global_normed_hessians_list, dim=0)
+        pairwise_normed_hessians = torch.cat(pairwise_normed_hessians_list, dim=0)
         hessians        = torch.cat(hessians_list,        dim=0)
         
         
-        table = compute_precision_matrix_summary_statistics(normed_hessians)
-        table2 = compute_precision_matrix_summary_statistics(hessians)
+        table = compute_precision_matrix_summary_statistics(global_normed_hessians)
+        table2 = compute_precision_matrix_summary_statistics(pairwise_normed_hessians)
+        table3 = compute_precision_matrix_summary_statistics(hessians)
         
-        table["normed_hessian_abs_mean"] = table["abs_mean"]
-        table["hessian_abs_mean"] = table2["abs_mean"]
+        table["global_normed_hessian_abs_mean"] = table["abs_mean"]
+        table["normed_hessian_abs_mean"] = table2["abs_mean"]
+        table["hessian_abs_mean"] = table3["abs_mean"]
         
         table = table[[
                 "var_row",
                 "var_col",
+                "global_normed_hessian_abs_mean",
                 "normed_hessian_abs_mean",
                 "hessian_abs_mean"
             ]]

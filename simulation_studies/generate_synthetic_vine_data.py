@@ -19,7 +19,8 @@ def generate_synthetic_vine_data(seed_value=1,
                                  N_test=20000,
                                  tau_mean=0.3, 
                                  tau_range=0.2, 
-                                 negative_tau=True):
+                                 negative_tau=True,
+                                 gauss_copula_only=False):
     """
     Generate Synthetic Data from a Randomly Sampled Vine Copula with Gaussian Marginals.
 
@@ -72,7 +73,7 @@ def generate_synthetic_vine_data(seed_value=1,
     else:
         raise ValueError("vine_type must be one of 'R-Vine', 'C-Vine', or 'D-Vine'")
     
-    pair_copulas = sample_random_pair_copulas(dimensionality,Independence_tree=Independence_tree, tau_mean=tau_mean, tau_range=tau_range, negative_tau=negative_tau)
+    pair_copulas = sample_random_pair_copulas(dimensionality,Independence_tree=Independence_tree, tau_mean=tau_mean, tau_range=tau_range, negative_tau=negative_tau, gauss_copula_only=gauss_copula_only)
     #for _ in range(0,100):
     #    try:
     #        vine_model = pv.Vinecop.from_structure(structure=vine_structure, pair_copulas=pair_copulas)

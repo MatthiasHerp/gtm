@@ -22,28 +22,33 @@ def set_seeds(seed_int):
     random.seed(seed_int)
 
 
-def sample_random_pair_copulas(D, Independence_tree=2, tau_mean=0.3, tau_range=0.2, negative_tau = True):
+def sample_random_pair_copulas(D, Independence_tree=2, tau_mean=0.3, tau_range=0.2, negative_tau = True, gauss_copula_only=False):
     pair_copulas = []
-
-    # List of families to sample from (can add/remove)
-    families = [
-        pv.BicopFamily.indep,
+    
+    if gauss_copula_only==True:
+        families_no_independent = families = [
         pv.BicopFamily.gaussian,
-        pv.BicopFamily.student,
-        pv.BicopFamily.clayton,
-        pv.BicopFamily.gumbel,
-        pv.BicopFamily.frank,
-        pv.BicopFamily.joe,
     ]
-    families_no_independent = [
-        #pv.BicopFamily.indep,
-        pv.BicopFamily.gaussian,
-        pv.BicopFamily.student,
-        pv.BicopFamily.clayton,
-        pv.BicopFamily.gumbel,
-        pv.BicopFamily.frank,
-        pv.BicopFamily.joe,
-    ]
+    else: 
+        # List of families to sample from (can add/remove)
+        families = [
+            pv.BicopFamily.indep,
+            pv.BicopFamily.gaussian,
+            pv.BicopFamily.student,
+            pv.BicopFamily.clayton,
+            pv.BicopFamily.gumbel,
+            pv.BicopFamily.frank,
+            pv.BicopFamily.joe,
+        ]
+        families_no_independent = [
+            #pv.BicopFamily.indep,
+            pv.BicopFamily.gaussian,
+            pv.BicopFamily.student,
+            pv.BicopFamily.clayton,
+            pv.BicopFamily.gumbel,
+            pv.BicopFamily.frank,
+            pv.BicopFamily.joe,
+        ]
 
     # For each tree in the vine
     for tree in range(D - 1):
