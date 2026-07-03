@@ -28,13 +28,10 @@ def run_experiment_dragon(
     experiment_id,
     # Tags
     seed_value=1,
-    seed_value_copula=None,
     dimensionality=100,
-    Independence_tree=3,
-    vine_type="R-Vine",
-    N_train=2000,
-    N_validate=2000,
-    N_test=20000,
+    train_portion=0.75,
+    val_portion=0.15,
+    test_portion=0.1,
     # Parameters,
     number_transformation_layers = 1,
     number_decorrelation_layers= 3,
@@ -66,12 +63,13 @@ def run_experiment_dragon(
     #evaluation_data_type = "samples_from_model",
     num_processes=1,
     sample_size = 10000,
-    max_num_ci_sample_size = 10000,
+    max_batchsize=10000,
     num_points_quad=15,
     copula_only=False,
     min_val=-6,
     max_val=6,
-    bootstrap_warpspeed=False
+    bootstrap=False,
+    likelihood_ratio_metrics=False
 ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
@@ -100,25 +98,26 @@ def run_experiment_dragon(
             run_name="{}".format(run_name),
             experiment_id=experiment_id,
             tags={"seed_value": seed_value,
-                  "seed_value_copula": seed_value_copula,
                   "dimensionality": dimensionality,
-                  "Independence_tree": Independence_tree,
-                  "vine_type": vine_type,
-                  "N_train": N_train,
-                  "N_validate": N_validate,
-                  "N_test": N_test,
-                  "bootstrap_warpspeed": bootstrap_warpspeed})
+                  "train_portion": train_portion,
+                  "val_portion": val_portion,
+                  "test_portion": test_portion,
+                  "bootstrap": bootstrap})
     
     # have to set seed here as we dont do it in simualated data sampling
     set_seeds(seed_value)
     
     data = pd.read_csv("dragon_application/dragon_analysis_dataset_subset.csv")
-    shuffled_data = data.sample(frac=1).reset_index(drop=True)
+    
+    if bootstrap == True:
+        data = data.sample(frac=1, replace=True) # repalce True is mit zurücklegen
+    
+    shuffled_data = data.sample(frac=1, replace=False).reset_index(drop=True)
     N = shuffled_data.shape[0]
     D = shuffled_data.shape[1]
-    N_train = int(0.75 * N)
-    N_validate = int(0.15 * N)
-    N_test = N - N_train - N_validate
+    N_train = int(train_portion * N)
+    N_validate = int(val_portion * N)
+    N_test = int(test_portion * N)
     data_train = shuffled_data.iloc[:N_train, :]
     data_validate = shuffled_data.iloc[N_train:N_train + N_validate, :]
     data_test = shuffled_data.iloc[N_train + N_validate:N_train + N_validate + N_test, :]
@@ -140,46 +139,6 @@ def run_experiment_dragon(
     synthetic_data_dict['validate_data'] = torch.from_numpy(data_validate_numpy_standardized).float() 
     synthetic_data_dict['test_data'] = torch.from_numpy(data_test_numpy_standardized).float() 
     
-    #synthetic_data_dict = generate_synthetic_vine_data(
-    #    seed_value=seed_value,
-    #    seed_value_copula=seed_value_copula,
-    #    dimensionality=dimensionality,
-    #    Independence_tree=Independence_tree,
-    #    vine_type=vine_type,
-    #    N_train=N_train,
-    #    N_validate=N_validate,
-    #    N_test=N_test
-    #)
-    #
-    ## Create dataset and DataLoader, if bootstrapped note that
-    #if bootstrap_warpspeed:
-    #    #merge train and validate data for warpspeed bootstrap
-    #    combined_data = torch.cat((synthetic_data_dict['train_data'], synthetic_data_dict['validate_data']), dim=0)
-    #    
-    #    # bootstrap sample with replacement (mit zurücklegen)
-    #    indices = torch.randint(0, combined_data.size(0), (N_train + N_validate,))
-    #    bootstrapped_data = combined_data[indices]
-    #    
-    #    # save bootstrapp indices for easy reproducibility
-    #    np.save(temp_folder+"/bootstrap_indices.npy", np.array(indices.detach().cpu()))
-    #    mlflow.log_artifact(temp_folder+"/bootstrap_indices.npy")
-    #    
-    #    # Split back into train and validate sets
-    #    synthetic_data_dict['train_data'] = bootstrapped_data[:N_train]
-    #    synthetic_data_dict['validate_data'] = bootstrapped_data[N_train:]
-    #    
-    #    # Create dataset and DataLoader
-    #    dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
-    #    dataloader_train = DataLoader(dataset_train, batch_size=N_train)
-#
-    #    dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
-    #    dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
-    #else:
-    #    dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
-    #    dataloader_train = DataLoader(dataset_train, batch_size=N_train)
-#
-    #    dataset_validate = Generic_Dataset(synthetic_data_dict['validate_data'])
-    #    dataloader_validate = DataLoader(dataset_validate, batch_size=N_validate)
         
     dataset_train = Generic_Dataset(synthetic_data_dict['train_data'])
     dataloader_train = DataLoader(dataset_train, batch_size=N_train)
@@ -218,6 +177,8 @@ def run_experiment_dragon(
     mlflow.log_param(key="n_trials", value=n_trials)
     mlflow.log_param(key="temp_folder", value=temp_folder)
     mlflow.log_param(key="study_name", value=study_name)   
+    mlflow.log_param(key="likelihood_ratio_metrics", value=likelihood_ratio_metrics)   
+    mlflow.log_param(key="max_batchsize", value=max_batchsize)   
     
     model = GTM(
         number_variables = dimensionality,
@@ -375,7 +336,6 @@ def run_experiment_dragon(
     #mlflow.log_param(key="evaluation_data_type", value=evaluation_data_type)
     mlflow.log_param(key="num_processes", value=num_processes)
     mlflow.log_param(key="sample_size", value=sample_size)
-    mlflow.log_param(key="max_num_ci_sample_size", value=max_num_ci_sample_size)
     mlflow.log_param(key="num_points_quad", value=num_points_quad)
     mlflow.log_param(key="copula_only", value=copula_only)
     mlflow.log_param(key="min_val", value=min_val)
@@ -385,161 +345,89 @@ def run_experiment_dragon(
     
     
     timer_start = time.time()
-    conditional_independence_table_samples2 = model.compute_conditional_independence_table_v2(
-                                            y = synthetic_data_dict['train_data'],
-                                            evaluation_data_type = "data",
+    if max_batchsize < sample_size:
+        # Compute number of chunks
+        n_chunks = math.ceil(sample_size / max_batchsize)
+        print("needs to chunk synthetic sample ci computation, uses {} chunks of size ".format(n_chunks) + str(max_batchsize))
+        print("is be more then sample_size if sample_size / max_batchsize not an integer")
+
+        result_tables = []
+        for i in range(n_chunks):
+            print(f"Processing chunk {i+1}/{n_chunks} ({max_batchsize} samples)...")
+            chunk_table = model.compute_conditional_independence_table_v2(
+                y=None,
+                evaluation_data_type="samples_from_model",
+                #num_processes=num_processes,
+                sample_size=max_batchsize,
+                num_points_quad=num_points_quad,
+                copula_only=copula_only,
+                min_val=min_val,
+                max_val=max_val,
+                likelihood_ratio_metrics=likelihood_ratio_metrics
+            )
+            result_tables.append(chunk_table)
+
+        # Concatenate all results into one dataframe
+        all_results = pd.concat(result_tables, ignore_index=True)
+
+        # Aggregate (average) using groupby:
+        conditional_independence_table_samples = (
+            all_results
+            .groupby(["var_row", "var_col"], as_index=False)
+            .agg({
+                "precision_abs_mean": "mean",
+                #"precision_square_mean": "mean",
+                "cond_correlation_abs_mean": "mean",
+                #"cond_correlation_square_mean": "mean",
+                "kld": "mean",
+                "iae": "mean"
+            })
+        )
+    else:  
+        conditional_independence_table_samples = model.compute_conditional_independence_table_v2(
+                                            y = None,
+                                            evaluation_data_type = "samples_from_model",
                                             #num_processes=num_processes,
-                                            sample_size = 1000,
+                                            sample_size = sample_size,
                                             num_points_quad=num_points_quad,
                                             copula_only=copula_only,
                                             min_val=min_val,
-                                            max_val=max_val)
+                                            max_val=max_val,
+                                            likelihood_ratio_metrics=likelihood_ratio_metrics)
+        
+    
     timer_end = time.time()
     print(f"Time taken to compute conditional independence table v2 with {sample_size} samples: {timer_end - timer_start} seconds")
-    
-    conditional_independence_table_samples2.to_csv(temp_folder+"/conditional_independence_table_samples2_train.csv", index=False)
-    mlflow.log_artifact(temp_folder+"/conditional_independence_table_samples2_train.csv")
-    
-    mlflow.log_metric(key="conditional_independence_table_samples2_train_time", value=timer_end - timer_start)
-    
-    timer_start = time.time()
-    conditional_independence_table_samples = model.compute_conditional_independence_table(
-                                            y = synthetic_data_dict['train_data'],
-                                            evaluation_data_type = "data",
-                                            num_processes=num_processes,
-                                            #sample_size = 1000,
-                                            num_points_quad=num_points_quad,
-                                            copula_only=copula_only,
-                                            min_val=min_val,
-                                            max_val=max_val)
-    timer_end = time.time()
-    print(f"Time taken to compute conditional independence table with {sample_size} samples: {timer_end - timer_start} seconds")
-    
-    conditional_independence_table_samples.to_csv(temp_folder+"/conditional_independence_table_samples_train.csv", index=False)
-    mlflow.log_artifact(temp_folder+"/conditional_independence_table_samples_train.csv")
-    
-    mlflow.log_metric(key="conditional_independence_table_samples_train_time", value=timer_end - timer_start)
+
+    mlflow.log_metric(key="conditional_independence_table_samples_time", value=timer_end - timer_start)
     
     
+    # Relative Hessian Metric
+    ci_table_hessian_samples = model.compute_conditional_independence_table_local_relative_hessian(y=None,
+                                                                      evaluation_data_type="samples_from_model",
+                                                                      sample_size=sample_size,
+                                                                      min_val=min_val,
+                                                                      max_val=max_val,
+                                                                      copula_only=copula_only,
+                                                                      batchsize=max_batchsize)
     
-    ##
-    ##
-    ##
-    ##if max_num_ci_sample_size < sample_size:
-    ##    # Compute number of chunks
-    ##    n_chunks = math.ceil(sample_size / max_num_ci_sample_size)
-    ##    print("needs to chunk synthetic sample ci computation, uses {} chunks of size ".format(n_chunks) + str(max_num_ci_sample_size))
-    ##    print("is be more then sample_size if sample_size / max_num_ci_sample_size not an integer")
-##
-    ##    result_tables = []
-    ##    for i in range(n_chunks):
-    ##        print(f"Processing chunk {i+1}/{n_chunks} ({max_num_ci_sample_size} samples)...")
-    ##        chunk_table = model.compute_conditional_independence_table(
-    ##            y=None,
-    ##            evaluation_data_type="samples_from_model",
-    ##            num_processes=num_processes,
-    ##            sample_size=max_num_ci_sample_size,
-    ##            num_points_quad=num_points_quad,
-    ##            copula_only=copula_only,
-    ##            min_val=min_val,
-    ##            max_val=max_val
-    ##        )
-    ##        result_tables.append(chunk_table)
-##
-    ##    # Concatenate all results into one dataframe
-    ##    all_results = pd.concat(result_tables, ignore_index=True)
-##
-    ##    # Aggregate (average) using groupby:
-    ##    conditional_independence_table_samples = (
-    ##        all_results
-    ##        .groupby(["var_row", "var_col"], as_index=False)
-    ##        .agg({
-    ##            "precision_abs_mean": "mean",
-    ##            "precision_square_mean": "mean",
-    ##            "cond_correlation_abs_mean": "mean",
-    ##            "cond_correlation_square_mean": "mean",
-    ##            "kld": "mean",
-    ##            "iae": "mean"
-    ##        })
-    ##    )
-    ##else:  
-    ##    conditional_independence_table_samples = model.compute_conditional_independence_table(
-    ##                                        y = None,
-    ##                                        evaluation_data_type = "samples_from_model",
-    ##                                        num_processes=num_processes,
-    ##                                        sample_size = sample_size,
-    ##                                        num_points_quad=num_points_quad,
-    ##                                        copula_only=copula_only,
-    ##                                        min_val=min_val,
-    ##                                        max_val=max_val)
-    ##
-##
-    ##conditional_independence_table_data_train = model.compute_conditional_independence_table(
-    ##                                    y = synthetic_data_dict['train_data'].detach(),
-    ##                                    evaluation_data_type = "data",
-    ##                                    num_processes=num_processes,
-    ##                                    sample_size = sample_size,
-    ##                                    num_points_quad=num_points_quad,
-    ##                                    copula_only=copula_only,
-    ##                                    min_val=min_val,
-    ##                                    max_val=max_val)
-    ##
-##
-    ##conditional_independence_table_data_val = model.compute_conditional_independence_table(
-    ##                                    y = synthetic_data_dict['validate_data'].detach(),
-    ##                                    evaluation_data_type = "data",
-    ##                                    num_processes=num_processes,
-    ##                                    sample_size = sample_size,
-    ##                                    num_points_quad=num_points_quad,
-    ##                                    copula_only=copula_only,
-    ##                                    min_val=min_val,
-    ##                                    max_val=max_val)
-    ##
-    ##### 6. Identifying the Conditional Independence Graph 
-    ### We compare the true known conditional independence Graph to the one learned by the GTM. To do so we first merge the true structure table with our learned one.
-    ##
-    ###merged_ci_tables_samples = pd.merge(
-    ###    conditional_independence_table_samples,
-    ###    synthetic_data_dict["df_true_structure"],
-    ###    on=["var_row", "var_col"]
-    ###)
-###
-    ###merged_ci_tables_data_train = pd.merge(
-    ###    conditional_independence_table_data_train,
-    ###    synthetic_data_dict["df_true_structure"],
-    ###    on=["var_row", "var_col"]
-    ###)
-    ##
-    ##merged_ci_tables_samples = conditional_independence_table_samples
-    ##merged_ci_tables_data_train = conditional_independence_table_data_train
-    ##
-##
-    ### the iae makes no sense when using the true data, and the kld is the log likelihood ratio so we del iae and rename kld into ll_diff
-    ##del merged_ci_tables_data_train["iae"]
-    ##merged_ci_tables_data_train["ll_diff"] = merged_ci_tables_data_train["kld"]
-    ##del merged_ci_tables_data_train["kld"]
-    ##
-    ###merged_ci_tables_data_val = pd.merge(
-    ###    conditional_independence_table_data_val,
-    ###    synthetic_data_dict["df_true_structure"],
-    ###    on=["var_row", "var_col"]
-    ###)
-    ##del merged_ci_tables_data_val["iae"]
-    ##merged_ci_tables_data_val["ll_diff"] = merged_ci_tables_data_val["kld"]
-    ##del merged_ci_tables_data_val["kld"]
-    ##
-    ##merged_ci_tables_data_val = conditional_independence_table_data_val
-    ##
-    ### store the merged table as an artifact
-    ##merged_ci_tables_samples.to_csv(temp_folder+"/conditional_independence_table_model_samples.csv", index=False)
-    ##mlflow.log_artifact(temp_folder+"/conditional_independence_table_model_samples.csv")   
-    ##
-    ##conditional_independence_table_data_train.to_csv(temp_folder+"/conditional_independence_table_data_train.csv", index=False)
-    ##mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_train.csv")   
-    ##
-    ##conditional_independence_table_data_val.to_csv(temp_folder+"/conditional_independence_table_data_validate.csv", index=False)
-    ##mlflow.log_artifact(temp_folder+"/conditional_independence_table_data_validate.csv")   
-##
+    
+    ### 6. Identifying the Conditional Independence Graph 
+    # We compare the true known conditional independence Graph to the one learned by the GTM. To do so we first merge the true structure table with our learned one.
+    
+    #################### Synth
+    merged_ci_tables_samples = pd.merge(
+        conditional_independence_table_samples,
+        ci_table_hessian_samples,
+        on=["var_row", "var_col"]
+    )
+    ####################
+
+    # store the merged table as an artifact
+    merged_ci_tables_samples.to_csv(temp_folder+"/conditional_independence_table_model_samples.csv", index=False)
+    mlflow.log_artifact(temp_folder+"/conditional_independence_table_model_samples.csv")   
+   
+   
     mlflow.end_run()
     
     clear_temp_folder(temp_folder)

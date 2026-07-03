@@ -2431,13 +2431,15 @@ class GTM(nn.Module):
         table["global_normed_hessian_abs_mean"] = table["abs_mean"]
         table["normed_hessian_abs_mean"] = table2["abs_mean"]
         table["hessian_abs_mean"] = table3["abs_mean"]
+        table["hessian_mean"] = table3["mean"]
         
         table = table[[
                 "var_row",
                 "var_col",
                 "global_normed_hessian_abs_mean",
                 "normed_hessian_abs_mean",
-                "hessian_abs_mean"
+                "hessian_abs_mean",
+                "hessian_mean"
             ]]
         
         return table
