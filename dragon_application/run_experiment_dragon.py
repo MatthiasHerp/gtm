@@ -345,7 +345,7 @@ def run_experiment_dragon(
     
     
     timer_start = time.time()
-    if max_batchsize < sample_size:
+    if max_batchsize < sample_size and likelihood_ratio_metrics == True:
         # Compute number of chunks
         n_chunks = math.ceil(sample_size / max_batchsize)
         print("needs to chunk synthetic sample ci computation, uses {} chunks of size ".format(n_chunks) + str(max_batchsize))
