@@ -440,7 +440,7 @@ def compute_conditional_independence_table_local_relative_hessian(model,y=None,
 
 
 
-def run_experiment(
+def run_experiment_nf(
     run_name,
     experiment_id,
     # Tags
@@ -911,7 +911,7 @@ def run_experiment(
     
 if __name__ == "__main__":
     
-    run_experiment(
+    run_experiment_nf(
         run_name="test_run",
         experiment_id=0,
         seed_value=1,
@@ -943,7 +943,7 @@ if __name__ == "__main__":
     )
 
 
-    run_experiment(
+    run_experiment_nf(
         run_name="test_run",
         experiment_id=0,
         seed_value=1,
