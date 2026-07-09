@@ -1391,6 +1391,11 @@ class GTM(nn.Module):
         n_trials=15,
         temp_folder=".",
         study_name=None,
+        penalty_decorrelation_ridge_param_max=30,
+        penalty_decorrelation_ridge_first_difference_max=30,
+        penalty_decorrelation_ridge_second_difference_max=30,
+        penalty_transformation_ridge_second_difference_max=30,
+        penalty_lasso_conditional_independence_max=1,
     ):
         """
         Tunes the regularization hyperparameters of the GTM model using Optuna.
@@ -1512,7 +1517,7 @@ class GTM(nn.Module):
                     )
                 elif penalty_decorrelation_ridge_param == "sample":
                     penalty_decorrelation_ridge_param_opt = trial.suggest_float(
-                        "penalty_decorrelation_ridge_param", 0.0000001, 30, log=False
+                        "penalty_decorrelation_ridge_param", 0.0000001, penalty_decorrelation_ridge_param_max, log=False
                     )  # True
                 else:
                     warnings.warn(
@@ -1532,7 +1537,7 @@ class GTM(nn.Module):
                         trial.suggest_float(
                             "penalty_decorrelation_ridge_first_difference",
                             0.0000001,
-                            30,
+                            penalty_decorrelation_ridge_first_difference_max,
                             log=False,
                         )
                     )  # True
@@ -1554,7 +1559,7 @@ class GTM(nn.Module):
                         trial.suggest_float(
                             "penalty_decorrelation_ridge_second_difference",
                             0.0000001,
-                            30,
+                            penalty_decorrelation_ridge_second_difference_max,
                             log=False,
                         )
                     )  # True
@@ -1576,7 +1581,7 @@ class GTM(nn.Module):
                         trial.suggest_float(
                             "penalty_transformation_ridge_second_difference",
                             0.0000001,
-                            30,
+                            penalty_transformation_ridge_second_difference_max,
                             log=False,
                         )
                     )  # True
@@ -1595,7 +1600,10 @@ class GTM(nn.Module):
                     )
                 elif penalty_lasso_conditional_independence == "sample":
                     penalty_lasso_conditional_independence_opt = trial.suggest_float(
-                        "penalty_lasso_conditional_independence", 0.0000001, 1, log=True
+                        "penalty_lasso_conditional_independence", 
+                        0.0000001, 
+                        penalty_lasso_conditional_independence_max, 
+                        log=True
                     )
                 else:
                     warnings.warn(
