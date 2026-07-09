@@ -2412,7 +2412,7 @@ class GTM(nn.Module):
         pairwise_normed_hessians_list = []
         hessians_list        = []
 
-        for start in range(0, n_samples, batchsize):
+        for start in tqdm(range(0, n_samples, batchsize)):
             end            = min(start + batchsize, n_samples)
             batch          = evaluation_data[start:end]
 
