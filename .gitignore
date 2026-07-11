@@ -27,3 +27,5 @@ seed_20_kld_warpspeed_bootstrap_20D.png
 test_bspline_border.ipynb
 .vscode/settings.json
 ggm_auc_results_vines/
+pngs_paper/
+simulation_studies/run_files_paper_ggm/
