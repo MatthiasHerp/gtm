@@ -413,7 +413,8 @@ def compute_conditional_independence_table_local_relative_hessian(model, y=None,
             else:
                 evaluation_data=y
         elif evaluation_data_type == "samples_from_model":
-            evaluation_data = self.sample(sample_size).detach()
+            evaluation_data, _ = model.sample(sample_size) # Returns:Samples, log probability
+            evaluation_data = evaluation_data.detach()
             # only data within the bound otherwise drop datapoints
             bool_mask = (evaluation_data >= min_val) & (evaluation_data <= max_val)
             if bool_mask.all(dim=1).sum() < sample_size:
@@ -665,9 +666,9 @@ def run_experiment_nfm(
 
     # We compare the learned GTM to a Gaussian Approximation and the Oracle Model. We expect the GTM to lie between these two in terms of approximation the true underlying distribution.
     # We measure this by means of the Kullback Leibler Divergence which we approximate on the test set which is equivalent to the log likelihood ratio between the true distribution and an approximation of it..
-    log_likelihood_train = model.log_prob(synthetic_data_dict['train_data']).detach().cpu()
-    log_likelihood_validate = model.log_prob(synthetic_data_dict['validate_data']).detach().cpu()
-    log_likelihood_test_gtm = model.log_prob(synthetic_data_dict['test_data']).detach().cpu()
+    log_likelihood_train = model.log_prob(synthetic_data_dict['train_data'].to(device)).detach().cpu()
+    log_likelihood_validate = model.log_prob(synthetic_data_dict['validate_data'].to(device)).detach().cpu()
+    log_likelihood_test_gtm = model.log_prob(synthetic_data_dict['test_data'].to(device)).detach().cpu()
 
     # estimate the Multivariate Normal Distribution as Model
     mean_mvn_model = synthetic_data_dict['train_data'].mean(0)
@@ -757,10 +758,10 @@ def run_experiment_nfm(
             all_results
             .groupby(["var_row", "var_col"], as_index=False)
             .agg({
-                "precision_abs_mean": "mean",
-                "precision_square_mean": "mean",
-                "cond_correlation_abs_mean": "mean",
-                "cond_correlation_square_mean": "mean",
+                #"precision_abs_mean": "mean",
+                #"precision_square_mean": "mean",
+                #"cond_correlation_abs_mean": "mean",
+                #"cond_correlation_square_mean": "mean",
                 "kld": "mean",
                 "iae": "mean"
             })
@@ -783,7 +784,7 @@ def run_experiment_nfm(
         min_val=min_val,
         max_val=max_val,
         model=model,
-        evaluation_data=synthetic_data_dict['train_data'].detach(),
+        evaluation_data=synthetic_data_dict['train_data'].detach().to(device),
         evaluation_data_type="data"
     )
     
@@ -794,7 +795,7 @@ def run_experiment_nfm(
         min_val=min_val,
         max_val=max_val,
         model=model,
-        evaluation_data=synthetic_data_dict['validate_data'].detach(),
+        evaluation_data=synthetic_data_dict['validate_data'].detach().to(device),
         evaluation_data_type="data"
     )
     
@@ -818,7 +819,7 @@ def run_experiment_nfm(
     
     
     ci_table_relative_hessian_train = compute_conditional_independence_table_local_relative_hessian(model,
-                                                                  y=synthetic_data_dict['train_data'].detach(),
+                                                                  y=synthetic_data_dict['train_data'].detach().to(device),
                                                                   evaluation_data_type="data",
                                                                   
                                                                   min_val=min_val,
@@ -826,7 +827,7 @@ def run_experiment_nfm(
                                                                   batchsize=max_num_ci_sample_size)
     
     ci_table_relative_hessian_val = compute_conditional_independence_table_local_relative_hessian(model,
-                                                                  y=synthetic_data_dict['validate_data'].detach(),
+                                                                  y=synthetic_data_dict['validate_data'].detach().to(device),
                                                                   evaluation_data_type="data",
                                                                   
                                                                   min_val=min_val,
@@ -960,6 +961,8 @@ def run_experiment_nfm(
     
 if __name__ == "__main__":
     
+    mlflow.set_tracking_uri("file:mlruns_v1")
+    
     run_experiment_nfm(
         run_name="test_run",
         experiment_id=0,
@@ -983,8 +986,8 @@ if __name__ == "__main__":
         patience=10,
         min_delta=1e-7,
         temp_folder="./temp",
-        sample_size = 100,
-        max_num_ci_sample_size = 100,
+        sample_size = 1000,
+        max_num_ci_sample_size = 500,
         num_points_quad=5,
         copula_only=False,
         min_val=-6,
@@ -1015,8 +1018,8 @@ if __name__ == "__main__":
         patience=10,
         min_delta=1e-7,
         temp_folder="./temp",
-        sample_size = 100,
-        max_num_ci_sample_size = 100,
+        sample_size = 1000,
+        max_num_ci_sample_size = 500,
         num_points_quad=5,
         copula_only=False,
         min_val=-6,

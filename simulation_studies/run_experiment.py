@@ -77,7 +77,11 @@ def run_experiment(
     tau_mean=0.3,
     tau_range=0.2,
     negative_tau=True,
-    likelihood_ratio_metrics=True
+    likelihood_ratio_metrics=True,
+    penalty_decorrelation_ridge_first_difference_max=30,
+    penalty_decorrelation_ridge_second_difference_max=30,
+    penalty_lasso_conditional_independence_max=1
+    
 ):
     """
     Run a GTM experiment on synthetic vine copula data and store results using mlflow.
@@ -179,6 +183,9 @@ def run_experiment(
     mlflow.log_param(key="penalty_decorrelation_ridge_second_difference", value=penalty_decorrelation_ridge_second_difference)
     mlflow.log_param(key="penalty_transformation_ridge_second_difference", value=penalty_transformation_ridge_second_difference)
     mlflow.log_param(key="penalty_lasso_conditional_independence", value=penalty_lasso_conditional_independence)
+    mlflow.log_param(key="penalty_decorrelation_ridge_first_difference_max", value=penalty_decorrelation_ridge_first_difference_max)
+    mlflow.log_param(key="penalty_decorrelation_ridge_second_difference_max", value=penalty_decorrelation_ridge_second_difference_max)
+    mlflow.log_param(key="penalty_lasso_conditional_independence_max", value=penalty_lasso_conditional_independence_max)
     if adaptive_lasso_weights_matrix is not False:
         mlflow.log_param(key="adaptive_lasso_weights_matrix", value="matrix_passed")
     else:
@@ -228,7 +235,12 @@ def run_experiment(
             pretrained_transformation_layer=pretrained_transformation_layer,
             n_trials=n_trials,
             temp_folder=temp_folder,
-            study_name=study_name)
+            study_name=study_name,
+            penalty_decorrelation_ridge_param_max=30,
+            penalty_decorrelation_ridge_first_difference_max=penalty_decorrelation_ridge_first_difference_max,
+            penalty_decorrelation_ridge_second_difference_max=penalty_decorrelation_ridge_second_difference_max,
+            penalty_transformation_ridge_second_difference_max=30,
+            penalty_lasso_conditional_independence_max=penalty_lasso_conditional_independence_max)
         
     # for every penalty if we pass a none the set penalty to zero
     if penalty_decorrelation_ridge_param is None:
