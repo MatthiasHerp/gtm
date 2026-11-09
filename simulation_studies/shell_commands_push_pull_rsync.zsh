@@ -14,3 +14,5 @@ rsync -av /scratch/mhe/gtm/mlruns/*  gtm/mlruns/
 # run locally
 # run in gtm folder root, uses the ssh hydra config and keys
 rsync -arvz -e ssh hydra:/sybig/home/mhe/gtm/mlruns . 
+
+

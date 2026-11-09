@@ -205,3 +205,9 @@ This code is released under a custom Non-Commercial Use License. You are free to
 For commercial use, please contact: Matthias Herp [matthias.herp@bioinf.med.uni-goettingen.de]
 
 See the [License](License.md) file for details.
+
+
+
+
+mlflow server --backend-store-uri /Users/matthiasherp/Desktop/phd_github_repositories/gtm/mlruns_scratch --host 127.0.0.1 --port 6000
+mlflow server --backend-store-uri /Users/matthiasherp/Desktop/phd_github_repositories/gtm/mlruns_scratch --default-artifact-root /Users/matthiasherp/Desktop/phd_github_repositories/gtm/mlruns_scratch --host 127.0.0.1 --port 6000

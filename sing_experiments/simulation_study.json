@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "dimensionality": 10,
+  "active_trees": 3,
+  "train_sizes": [125, 500, 2000],
+  "marginals": ["gauss", "exp", "t"],
+  "seeds": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+  "sing_degrees": [2, 3],
+  "n_test": 20000,
+  "tau_mean": 0.3,
+  "tau_range": 0.2,
+  "shuffle_variables": true,
+  "nonparanormal_transform": false,
+  "standardization": "training_mean_std_ddof0",
+  "audit_reference": true
+}

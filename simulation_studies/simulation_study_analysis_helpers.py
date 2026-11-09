@@ -19,6 +19,8 @@ def get_data_original_and_bootstrap(df_runs,data="training_and_validation"):
     for seed in df_runs['tags.seed_value'].unique():
         
         df_of_seed = df_runs[df_runs['tags.seed_value']==str(seed)]
+        df_of_seed = df_of_seed.sort_values("start_time", ascending=False) # Sort values so that it takes the artifact from the most recent run in case there where failed ones
+        df_of_seed = df_of_seed.loc[0]
         
         # TEMPORARY: for future bootstrap_warpspeed is a tag for now out of name
         if "tags.bootstrap_warpspeed" in df_of_seed.columns:
