@@ -29,3 +29,4 @@ test_bspline_border.ipynb
 ggm_auc_results_vines/
 pngs_paper/
 simulation_studies/run_files_paper_ggm/
+simulation_studies/mlruns_v2
