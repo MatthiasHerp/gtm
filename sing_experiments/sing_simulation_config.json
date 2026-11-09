@@ -1,0 +1,8 @@
+{
+  "delta": 1.0,
+  "batch_size": 16,
+  "optimizer_derivatives": 2,
+  "optimizer_maxiter": 150,
+  "loglik_batch_size": 512,
+  "progress": true
+}

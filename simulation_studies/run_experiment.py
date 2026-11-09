@@ -595,6 +595,7 @@ def run_experiment(
     auc_pmat = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["precision_abs_mean"])
     auc_nhess = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["normed_hessian_abs_mean"])
     auc_hess = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["hessian_abs_mean"])
+    auc_nghess = roc_auc_score(merged_ci_tables_samples["dependence"], merged_ci_tables_samples["global_normed_hessian_abs_mean"])
     
     mlflow.log_metric(key="auc_iae", value=auc_iae)
     mlflow.log_metric(key="auc_kld", value=auc_kld)
@@ -602,6 +603,7 @@ def run_experiment(
     mlflow.log_metric(key="auc_precision_matrix", value=auc_pmat)
     mlflow.log_metric(key="auc_normed_hessian", value=auc_nhess)
     mlflow.log_metric(key="auc_hessian", value=auc_hess)
+    mlflow.log_metric(key="auc_global_normed_hessian", value=auc_nghess)
 
     # Store metrics based on true data joint
     auc_ll_diff_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["ll_diff"])
@@ -609,12 +611,14 @@ def run_experiment(
     auc_pmat_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["precision_abs_mean"])
     auc_nhess_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["normed_hessian_abs_mean"])
     auc_hess_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["hessian_abs_mean"])
+    auc_nghess_data = roc_auc_score(merged_ci_tables_data["dependence"], merged_ci_tables_data["global_normed_hessian_abs_mean"])
 
     mlflow.log_metric(key="auc_loglik_diff_data", value=auc_ll_diff_data)
     mlflow.log_metric(key="auc_cond_corr_data", value=auc_corr_data)
     mlflow.log_metric(key="auc_precision_matrix_data", value=auc_pmat_data)
     mlflow.log_metric(key="auc_normed_hessian_data", value=auc_nhess_data)
     mlflow.log_metric(key="auc_hessian_data", value=auc_hess_data)
+    mlflow.log_metric(key="auc_global_normed_hessian_data", value=auc_nghess_data)
     
     
     # Store metrics based on training data
@@ -623,12 +627,14 @@ def run_experiment(
     auc_pmat_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["precision_abs_mean"])
     auc_nhess_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["normed_hessian_abs_mean"])
     auc_hess_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["hessian_abs_mean"])
+    auc_nghess_train = roc_auc_score(merged_ci_tables_train["dependence"], merged_ci_tables_train["global_normed_hessian_abs_mean"])
 
     mlflow.log_metric(key="auc_loglik_diff_train", value=auc_ll_diff_train)
     mlflow.log_metric(key="auc_cond_corr_train", value=auc_corr_train)
     mlflow.log_metric(key="auc_precision_matrix_train", value=auc_pmat_train)
     mlflow.log_metric(key="auc_normed_hessian_train", value=auc_nhess_train)
     mlflow.log_metric(key="auc_hessian_train", value=auc_hess_train)
+    mlflow.log_metric(key="auc_global_normed_hessian_train", value=auc_nghess_train)
     
     
     # Store metrics based on true data joint
@@ -637,12 +643,14 @@ def run_experiment(
     auc_pmat_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["precision_abs_mean"])
     auc_nhess_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["normed_hessian_abs_mean"])
     auc_hess_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["hessian_abs_mean"])
+    auc_nghess_val = roc_auc_score(merged_ci_tables_val["dependence"], merged_ci_tables_val["global_normed_hessian_abs_mean"])
 
     mlflow.log_metric(key="auc_loglik_diff_val", value=auc_ll_diff_val)
     mlflow.log_metric(key="auc_cond_corr_val", value=auc_corr_val)
     mlflow.log_metric(key="auc_precision_matrix_val", value=auc_pmat_val)
     mlflow.log_metric(key="auc_normed_hessian_val", value=auc_nhess_val)
     mlflow.log_metric(key="auc_hessian_val", value=auc_hess_val)
+    mlflow.log_metric(key="auc_global_normed_hessian_val", value=auc_nghess_val)
     
     mlflow.end_run()
     

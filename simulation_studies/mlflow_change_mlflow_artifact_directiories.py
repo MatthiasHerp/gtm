@@ -22,7 +22,9 @@ def rewrite_artifact_path(metadata_file, pwd, artifact_path_key):
 
 def change_artifact_directory_experiment(experiment_id, absolute_path_to_project_root):
 
-    absolute_path = Path(absolute_path_to_project_root + "/mlruns").resolve()
+    #absolute_path = Path(absolute_path_to_project_root + "/mlruns_v1").resolve()
+    #absolute_path = Path(absolute_path_to_project_root + "/mlruns").resolve()
+    absolute_path = Path(absolute_path_to_project_root + "/mlruns_scratch").resolve()
 
     experiment_folder = pathlib.Path(absolute_path, experiment_id)
 
@@ -40,9 +42,9 @@ def change_artifact_directory_experiment(experiment_id, absolute_path_to_project
         for run_folder in experiment_folder.iterdir():
             metadata_file = run_folder / "meta.yaml"
             #print(run_folder)
-            if run_folder == "/Users/maherp/Desktop/Universitaet/Goettingen/5_Semester/master_thesis/mctm_pytorch/mlruns/868040026974936229/" \
-                             "22326f5530214fc3995fa8d2bbbb356c":
-                print("here")
+            #if run_folder == "/Users/maherp/Desktop/Universitaet/Goettingen/5_Semester/master_thesis/mctm_pytorch/mlruns/868040026974936229/" \
+            #                 "22326f5530214fc3995fa8d2bbbb356c":
+            #    print("here")
 
             # Fix run metadata
             if metadata_file.exists():
@@ -56,6 +58,10 @@ if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     
     absolute_path_to_project_root = os.getcwd()
+    
+    #mlflow.set_tracking_uri("file:mlruns_v1")
+    mlflow.set_tracking_uri("file:mlruns_scratch")
+    #mlflow.set_tracking_uri("file:mlruns")
 
     # Get the list of all experiments
     client = mlflow.tracking.MlflowClient()

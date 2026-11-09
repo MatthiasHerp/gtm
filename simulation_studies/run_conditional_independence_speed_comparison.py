@@ -78,7 +78,7 @@ if __name__ == "__main__":
         seperate_copula_training=False,
         max_batches_per_iter=False,
         pretrained_transformation_layer=True,
-        n_trials=10,
+        n_trials=4,
         temp_folder=".",
         study_name=None)
         
