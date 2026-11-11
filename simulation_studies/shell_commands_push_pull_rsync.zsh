@@ -16,3 +16,10 @@ rsync -av /scratch/mhe/gtm/mlruns/*  gtm/mlruns/
 rsync -arvz -e ssh hydra:/sybig/home/mhe/gtm/mlruns . 
 
 
+rsync -av --delete gtm/gtm/* /scratch/mhe/gtm/gtm/
+rsync -av --delete /sybig/home/mhe/gtm/dragon_application/* /scratch/mhe/gtm/dragon_application/
+rsync -av --delete /sybig/home/mhe/gtm/simulation_studies/run_experiment_nfm.py /scratch/mhe/gtm/simulation_studies/
+rsync -av --delete /sybig/home/mhe/gtm/simulation_studies/run_experiment.py /scratch/mhe/gtm/simulation_studies/
+
+rsync -av /sybig/home/mhe/gtm/simulation_studies/run_files_paper/* /scratch/mhe/gtm/simulation_studies/run_files_paper/
+rsync -av /sybig/home/mhe/gtm/simulation_studies/run_files_paper/* /scratch/mhe/gtm/simulation_studies/run_files_paper/
