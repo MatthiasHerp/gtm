@@ -22,7 +22,7 @@ from sing_experiments.simulation_common import (
 )
 
 
-def fit_sing(data, metadata, directory, degree, config):
+def fit_sing(data, metadata, directory, degree, config, sing_directory=None):
     np.random.seed(metadata["seed_streams"]["fit"])
     random.seed(metadata["seed_streams"]["fit"])
     started = time.perf_counter()
@@ -30,6 +30,7 @@ def fit_sing(data, metadata, directory, degree, config):
         batch_size=config["batch_size"], optimizer_derivatives=config["optimizer_derivatives"],
         optimizer_maxiter=config["optimizer_maxiter"], retain_density=True,
         progress=config.get("progress", True),
+        sing_directory=sing_directory,
     )
     omega_model = sing(data["x_train"].copy(), degree, FixedOrdering(), config["delta"])
     fit_seconds = time.perf_counter() - started
@@ -67,10 +68,18 @@ def fit_sing(data, metadata, directory, degree, config):
     return metrics, artifacts
 
 
-def main(argv=None):
+def main(argv=None, *, fixed_degree=None, defaults=None):
     parser = common_parser("SING comparison study (CPU; pinned upstream has no GPU backend)")
     parser.add_argument("--model-config", type=Path, default=HERE / "sing_simulation_config.json")
-    parser.add_argument("--degrees", type=int, nargs="+", choices=(2, 3))
+    parser.add_argument("--degrees", type=int, nargs="+",
+                        choices=(fixed_degree,) if fixed_degree is not None else (2, 3),
+                        default=[fixed_degree] if fixed_degree is not None else None)
+    sing_directory = ROOT / ".external/SING"
+    if not sing_directory.exists() and Path("/opt/gtm/.external/SING").exists():
+        sing_directory = Path("/opt/gtm/.external/SING")
+    parser.add_argument("--sing-dir", type=Path, default=sing_directory)
+    if defaults is not None:
+        parser.set_defaults(**defaults)
     args = parser.parse_args(argv)
     study, cases = setup_runner(args)
     config = read_json(args.model_config)
@@ -80,11 +89,12 @@ def main(argv=None):
     for key in ("batch_size", "optimizer_maxiter", "loglik_batch_size"):
         if config[key] < 1:
             parser.error(f"{key} must be positive")
-    print(f"Selected {len(cases) * len(degrees)} SING fits on CPU; no PIT/rank transformation.")
+    print(f"Selected {len(cases) * len(degrees)} SING fits on CPU; no PIT/rank transformation. "
+          f"Optimizer maxiter={config['optimizer_maxiter']}; run label={args.run_label}.", flush=True)
     if not args.list_only:
         if importlib.util.find_spec("TransportMaps") is None:
             parser.error("TransportMaps is missing; use the .venv-sing Python environment")
-        if not (ROOT / ".external/SING/SING/SparsityIdentificationNonGaussian.py").exists():
+        if not (args.sing_dir / "SING/SparsityIdentificationNonGaussian.py").exists():
             parser.error("Pinned upstream SING checkout is missing; see sing_experiments/README.md")
     failed = 0
     for degree in degrees:
@@ -96,7 +106,8 @@ def main(argv=None):
                 print(f"SING degree {degree}: {case.name}")
                 continue
             ok = run_case(profile / case.name, case, study, args, f"SING degree {degree}", config,
-                          lambda data, meta, directory: fit_sing(data, meta, directory, degree, config))
+                          lambda data, meta, directory: fit_sing(data, meta, directory, degree, config,
+                                                                sing_directory=args.sing_dir))
             failed += not ok
     return int(failed > 0)
 

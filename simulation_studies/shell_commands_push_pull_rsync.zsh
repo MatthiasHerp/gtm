@@ -23,3 +23,13 @@ rsync -av --delete /sybig/home/mhe/gtm/simulation_studies/run_experiment.py /scr
 
 rsync -av /sybig/home/mhe/gtm/simulation_studies/run_files_paper/* /scratch/mhe/gtm/simulation_studies/run_files_paper/
 rsync -av /sybig/home/mhe/gtm/simulation_studies/run_files_paper/* /scratch/mhe/gtm/simulation_studies/run_files_paper/
+
+
+rsync -av --delete gtm/* /scratch/mhe/gtm/
+rsync -av /scratch/mhe/gtm/* gtm/*
+
+rsync -av /scratch/mhe/gtm/sing_experiments/* gtm/sing_experiments/
+
+rsync -av --exclude='results/' \
+  gtm/sing_experiments/ \
+  /scratch/mhe/gtm/sing_experiments/

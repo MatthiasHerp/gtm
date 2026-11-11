@@ -1,0 +1,8 @@
+# Only send the runner code, configuration and sampler to the Docker build.
+**
+!sing_experiments/
+!sing_experiments/*.py
+!sing_experiments/*.json
+!sing_experiments/requirements.docker.txt
+!demos/
+!demos/pyvinecopulib_simulation_helpers.py

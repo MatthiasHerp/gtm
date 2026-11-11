@@ -215,7 +215,7 @@ class FixedOrdering:
 
 
 def load_sing(batch_size=256, optimizer_derivatives=2, optimizer_maxiter=100,
-              retain_density=False, progress=False):
+              retain_density=False, progress=False, sing_directory=None):
     """Load upstream code with explicit compatibility/memory adaptations.
 
     No global NumPy monkey patches. The graph algorithm and threshold are upstream.
@@ -226,7 +226,7 @@ def load_sing(batch_size=256, optimizer_derivatives=2, optimizer_maxiter=100,
     """
     if optimizer_derivatives not in (1, 2) or optimizer_maxiter < 1:
         raise ValueError("Use derivative order 1 (BFGS) or 2 (Newton-CG), with a positive iteration limit")
-    directory = ROOT / ".external/SING"
+    directory = Path(sing_directory) if sing_directory is not None else ROOT / ".external/SING"
     commit = subprocess.check_output(["git", "-C", str(directory), "rev-parse", "HEAD"], text=True).strip()
     if commit != SING_COMMIT:
         raise RuntimeError(f"Expected SING {SING_COMMIT}, found {commit}")

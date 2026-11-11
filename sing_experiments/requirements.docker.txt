@@ -1,0 +1,10 @@
+# Linux/Python 3.11 runtime; excludes the macOS/Jupyter-only lock-file packages.
+numpy==2.2.6
+scipy==1.15.3
+pandas==2.3.0
+scikit-learn==1.6.1
+pyvinecopulib==0.7.3
+matplotlib==3.10.8
+networkx==3.4.2
+spectraltoolbox==3.1.0
+transportmaps==3.2.0

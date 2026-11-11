@@ -55,3 +55,4 @@ output/pdf/gtm_sing_scaling_report.pdf
 mlruns/0/meta.yaml
 .gitignore
 dragon_conditional_independence_table_named.csv
+gtm/results/*

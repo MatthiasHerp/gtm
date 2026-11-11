@@ -6,12 +6,112 @@ For the paired 10D SING/GTM simulation study, see
 standardization, no PIT/rank transformation, and shared train/test datasets;
 their settings are independent of the interactive single-run notebook below.
 
-`sing_magic_classification.ipynb` fits one SING density per MAGIC class and
-computes Bayes classification with equal class priors, ROC-AUC, and TPR at the
-same fixed FPR levels as `demos/demo_magic_classification.ipynb`. It uses only
-pooled training-mean/std standardization. `magic_gtm_split_indices.npz` stores
-the exact GTM training/validation/test row indices, so the SING kernel does not
-need Torch to reproduce the split. The notebook is delivered unexecuted.
+`run_magic_classification.py` fits one SING density per MAGIC class, first for
+order 2 and then for order 3, and saves Bayes classification with equal class
+priors, ROC-AUC, and TPR at the same fixed FPR levels as
+`demos/demo_magic_classification.ipynb`. It uses only pooled fitting-fold
+mean/std standardization. `sing_magic_classification.ipynb` loads the saved
+results and shows the full order-2 analysis before the order-3 analysis,
+without refitting or importing Torch/TransportMaps.
+
+### Run MAGIC on the server
+
+Generate the exact GTM split indices once in a Torch environment if
+`sing_experiments/magic_gtm_split_indices.npz` is missing:
+
+```sh
+python sing_experiments/prepare_magic_splits.py
+```
+
+With the existing server Docker images, the same preparation is:
+
+```sh
+docker run --rm -v "$PWD:/workspace" -w /workspace \
+  --entrypoint python3 mhe_torch_gtm \
+  sing_experiments/prepare_magic_splits.py
+```
+
+Then run from the repository root (no Jupyter installation is needed):
+
+```sh
+docker run --rm --init --name sing_magic \
+  -v "$PWD:/workspace" -w /workspace \
+  mhe_sing python -u sing_experiments/run_magic_classification.py
+```
+
+The mounted code uses the image's pinned SING checkout at
+`/opt/gtm/.external/SING` if the repository has no local checkout. For an
+existing Python environment, use
+`python -u sing_experiments/run_magic_classification.py` instead.
+
+Keep the command in a `tmux` session for long server runs. Optimizer/Hessian,
+delta-method derivative, and log-density batch progress stays visible in the
+terminal. The default derivative batch size is 16; append `--batch-size 4`
+to reduce derivative working memory, at the cost of more batches. This does
+not bound optimizer or dense Fisher-matrix memory. SING runs on CPU; no GPU
+flag is needed, and the command sets no Docker memory cap. Order 3 can be
+substantially more demanding than order 2.
+
+Each class is fitted and evaluated before its density is released. Each
+order runs in a fresh process. Results go to
+`sing_experiments/results/magic_classification/p{order}_delta1_seed25_{data_hash}/`:
+
+- `class_g.npz` / `class_h.npz` and their JSON manifests checkpoint each
+  completed class, including its graph, scores, coefficients, all class/split
+  log densities, timings, and solver diagnostics.
+- `test_predictions.csv`, `roc_curve.csv`, `tpr_at_fpr.csv`, and
+  `classification_metrics.csv` support the classification analysis.
+- `density_loglik.csv`, `feature_scaling.csv`, `fit_summary.csv`, and
+  `arrays.npz` retain density diagnostics, scaling, exact row indices, and
+  numerical artifacts. `summary.json` records the configuration and metrics;
+  `status.json` records completion or failure, with traceback in `failure.txt`.
+
+Rerun the same command to reuse completed classes/orders. Settings, package
+versions, dataset, and split checksums must match; use a new `--output-dir`
+when changing settings (including batch size). `--orders 2` or `--orders 3`
+restricts execution. Open and run `sing_magic_classification.ipynb` afterward
+to display saved results. The notebook needs NumPy, pandas, Matplotlib,
+scikit-learn, and a Jupyter Python kernel, but performs no model fitting.
+
+### MAGIC with a training-fitted nonparanormal transform
+
+`run_magic_classification_nonparanormal.py` uses the same split, fitting
+settings, class priors, and order-2-then-order-3 execution as the original
+MAGIC runner, with one shared Gaussianization fitted on the pooled training
+rows before standardization. Its results are separate, under
+`sing_experiments/results/magic_classification_nonparanormal/`.
+
+From the repository root:
+
+```sh
+docker run --rm --init --name sing_magic_nonparanormal \
+  -v "$PWD:/workspace" -w /workspace \
+  mhe_sing python -u sing_experiments/run_magic_classification_nonparanormal.py
+```
+
+Training feature values map to normal quantiles using average-rank midpoint
+probabilities `(rank - 0.5) / n_pooled_train`. Validation/test observations
+use the same training-fitted CDF knots with linear interpolation and clipped
+endpoint probabilities; they are never ranked independently or used to fit
+the transform. Both class models receive exactly the same feature mapping.
+Each run saves `preprocessing.npz` with feature values/probabilities and
+`preprocessing.json` describing the method; `feature_scaling.csv` and
+`arrays.npz` store the subsequent Gaussianized-training mean/std.
+
+Class log densities and density diagnostics for these runs are on the
+Gaussianized coordinate scale (including the subsequent standardization
+Jacobian). They are not original-data likelihoods: this empirical clipped
+mapping supplies no original-scale density Jacobian. The shared feature
+mapping supports the same log-density-ratio classifier; classification
+metrics and ROC/TPR curves can be compared on the identical test rows.
+
+`sing_magic_classification.ipynb` reports both orders for both preprocessing
+variants, checks matching split indices, and compares classification tables
+and ROC curves. Likelihood diagnostics are explicitly labeled by coordinate
+scale. If nonparanormal runs are absent or incomplete, the original results
+are still reported. Checkpoint reuse, progress output, and CLI overrides
+(`--orders`, `--batch-size`, `--output-dir`, etc.) work as in the original
+runner. No Jupyter installation is required to run the fitting script.
 
 `sing_coefficient_count_tests.ipynb` checks the dense SING coefficient-count
 formula over 22 combinations of dimensionality and degree. It verifies the
