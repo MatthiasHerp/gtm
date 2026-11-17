@@ -27,7 +27,6 @@ from sklearn.metrics import (accuracy_score, average_precision_score, balanced_a
                              brier_score_loss, f1_score, matthews_corrcoef, precision_score,
                              recall_score, roc_auc_score, roc_curve)
 from sing_experiments.sing_helpers import FixedOrdering, SING_COMMIT, load_sing
-from sing_experiments.magic_nonparanormal import apply_nonparanormal, fit_nonparanormal
 
 GROUPS = ('g', 'h')
 SPLITS = ('train', 'validate', 'test')
@@ -41,7 +40,7 @@ def save_json(path, value):
     temporary.replace(path)
 
 
-def load_data(data_path, split_path, *, nonparanormal=False, return_preprocessing=False):
+def load_data(data_path, split_path):
     if not split_path.exists():
         raise FileNotFoundError(f'{split_path} is missing. Run prepare_magic_splits.py once in a Torch environment.')
     frame = pd.read_csv(data_path, names=FEATURE_NAMES + ['group'])
@@ -61,31 +60,12 @@ def load_data(data_path, split_path, *, nonparanormal=False, return_preprocessin
         assert len(used) == len(np.unique(used))
         np.testing.assert_array_equal(np.sort(used), np.flatnonzero(frame.group.to_numpy() == group))
     pooled = np.vstack([values[rows[g]['train']] for g in GROUPS])
-    preprocessing = {}
-    preprocessing_info = dict(method='training_mean_std', fitted_on='pooled fitting-fold rows',
-                               loglik_scale='original observations')
-    if nonparanormal:
-        print('Fitting shared nonparanormal CDFs on pooled training rows only.', flush=True)
-        preprocessing = fit_nonparanormal(pooled)
-        # All classes and splits use this same training-fitted map.
-        values = apply_nonparanormal(values, preprocessing)
-        pooled = np.vstack([values[rows[g]['train']] for g in GROUPS])
-        preprocessing_info = dict(
-            method='pooled_training_empirical_gaussianization', fitted_on='pooled fitting-fold rows',
-            training_probabilities='(average_rank - 0.5) / n_pooled_train',
-            heldout='linear interpolation of training CDF knots; clip at training endpoint probabilities',
-            loglik_scale='pooled-training Gaussianized coordinates',
-            original_scale_jacobian=False,
-        )
     center, scale = pooled.mean(0), pooled.std(0, ddof=0)
     assert np.isfinite(scale).all() and np.all(scale > 0)
     standardized = {g: {s: (values[rows[g][s]] - center) / scale for s in SPLITS} for g in GROUPS}
     print('GTM-compatible split counts:', flush=True)
     print(pd.DataFrame({g: {s: len(rows[g][s]) for s in SPLITS} for g in GROUPS}).to_string(), flush=True)
-    result = (standardized, rows, center, scale, split_metadata, data_hash)
-    if return_preprocessing:
-        return (*result, preprocessing, preprocessing_info)
-    return result
+    return standardized, rows, center, scale, split_metadata, data_hash
 
 
 def diagnostics_from_history(history):
@@ -182,19 +162,14 @@ def classification_analysis(class_arrays, rows):
 
 
 def run_order(args):
-    nonparanormal = getattr(args, 'nonparanormal', False)
-    (standardized, rows, center, scale, split_metadata, data_hash,
-     preprocessing, preprocessing_info) = load_data(
-        args.data_path, args.split_indices, nonparanormal=nonparanormal, return_preprocessing=True)
+    standardized, rows, center, scale, split_metadata, data_hash = load_data(args.data_path, args.split_indices)
     directory = args.output_dir / f'p{args.worker_order}_delta{args.delta:g}_seed{args.fit_seed}_{data_hash[:12]}'
     directory.mkdir(parents=True, exist_ok=True)
     config = dict(order=args.worker_order, delta=args.delta, fit_seed=args.fit_seed, batch_size=args.batch_size,
                   optimizer_derivatives=args.optimizer_derivatives, optimizer_maxiter=args.optimizer_maxiter,
                   logpdf_batch_size=args.logpdf_batch_size, class_priors={'g': 0.5, 'h': 0.5},
-                  standardization='pooled fitting-fold mean/std, ddof=0', nonparanormal_transform=nonparanormal,
+                  standardization='pooled fitting-fold mean/std, ddof=0', nonparanormal_transform=False,
                   shuffle_variables=False, variable_order=FEATURE_NAMES, device='cpu')
-    if nonparanormal:
-        config['nonparanormal_method'] = preprocessing_info
     versions = {p: metadata.version(p) for p in ['TransportMaps', 'numpy', 'scipy', 'scikit-learn']}
     identity = dict(config=config, data_sha256=data_hash,
                     split_sha256=hashlib.sha256(args.split_indices.read_bytes()).hexdigest(),
@@ -211,9 +186,6 @@ def run_order(args):
             return
     save_json(directory / 'status.json', dict(status='running', order=args.worker_order))
     try:
-        save_json(directory / 'preprocessing.json', preprocessing_info)
-        if nonparanormal:
-            np.savez_compressed(directory / 'preprocessing.npz', **preprocessing)
         class_arrays, class_info = {}, {}
         for group in GROUPS:
             class_arrays[group], class_info[group] = fit_class(group, standardized, rows, scale, args, directory)
@@ -246,7 +218,7 @@ def run_order(args):
         np.savez_compressed(directory / 'arrays.npz', **arrays)
         save_json(directory / 'summary.json', dict(config=config, split_metadata=split_metadata,
                   sing_commit=SING_COMMIT, package_versions=versions, classification_metrics=metrics,
-                  loglik_scale=preprocessing_info['loglik_scale'], n_test=len(predictions), fit_summary=fit_summary,
+                  loglik_scale='original observations', n_test=len(predictions), fit_summary=fit_summary,
                   solver_diagnostics={g: class_info[g]['solver_diagnostics'] for g in GROUPS}))
         save_json(directory / 'status.json', dict(status='ok', order=args.worker_order))
         print(pd.DataFrame([metrics], index=[f'SING order {args.worker_order}']).to_string(), flush=True)
@@ -259,14 +231,12 @@ def run_order(args):
         raise
 
 
-def main(argv=None, *, nonparanormal_default=False):
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--orders', nargs='+', type=int, choices=(2, 3), default=[2, 3])
     parser.add_argument('--data-path', type=Path, default=ROOT / 'demos/data/magic04.csv')
     parser.add_argument('--split-indices', type=Path, default=ROOT / 'sing_experiments/magic_gtm_split_indices.npz')
-    parser.add_argument('--output-dir', type=Path)
-    parser.add_argument('--nonparanormal', action='store_true', default=nonparanormal_default,
-                        help='Fit one shared empirical Gaussianization on pooled training rows')
+    parser.add_argument('--output-dir', type=Path, default=ROOT / 'sing_experiments/results/magic_classification')
     default_sing = ROOT / '.external/SING'
     if not default_sing.exists() and Path('/opt/gtm/.external/SING').exists():
         default_sing = Path('/opt/gtm/.external/SING')
@@ -279,9 +249,6 @@ def main(argv=None, *, nonparanormal_default=False):
     parser.add_argument('--optimizer-maxiter', type=int, default=150)
     parser.add_argument('--worker-order', type=int, choices=(2, 3), help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
-    if args.output_dir is None:
-        folder = 'magic_classification_nonparanormal' if args.nonparanormal else 'magic_classification'
-        args.output_dir = ROOT / 'sing_experiments/results' / folder
     if not np.isfinite(args.delta) or args.delta <= 0 or min(args.batch_size, args.logpdf_batch_size, args.optimizer_maxiter) < 1:
         parser.error('delta must be positive and finite; batch sizes and optimizer maxiter must be positive')
     if args.fit_seed < 0 or args.fit_seed >= 2**32 - 1:
@@ -294,11 +261,8 @@ def main(argv=None, *, nonparanormal_default=False):
     failures = 0
     # Fresh process per order releases the allocator and all upstream state.
     for order in sorted(set(args.orders)):
-        variant = 'nonparanormal' if args.nonparanormal else 'standardization only'
-        print(f'\n=== Starting MAGIC SING order {order} ({variant}) ===', flush=True)
+        print(f'\n=== Starting MAGIC SING order {order} ===', flush=True)
         command = [sys.executable, '-u', str(Path(__file__).resolve()), '--worker-order', str(order)]
-        if args.nonparanormal:
-            command.append('--nonparanormal')
         for name in ['data_path', 'split_indices', 'output_dir', 'sing_dir', 'delta', 'fit_seed',
                      'batch_size', 'logpdf_batch_size', 'optimizer_derivatives', 'optimizer_maxiter']:
             command += ['--' + name.replace('_', '-'), str(getattr(args, name))]

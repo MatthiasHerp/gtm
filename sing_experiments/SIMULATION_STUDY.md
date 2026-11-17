@@ -89,57 +89,6 @@ in this workspace. Allocate longer CPU jobs for that part of the grid.
 
 ## Run the study
 
-### Separate degree-2 and revised degree-3 runners
-
-`run_sing_simulation_degree2.py` keeps the original degree-2 settings
-(150 optimizer iterations), grid, and `default` result label. Completed
-degree-2 results are skipped and do not need to be rerun.
-
-`run_sing_simulation_degree3.py` uses
-`sing_simulation_config_degree3.json`, increasing the optimizer limit to
-300 iterations per map component. Its default grid has N=2000 first, then
-N=500, seeds 1 and 2, and all three marginal families (`gauss`, `exp`, `t`):
-12 fits in total. This is the component-optimization limit, not a change
-to the number of SING graph-sparsification iterations.
-
-The revised degree-3 runs use the separate label `degree3_maxiter300`, under
-`runs/sing/degree3_maxiter300/degree3/`. Original results, including degree 2,
-remain untouched. The full study definition and dataset cache remain the
-same, so the selected cases use the exact datasets shared with the GTM and
-original degree-2 runs. The existing notebook's `RUN_LABEL='default'` still
-loads original results; the revised label must be selected separately when
-collecting the new degree-3 results.
-
-From the repository root, inspect the revised grid without fitting:
-
-```sh
-python sing_experiments/run_sing_simulation_degree3.py --list-only
-```
-
-With the existing Docker image, run only N=2000 first:
-
-```sh
-docker run --rm --init --name sing_degree3 \
-  -v "$PWD:/workspace" -w /workspace \
-  mhe_sing python -u sing_experiments/run_sing_simulation_degree3.py --n-train 2000
-```
-
-Then run N=500 with the same command and `--n-train 500`. Omit `--n-train`
-to run both sizes in the default order. Mounted code automatically uses the
-image's pinned checkout at `/opt/gtm/.external/SING` when there is no local
-checkout; `--sing-dir` can select another pinned checkout. No rebuild is
-needed when using these mounted entry points. Individual fitting details
-are written to each case's `run.log`; terminal output reports each case's
-completion or failure.
-
-To stop an old job in one specific Screen session, list sessions with
-`screen -ls`, attach with `screen -r SESSION_ID`, and press Ctrl-C in the
-window running the job. This lets the runner record an interrupted fit.
-To terminate an entire selected session, use
-`screen -S SESSION_ID -X quit`; this closes every window in that session.
-If Docker is still running afterward, stop the specific container using
-`docker stop --time 60 CONTAINER_NAME_OR_ID` (identify it with `docker ps`).
-
 ### SING with Docker (Linux, CPU)
 
 From the repository root, build the Python 3.11 image:

@@ -73,46 +73,6 @@ restricts execution. Open and run `sing_magic_classification.ipynb` afterward
 to display saved results. The notebook needs NumPy, pandas, Matplotlib,
 scikit-learn, and a Jupyter Python kernel, but performs no model fitting.
 
-### MAGIC with a training-fitted nonparanormal transform
-
-`run_magic_classification_nonparanormal.py` uses the same split, fitting
-settings, class priors, and order-2-then-order-3 execution as the original
-MAGIC runner, with one shared Gaussianization fitted on the pooled training
-rows before standardization. Its results are separate, under
-`sing_experiments/results/magic_classification_nonparanormal/`.
-
-From the repository root:
-
-```sh
-docker run --rm --init --name sing_magic_nonparanormal \
-  -v "$PWD:/workspace" -w /workspace \
-  mhe_sing python -u sing_experiments/run_magic_classification_nonparanormal.py
-```
-
-Training feature values map to normal quantiles using average-rank midpoint
-probabilities `(rank - 0.5) / n_pooled_train`. Validation/test observations
-use the same training-fitted CDF knots with linear interpolation and clipped
-endpoint probabilities; they are never ranked independently or used to fit
-the transform. Both class models receive exactly the same feature mapping.
-Each run saves `preprocessing.npz` with feature values/probabilities and
-`preprocessing.json` describing the method; `feature_scaling.csv` and
-`arrays.npz` store the subsequent Gaussianized-training mean/std.
-
-Class log densities and density diagnostics for these runs are on the
-Gaussianized coordinate scale (including the subsequent standardization
-Jacobian). They are not original-data likelihoods: this empirical clipped
-mapping supplies no original-scale density Jacobian. The shared feature
-mapping supports the same log-density-ratio classifier; classification
-metrics and ROC/TPR curves can be compared on the identical test rows.
-
-`sing_magic_classification.ipynb` reports both orders for both preprocessing
-variants, checks matching split indices, and compares classification tables
-and ROC curves. Likelihood diagnostics are explicitly labeled by coordinate
-scale. If nonparanormal runs are absent or incomplete, the original results
-are still reported. Checkpoint reuse, progress output, and CLI overrides
-(`--orders`, `--batch-size`, `--output-dir`, etc.) work as in the original
-runner. No Jupyter installation is required to run the fitting script.
-
 `sing_coefficient_count_tests.ipynb` checks the dense SING coefficient-count
 formula over 22 combinations of dimensionality and degree. It verifies the
 separate `c` and `h` counts against the map components and infers the total from
