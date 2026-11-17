@@ -231,9 +231,11 @@ def run_order(args):
         raise
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--orders', nargs='+', type=int, choices=(2, 3), default=[2, 3])
+def main(argv=None, *, fixed_order=None):
+    orders = (2, 3) if fixed_order is None else (fixed_order,)
+    parser = argparse.ArgumentParser(description=(__doc__ if fixed_order is None else
+        f'Fit only SING MAGIC order {fixed_order}, using the existing runner and checkpoints.'))
+    parser.add_argument('--orders', nargs='+', type=int, choices=orders, default=list(orders))
     parser.add_argument('--data-path', type=Path, default=ROOT / 'demos/data/magic04.csv')
     parser.add_argument('--split-indices', type=Path, default=ROOT / 'sing_experiments/magic_gtm_split_indices.npz')
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'sing_experiments/results/magic_classification')
@@ -247,7 +249,7 @@ def main(argv=None):
     parser.add_argument('--logpdf-batch-size', type=int, default=512)
     parser.add_argument('--optimizer-derivatives', type=int, choices=(1, 2), default=2)
     parser.add_argument('--optimizer-maxiter', type=int, default=150)
-    parser.add_argument('--worker-order', type=int, choices=(2, 3), help=argparse.SUPPRESS)
+    parser.add_argument('--worker-order', type=int, choices=orders, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if not np.isfinite(args.delta) or args.delta <= 0 or min(args.batch_size, args.logpdf_batch_size, args.optimizer_maxiter) < 1:
         parser.error('delta must be positive and finite; batch sizes and optimizer maxiter must be positive')

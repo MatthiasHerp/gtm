@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from sing_experiments import run_sing_simulation_degree2 as degree2
 from sing_experiments import run_sing_simulation_degree3 as degree3
+from sing_experiments import run_sing_simulation as base
 from sing_experiments.run_sing_simulation import HERE
 from sing_experiments.simulation_common import DEFAULT_STUDY, atomic_json, read_json
 
@@ -42,6 +43,33 @@ class DegreeRunnerTests(unittest.TestCase):
             with self.subTest(other=other), self.assertRaises(SystemExit) as caught:
                 runner.main(['--list-only', '--degrees', other])
             self.assertEqual(caught.exception.code, 2)
+
+    def test_base_runner_keeps_both_degrees_and_explicit_options_override_defaults(self):
+        lines = self.list_jobs(base)
+        self.assertEqual(len(lines) - 1, 180)
+        self.assertIn('maxiter=150; run label=default', lines[0])
+        lines = self.list_jobs(degree3, ['--n-train', '500', '--marginals', 't', '--seeds', '2',
+                                        '--run-label', 'custom', '--model-config',
+                                        str(HERE / 'sing_simulation_config.json')])
+        self.assertEqual(lines[1:], ['SING degree 3: n500_t_seed02'])
+        self.assertIn('maxiter=150; run label=custom', lines[0])
+
+    @unittest.skipUnless(Path('/opt/gtm/.external/SING/SING/SparsityIdentificationNonGaussian.py').exists(),
+                         'Docker image checkout is required')
+    def test_workspace_mount_uses_image_checkout_without_fitting(self):
+        if (base.ROOT / '.external/SING').exists():
+            self.skipTest('Local checkout takes precedence over image checkout')
+
+        def run_case(directory, case, study, args, model, config, fit):
+            fit({}, {}, directory)
+            return True
+
+        with patch.object(base, 'run_case', side_effect=run_case), \
+                patch.object(base, 'fit_sing') as fit, patch.object(base, 'ensure_config'), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(degree3.main(['--n-train', '2000', '--marginals', 'gauss', '--seeds', '1']), 0)
+        fit.assert_called_once()
+        self.assertEqual(fit.call_args.kwargs['sing_directory'], Path('/opt/gtm/.external/SING'))
 
     def test_new_degree3_profile_preserves_existing_results_and_study(self):
         with tempfile.TemporaryDirectory() as temporary:

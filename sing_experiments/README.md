@@ -52,6 +52,20 @@ not bound optimizer or dense Fisher-matrix memory. SING runs on CPU; no GPU
 flag is needed, and the command sets no Docker memory cap. Order 3 can be
 substantially more demanding than order 2.
 
+To run only degree 3 after degree 2 has completed, use the dedicated entry point:
+
+```sh
+docker run --rm --init --name sing_magic_degree3 \
+  -v "$PWD:/workspace" -w /workspace \
+  mhe_sing python -u sing_experiments/run_magic_classification_degree3.py
+```
+
+It uses the same settings, output directory, and checkpoint handling as the
+original runner, and rejects attempts to select degree 2. Run inside a Screen
+session (for example, `screen -S sing_magic_degree3`) to keep it attached to a
+persistent terminal. After successful completion, rerun the analysis notebook
+to show the degree-3 graphs, rank comparisons, and test likelihoods.
+
 Each class is fitted and evaluated before its density is released. Each
 order runs in a fresh process. Results go to
 `sing_experiments/results/magic_classification/p{order}_delta1_seed25_{data_hash}/`:
@@ -72,6 +86,47 @@ when changing settings (including batch size). `--orders 2` or `--orders 3`
 restricts execution. Open and run `sing_magic_classification.ipynb` afterward
 to display saved results. The notebook needs NumPy, pandas, Matplotlib,
 scikit-learn, and a Jupyter Python kernel, but performs no model fitting.
+
+For each order, the notebook also plots the identified hadron and gamma SING
+graphs beside GTM graphs from `demos/ci_tables`. SING uses its saved final
+thresholded graph; GTM uses positive IAE values at least 0.1, matching the
+existing MAGIC GTM graph plots. `GTM_IAE_THRESHOLD` is configurable. Fixed node
+positions make edges easy to compare. Tables report shared edges, edges unique
+to each method, SHD, and Jaccard agreement, plus the disagreeing pairs. Full
+45-pair tables remain in `order2['graphs']['edge_tables']` and
+`order3['graphs']['edge_tables']`. These compare estimates, not a known true
+graph. Missing GTM tables are reported without hiding the SING graphs; existing
+SING results can be used without refitting.
+The comparison also reports Spearman correlation of all 45 pairwise dependence
+rankings, using GTM IAE and SING's final unthresholded Hessian scores. Rank 1 is
+strongest; ties use average ranks. `spearman_rho=1` indicates identical ordering,
+while `same_edge_order` checks exact rank equality. Constant score vectors give
+undefined correlation (`NaN`). Full pair tables include scores and ranks from
+both methods, independently of the graph threshold.
+It also compares SING's significant edge set with the top x GTM edges by IAE,
+where x is the number of significant SING edges for that class and order.
+`top_x_same_edges` reports set equality; overlap counts/fractions and mismatching
+pairs show partial agreement. This selection ignores the GTM graph cutoff.
+Ties across the top-x cutoff are flagged and broken by variable labels.
+Kendall's tau-b is reported for all pairs, GTM's top x pairs, and SING's
+significant pairs. Both models are ranked on the same pairs within each subset.
+
+To compare own-class mean test log likelihoods with the existing GTMs, export
+their test densities once (hadron 8 layers, gamma 6 layers; no refitting):
+
+```sh
+docker run --rm --init -v "$PWD:/workspace" -w /workspace \
+  --entrypoint python3 mhe_torch_gtm \
+  sing_experiments/export_magic_gtm_test_loglik.py
+```
+
+The notebook reads `results/magic_classification/gtm_test_loglik.npz` and checks
+the dataset and exact test rows before comparing to each SING order. Both
+likelihoods use natural logarithms per observation on the original CSV scale,
+including each preprocessing Jacobian. GTM reproduces its original pooled
+train+validation min/max scaling to [-12,12]; SING uses fitting-fold mean/std.
+The cache includes GTM checkpoint checksums and scaling metadata. Missing GTM
+cache values are displayed as NaN with the command needed to generate them.
 
 `sing_coefficient_count_tests.ipynb` checks the dense SING coefficient-count
 formula over 22 combinations of dimensionality and degree. It verifies the

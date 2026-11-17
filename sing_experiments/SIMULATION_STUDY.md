@@ -115,6 +115,13 @@ override `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` with
 `--list-only`. For a single degree-2 fit, append
 `--n-train 125 --marginals gauss --seeds 1 --degrees 2`.
 
+`run_sing_simulation_degree3.py` selects only degree 3, maxiter 300, seeds 1/2,
+and N=2000 followed by N=500, under the `degree3_maxiter300` run label.
+Use `--n-train 2000` for the six N=2000 fits, or `--list-only` to inspect
+the selection. The runner also supports mounting the whole repository at
+`/workspace`: it uses the pinned checkout at `/opt/gtm/.external/SING` when
+there is no local checkout. `--sing-dir` explicitly selects a checkout.
+
 ### Using existing Python environments
 
 Run these commands from the repository root. The two runners can use separate
