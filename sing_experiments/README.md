@@ -77,6 +77,49 @@ derivative storage estimates for N=500, 2000, 3564 (MAGIC hadron), and 6576
 (MAGIC gamma), without fitting. See `SIMULATION_STUDY.md` for the tensor formulas
 and the distinction between array storage and heuristic peak-memory headroom.
 
+To retry only hadron with a 300-iteration optimizer limit, reusing the completed
+gamma checkpoint from the full-sample run:
+
+```sh
+docker run -d --init --name sing_magic_degree3_hadron300 \
+  -v "$PWD:/workspace" -w /workspace \
+  mhe_sing python -u sing_experiments/run_magic_classification_degree3.py \
+  --groups h --optimizer-maxiter 300 \
+  --reuse-results-from /workspace/sing_experiments/results/magic_classification_degree3_fullsample \
+  --output-dir /workspace/sing_experiments/results/magic_classification_degree3_fullsample_hadron300
+docker logs -f sing_magic_degree3_hadron300
+```
+
+Only hadron is fitted. Gamma's checkpoint is copied after checking the dataset,
+splits, package versions, and all shared settings except optimizer method and iteration
+limit; its original limit and source checksum remain recorded. Successful hadron
+fitting automatically produces combined classification results, with limits
+recorded separately as gamma=150 and hadron=300 in `optimizer_maxiter_by_class`.
+If `--groups` selects one class without another checkpoint available, status is
+`classes_complete` and combined classification is deferred. This retry preserves
+the original files and retains the Docker container and logs after exit.
+
+If Newton-CG fails because its Hessian is not positive definite, the BFGS
+hadron-only retry uses `--optimizer-derivatives 1` with a separate output:
+
+```sh
+docker run -d --init --name sing_magic_degree3_hadron_bfgs300 \
+  -v "$PWD:/workspace" -w /workspace \
+  mhe_sing python -u sing_experiments/run_magic_classification_degree3.py \
+  --groups h --optimizer-derivatives 1 --optimizer-maxiter 300 \
+  --reuse-results-from /workspace/sing_experiments/results/magic_classification_degree3_fullsample \
+  --output-dir /workspace/sing_experiments/results/magic_classification_degree3_fullsample_hadron_bfgs300
+docker logs -f sing_magic_degree3_hadron_bfgs300
+```
+
+This changes only the optimizer for the newly fitted class; the Hessian-based
+SING scores and delta-method graph selection are retained. Checkpoint reuse
+allows different optimizer methods/iteration limits, recording each class's
+original values in its manifest and in `optimizer_derivatives_by_class` and
+`optimizer_maxiter_by_class` in the combined summary. Other shared settings must
+match. Use `docker stats sing_magic_degree3_hadron_bfgs300` for resource usage;
+Ctrl-C exits the log viewer without stopping this detached container.
+
 Each class is fitted and evaluated before its density is released. Each
 order runs in a fresh process. Results go to
 `sing_experiments/results/magic_classification/p{order}_delta1_seed25_{data_hash}/`:

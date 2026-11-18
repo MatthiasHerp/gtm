@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import random
+import shutil
 import subprocess
 import sys
 import time
@@ -102,7 +103,9 @@ def fit_class(group, standardized, rows, scale, args, directory):
     random.seed(seed)
     print(f'Order {args.worker_order}: fitting class {group}, '
           f'{len(standardized[group]["train"])} training observations, '
-          f'derivative batch size {args.batch_size or "all observations"}.', flush=True)
+          f'derivative batch size {args.batch_size or "all observations"}, '
+          f'optimizer={"BFGS" if args.optimizer_derivatives == 1 else "Newton-CG"}, '
+          f'maxiter={args.optimizer_maxiter}.', flush=True)
     sing, history = load_sing(batch_size=args.batch_size, optimizer_derivatives=args.optimizer_derivatives,
                               optimizer_maxiter=args.optimizer_maxiter, retain_density=True,
                               progress=True, sing_directory=args.sing_dir)
@@ -118,6 +121,8 @@ def fit_class(group, standardized, rows, scale, args, directory):
                   map_coefficients=np.asarray(density.transport_map.coeffs).copy())
     info = dict(group=group, n_train=len(standardized[group]['train']), iterations=len(history),
                 edges=int(adjacency.sum() // 2), elapsed_seconds=elapsed, fit_seed=seed,
+                optimizer_maxiter=args.optimizer_maxiter,
+                optimizer_derivatives=args.optimizer_derivatives,
                 solver_diagnostics=diagnostics_from_history(history))
     jacobian = float(np.log(scale).sum())
     # Evaluate immediately so the fitted density can be released before the next class.
@@ -202,8 +207,26 @@ def run_order(args):
     save_json(directory / 'status.json', dict(status='running', order=args.worker_order))
     try:
         class_arrays, class_info = {}, {}
+        selected_groups = getattr(args, 'groups', GROUPS)
         for group in GROUPS:
-            class_arrays[group], class_info[group] = fit_class(group, standardized, rows, scale, args, directory)
+            if group in selected_groups:
+                class_arrays[group], class_info[group] = fit_class(group, standardized, rows, scale, args, directory)
+                continue
+            source = getattr(args, 'reuse_results_from', None)
+            if source is not None and not (directory / f'class_{group}.npz').exists():
+                source = source if (source / 'run_config.json').exists() else source / directory.name
+                reuse_class_checkpoint(group, source, directory, identity)
+            checkpoint, manifest = directory / f'class_{group}.npz', directory / f'class_{group}.json'
+            if checkpoint.exists() and manifest.exists():
+                with np.load(checkpoint, allow_pickle=False) as archive:
+                    class_arrays[group] = {key: archive[key].copy() for key in archive.files}
+                class_info[group] = json.loads(manifest.read_text())
+                print(f'Order {args.worker_order}, class {group}: using saved checkpoint; no fitting.', flush=True)
+        if set(class_arrays) != set(GROUPS):
+            save_json(directory / 'status.json', dict(status='classes_complete', order=args.worker_order,
+                      completed_groups=sorted(class_arrays), missing_groups=sorted(set(GROUPS) - set(class_arrays))))
+            print('Selected class fits completed; classification requires both class checkpoints.', flush=True)
+            return
         metrics, predictions, roc, tpr_table = classification_analysis(class_arrays, rows)
         predictions.to_csv(directory / 'test_predictions.csv', index=False)
         roc.to_csv(directory / 'roc_curve.csv', index=False)
@@ -231,7 +254,11 @@ def run_order(args):
             arrays.update({f'{group}_{key}': value for key, value in class_arrays[group].items()})
             arrays.update({f'{group}_{split}_row_indices': rows[group][split] for split in SPLITS})
         np.savez_compressed(directory / 'arrays.npz', **arrays)
-        save_json(directory / 'summary.json', dict(config=config, split_metadata=split_metadata,
+        summary_config = dict(config, optimizer_maxiter_by_class={
+            g: class_info[g].get('optimizer_maxiter', args.optimizer_maxiter) for g in GROUPS},
+            optimizer_derivatives_by_class={
+                g: class_info[g].get('optimizer_derivatives', args.optimizer_derivatives) for g in GROUPS})
+        save_json(directory / 'summary.json', dict(config=summary_config, split_metadata=split_metadata,
                   sing_commit=SING_COMMIT, package_versions=versions, classification_metrics=metrics,
                   loglik_scale='original observations', n_test=len(predictions), fit_summary=fit_summary,
                   solver_diagnostics={g: class_info[g]['solver_diagnostics'] for g in GROUPS}))
@@ -246,11 +273,49 @@ def run_order(args):
         raise
 
 
+def reuse_class_checkpoint(group, source, destination, identity):
+    """Copy a completed class, verifying shared settings and recording its own optimizer."""
+    source_identity = json.loads((source / 'run_config.json').read_text())
+    def comparable(value):
+        value = dict(value, config=dict(value['config']))
+        value['config'].pop('optimizer_maxiter', None)
+        value['config'].pop('optimizer_derivatives', None)
+        return value
+    if comparable(source_identity) != comparable(identity):
+        raise ValueError(f'Cannot reuse class {group}: source data, splits, versions or settings differ.')
+    manifest = json.loads((source / f'class_{group}.json').read_text())
+    if manifest['group'] != group:
+        raise ValueError('Checkpoint class label does not match the requested class.')
+    checkpoint = source / f'class_{group}.npz'
+    with np.load(checkpoint, allow_pickle=False) as archive:
+        required = ['graph', 'thresholded_scores', 'initial_scores', 'final_scores', 'map_coefficients']
+        required += [f'logpdf_{g}_{s}' for g in GROUPS for s in SPLITS]
+        for key in required:
+            if not np.isfinite(archive[key]).all():
+                raise ValueError(f'Nonfinite checkpoint array: {key}')
+    manifest.update(optimizer_maxiter=manifest.get('optimizer_maxiter',
+                    source_identity['config']['optimizer_maxiter']),
+                    optimizer_derivatives=manifest.get('optimizer_derivatives',
+                    source_identity['config']['optimizer_derivatives']),
+                    reused_from=str(source), source_checkpoint_sha256=hashlib.sha256(checkpoint.read_bytes()).hexdigest())
+    temporary = destination / f'class_{group}.tmp.npz'
+    shutil.copyfile(checkpoint, temporary)
+    temporary.replace(destination / f'class_{group}.npz')
+    save_json(destination / f'class_{group}.json', manifest)
+    print(f'Reused class {group} checkpoint from {source}; '
+          f'original optimizer derivatives={manifest["optimizer_derivatives"]}, '
+          f'maxiter={manifest["optimizer_maxiter"]}.', flush=True)
+
+
 def main(argv=None, *, fixed_order=None, defaults=None):
     orders = (2, 3) if fixed_order is None else (fixed_order,)
     parser = argparse.ArgumentParser(description=(__doc__ if fixed_order is None else
         f'Fit only SING MAGIC order {fixed_order}, using the existing runner and checkpoints.'))
     parser.add_argument('--orders', nargs='+', type=int, choices=orders, default=list(orders))
+    parser.add_argument('--groups', nargs='+', choices=GROUPS, default=list(GROUPS),
+                        help='Classes to fit; h selects only hadron. Other classes are only loaded from checkpoints.')
+    parser.add_argument('--reuse-results-from', type=Path,
+                        help='Source results root or run directory for completed, unselected class checkpoints')
     parser.add_argument('--data-path', type=Path, default=ROOT / 'demos/data/magic04.csv')
     parser.add_argument('--split-indices', type=Path, default=ROOT / 'sing_experiments/magic_gtm_split_indices.npz')
     parser.add_argument('--output-dir', type=Path, default=ROOT / 'sing_experiments/results/magic_classification')
@@ -284,6 +349,9 @@ def main(argv=None, *, fixed_order=None, defaults=None):
     for order in sorted(set(args.orders)):
         print(f'\n=== Starting MAGIC SING order {order} ===', flush=True)
         command = [sys.executable, '-u', str(Path(__file__).resolve()), '--worker-order', str(order)]
+        command += ['--groups', *args.groups]
+        if args.reuse_results_from is not None:
+            command += ['--reuse-results-from', str(args.reuse_results_from)]
         for name in ['data_path', 'split_indices', 'output_dir', 'sing_dir', 'delta', 'fit_seed',
                      'batch_size', 'logpdf_batch_size', 'optimizer_derivatives', 'optimizer_maxiter']:
             value = getattr(args, name)
