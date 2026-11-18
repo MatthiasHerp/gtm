@@ -18,7 +18,25 @@ class MagicDegree3RunnerTests(unittest.TestCase):
         self.assertEqual(command[command.index('--worker-order') + 1], '3')
         self.assertEqual(command[command.index('--batch-size') + 1], '4')
         self.assertEqual(command[command.index('--optimizer-maxiter') + 1], '150')
-        self.assertTrue(command[command.index('--output-dir') + 1].endswith('results/magic_classification'))
+        self.assertTrue(command[command.index('--output-dir') + 1].endswith('results/magic_classification_degree3_fullsample'))
+
+    def test_defaults_and_worker_roundtrip_use_all_observations(self):
+        with patch.object(runner.subprocess, 'run') as launch, redirect_stdout(io.StringIO()):
+            launch.return_value.returncode = 0
+            self.assertEqual(degree3.main([]), 0)
+        command = launch.call_args.args[0]
+        for flag in ['--batch-size', '--logpdf-batch-size']:
+            self.assertEqual(command[command.index(flag) + 1], 'all')
+        with patch.object(runner, 'run_order') as worker:
+            self.assertEqual(runner.main(command[3:]), 0)
+        self.assertIsNone(worker.call_args.args[0].batch_size)
+        self.assertIsNone(worker.call_args.args[0].logpdf_batch_size)
+        with patch.object(runner.subprocess, 'run') as launch, redirect_stdout(io.StringIO()):
+            launch.return_value.returncode = 0
+            runner.main([])
+        command = launch.call_args.args[0]
+        self.assertEqual(command[command.index('--batch-size') + 1], '16')
+        self.assertEqual(command[command.index('--logpdf-batch-size') + 1], '512')
 
     def test_rejects_degree2_including_worker_override(self):
         for flags in [['--orders', '2'], ['--orders', '2', '3'], ['--worker-order', '2']]:

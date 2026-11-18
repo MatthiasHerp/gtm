@@ -60,11 +60,22 @@ docker run --rm --init --name sing_magic_degree3 \
   mhe_sing python -u sing_experiments/run_magic_classification_degree3.py
 ```
 
-It uses the same settings, output directory, and checkpoint handling as the
-original runner, and rejects attempts to select degree 2. Run inside a Screen
+The degree-3 entry point now uses **all training observations at once** for
+derivatives (`--batch-size all`) and each complete class/split for likelihoods
+(`--logpdf-batch-size all`). It retains the original optimizer settings and
+checkpoint handling and rejects attempts to select degree 2. Its new output
+directory is `sing_experiments/results/magic_classification_degree3_fullsample/`,
+so configurations do not mix with earlier batched runs. Explicit positive batch
+sizes can still be supplied. The general runner keeps its defaults of 16 and
+512. Run inside a Screen
 session (for example, `screen -S sing_magic_degree3`) to keep it attached to a
 persistent terminal. After successful completion, rerun the analysis notebook
 to show the degree-3 graphs, rank comparisons, and test likelihoods.
+
+`python sing_experiments/estimate_sing_memory.py` prints the degree-3 dense
+derivative storage estimates for N=500, 2000, 3564 (MAGIC hadron), and 6576
+(MAGIC gamma), without fitting. See `SIMULATION_STUDY.md` for the tensor formulas
+and the distinction between array storage and heuristic peak-memory headroom.
 
 Each class is fitted and evaluated before its density is released. Each
 order runs in a fresh process. Results go to

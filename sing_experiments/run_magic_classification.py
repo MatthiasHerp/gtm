@@ -40,6 +40,19 @@ def save_json(path, value):
     temporary.replace(path)
 
 
+def batch_size_argument(value):
+    """Accept 'all' for a single full-sample call, or a positive integer."""
+    if value.lower() in ('all', 'none'):
+        return None
+    try:
+        size = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("Use 'all' or a positive integer") from error
+    if size < 1:
+        raise argparse.ArgumentTypeError("Use 'all' or a positive integer")
+    return size
+
+
 def load_data(data_path, split_path):
     if not split_path.exists():
         raise FileNotFoundError(f'{split_path} is missing. Run prepare_magic_splits.py once in a Torch environment.')
@@ -88,7 +101,8 @@ def fit_class(group, standardized, rows, scale, args, directory):
     np.random.seed(seed)
     random.seed(seed)
     print(f'Order {args.worker_order}: fitting class {group}, '
-          f'{len(standardized[group]["train"])} training observations, derivative batch size {args.batch_size}.', flush=True)
+          f'{len(standardized[group]["train"])} training observations, '
+          f'derivative batch size {args.batch_size or "all observations"}.', flush=True)
     sing, history = load_sing(batch_size=args.batch_size, optimizer_derivatives=args.optimizer_derivatives,
                               optimizer_maxiter=args.optimizer_maxiter, retain_density=True,
                               progress=True, sing_directory=args.sing_dir)
@@ -110,9 +124,10 @@ def fit_class(group, standardized, rows, scale, args, directory):
     for target_group in GROUPS:
         for split in SPLITS:
             points = standardized[target_group][split]
+            batch = len(points) if args.logpdf_batch_size is None else args.logpdf_batch_size
             parts = []
-            for start in range(0, len(points), args.logpdf_batch_size):
-                end = min(start + args.logpdf_batch_size, len(points))
+            for start in range(0, len(points), batch):
+                end = min(start + batch, len(points))
                 print(f'Order {args.worker_order}, density {group}, {target_group}/{split}: '
                       f'logpdf observations {start + 1}-{end} of {len(points)}', flush=True)
                 parts.append(np.asarray(density.log_pdf(points[start:end])).reshape(-1))
@@ -231,7 +246,7 @@ def run_order(args):
         raise
 
 
-def main(argv=None, *, fixed_order=None):
+def main(argv=None, *, fixed_order=None, defaults=None):
     orders = (2, 3) if fixed_order is None else (fixed_order,)
     parser = argparse.ArgumentParser(description=(__doc__ if fixed_order is None else
         f'Fit only SING MAGIC order {fixed_order}, using the existing runner and checkpoints.'))
@@ -245,13 +260,17 @@ def main(argv=None, *, fixed_order=None):
     parser.add_argument('--sing-dir', type=Path, default=default_sing)
     parser.add_argument('--delta', type=float, default=1.0)
     parser.add_argument('--fit-seed', type=int, default=25)
-    parser.add_argument('--batch-size', type=int, default=16)
-    parser.add_argument('--logpdf-batch-size', type=int, default=512)
+    parser.add_argument('--batch-size', type=batch_size_argument, default=16,
+                        help="Derivative batch size, or 'all' for all training observations")
+    parser.add_argument('--logpdf-batch-size', type=batch_size_argument, default=512,
+                        help="Likelihood batch size, or 'all' for each complete class/split")
     parser.add_argument('--optimizer-derivatives', type=int, choices=(1, 2), default=2)
     parser.add_argument('--optimizer-maxiter', type=int, default=150)
     parser.add_argument('--worker-order', type=int, choices=orders, help=argparse.SUPPRESS)
+    parser.set_defaults(**(defaults or {}))
     args = parser.parse_args(argv)
-    if not np.isfinite(args.delta) or args.delta <= 0 or min(args.batch_size, args.logpdf_batch_size, args.optimizer_maxiter) < 1:
+    if (not np.isfinite(args.delta) or args.delta <= 0 or args.optimizer_maxiter < 1
+            or any(size is not None and size < 1 for size in [args.batch_size, args.logpdf_batch_size])):
         parser.error('delta must be positive and finite; batch sizes and optimizer maxiter must be positive')
     if args.fit_seed < 0 or args.fit_seed >= 2**32 - 1:
         parser.error('fit-seed must be between 0 and 2**32 - 2')
@@ -267,7 +286,8 @@ def main(argv=None, *, fixed_order=None):
         command = [sys.executable, '-u', str(Path(__file__).resolve()), '--worker-order', str(order)]
         for name in ['data_path', 'split_indices', 'output_dir', 'sing_dir', 'delta', 'fit_seed',
                      'batch_size', 'logpdf_batch_size', 'optimizer_derivatives', 'optimizer_maxiter']:
-            command += ['--' + name.replace('_', '-'), str(getattr(args, name))]
+            value = getattr(args, name)
+            command += ['--' + name.replace('_', '-'), 'all' if value is None else str(value)]
         result = subprocess.run(command, check=False)
         if result.returncode:
             failures += 1

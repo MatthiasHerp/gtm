@@ -2,6 +2,8 @@
 from contextlib import redirect_stdout
 import importlib.util
 import io
+from pathlib import Path
+from types import SimpleNamespace
 import threading
 import unittest
 
@@ -37,6 +39,7 @@ class FullSampleTests(unittest.TestCase):
         class Density:
             def __init__(self):
                 self.calls = {"hessian": [], "gradient": [], "fisher": []}
+                self.transport_map = SimpleNamespace(n_coeffs=3)
 
             def hess_x_log_pdf(self, x):
                 self.calls["hessian"].append(len(x))
@@ -56,7 +59,9 @@ class FullSampleTests(unittest.TestCase):
             density = Density()
             output = io.StringIO()
             with redirect_stdout(output):
-                sing, _ = load_sing(batch_size=batch_size, progress=True)
+                sing, _ = load_sing(batch_size=batch_size, progress=True,
+                                     sing_directory=(Path("/opt/gtm/.external/SING")
+                                                     if Path("/opt/gtm/.external/SING").exists() else None))
                 sing.__globals__["_record_solve"](dict(success=True, jac=np.zeros(3)))
                 gp = sing.__globals__["GP"]
                 scores = gp.gen_precision(density, values)

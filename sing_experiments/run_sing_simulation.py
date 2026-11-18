@@ -36,7 +36,7 @@ def fit_sing(data, metadata, directory, degree, config, sing_directory=None):
     density = history[-1]["density"]
 
     def logpdf(points, label):
-        batch = config["loglik_batch_size"]
+        batch = len(points) if config["loglik_batch_size"] is None else config["loglik_batch_size"]
         values = []
         for i in range(0, len(points), batch):
             if config.get("progress", True):
@@ -92,15 +92,17 @@ def main(argv=None, *, fixed_degree=None, defaults=None):
     degrees = study["sing_degrees"] if args.degrees is None else args.degrees
     if not set(degrees) <= set(study["sing_degrees"]):
         parser.error("Requested degrees are outside the study grid")
-    if config["batch_size"] is not None and (not isinstance(config["batch_size"], int) or config["batch_size"] < 1):
-        parser.error("batch_size must be a positive integer or null (all observations)")
-    for key in ("optimizer_maxiter", "loglik_batch_size"):
-        if config[key] < 1:
-            parser.error(f"{key} must be positive")
+    for key in ("batch_size", "loglik_batch_size"):
+        if config[key] is not None and (not isinstance(config[key], int)
+                                       or isinstance(config[key], bool) or config[key] < 1):
+            parser.error(f"{key} must be a positive integer or null (all observations)")
+    if config["optimizer_maxiter"] < 1:
+        parser.error("optimizer_maxiter must be positive")
     print(f"Selected {len(cases) * len(degrees)} SING fits on CPU; no PIT/rank transformation. "
           f"Optimizer maxiter={config['optimizer_maxiter']}; run label={args.run_label}.", flush=True)
     if not args.list_only:
         print(f"Derivative batch size: {config['batch_size'] or 'all observations'}; "
+              f"likelihood batch size: {config['loglik_batch_size'] or 'all observations'}; "
               f"live progress: {'on' if args.live_progress else 'off'}.", flush=True)
     if not args.list_only:
         if importlib.util.find_spec("TransportMaps") is None:

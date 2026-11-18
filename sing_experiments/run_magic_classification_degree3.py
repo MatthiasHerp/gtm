@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fit only degree-3 SING MAGIC densities and save their classification analysis."""
+"""Fit degree-3 MAGIC with all observations per derivative/likelihood call."""
 from pathlib import Path
 import sys
 
@@ -10,7 +10,10 @@ from sing_experiments.run_magic_classification import main as run_magic
 
 
 def main(argv=None):
-    return run_magic(argv, fixed_order=3)
+    return run_magic(argv, fixed_order=3, defaults=dict(
+        batch_size=None, logpdf_batch_size=None,
+        output_dir=ROOT / 'sing_experiments/results/magic_classification_degree3_fullsample',
+    ))
 
 
 if __name__ == '__main__':

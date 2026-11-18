@@ -117,12 +117,14 @@ override `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` with
 `--n-train 125 --marginals gauss --seeds 1 --degrees 2`.
 
 `run_sing_simulation_degree3.py` selects only degree 3, maxiter 300, seeds 1/2,
-and N=2000 followed by N=500, under the `degree3_maxiter300_fullsample` run label.
+and N=2000 followed by N=500, under the `degree3_maxiter300_all_observations` run label.
 Its `batch_size: null` setting evaluates derivatives on all training observations
 in one call (2000 or 500), including the coefficient derivatives and Fisher
 information. This can use substantially more memory than batches of 16;
-runtime improvement is not guaranteed. Held-out likelihood evaluation retains
-its separate batch size of 512.
+runtime improvement is not guaranteed. Its `loglik_batch_size: null` setting
+also evaluates the full training set and full test set in separate single calls.
+The new label preserves both the original `degree3_maxiter300` runs and the
+earlier `degree3_maxiter300_fullsample` derivative-only runs.
 
 Live terminal output is enabled by default for this runner, with iteration and
 derivative-stage start/completion messages, timings, likelihood progress, and
@@ -144,6 +146,27 @@ Use `--n-train 2000` for the six N=2000 fits, or `--list-only` to inspect
 the selection. The runner also supports mounting the whole repository at
 `/workspace`: it uses the pinned checkout at `/opt/gtm/.external/SING` when
 there is no local checkout. `--sing-dir` explicitly selects a checkout.
+
+Estimate derivative memory without fitting or allocating large tensors:
+
+```sh
+python sing_experiments/estimate_sing_memory.py
+```
+
+For dense dimension D and degree B, the coefficient count is
+`P = comb(D+B+1, B+1) - 1` (P=1000 for D=10, B=3). Float64 coefficient
+Hessians use `8*N*P*P` bytes, coefficient gradients of input Hessians use
+`8*N*P*D*D` bytes, and input Hessians use `8*N*D*D` bytes in full-sample mode.
+Reduced arrays, optimizer state, basis caches, and temporary tensors need
+additional memory. The estimator includes reduced arrays and prints a 2–3x
+planning range for the resulting storage baseline; this is heuristic headroom,
+not a measured peak or a guaranteed upper bound. Logs also report the estimate
+using the actual fitted map's coefficient count before the variance calculation.
+Derivative-stage completion messages include the process's measured peak RSS
+so far (a high-water mark, not memory attributed exclusively to that stage).
+Calibrate with measured peak RSS for a smaller dataset at the same D/B, then
+scale the observation-dependent term linearly in N. Sum estimates for concurrent
+fits. Within one MAGIC run, the two class densities are fitted sequentially.
 
 ### Using existing Python environments
 

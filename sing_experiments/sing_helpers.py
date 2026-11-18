@@ -252,7 +252,11 @@ def load_sing(batch_size=256, optimizer_derivatives=2, optimizer_maxiter=100,
         started = time.perf_counter()
         result = function(*args)
         if progress:
-            print(f"DONE {label} ({time.perf_counter() - started:.1f}s)", flush=True)
+            import resource
+            peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            peak_gib = peak / (2 ** 30 if sys.platform == 'darwin' else 2 ** 20)
+            print(f"DONE {label} ({time.perf_counter() - started:.1f}s; "
+                  f"process peak RSS {peak_gib:.2f} GiB)", flush=True)
         return result
 
     def record_solve(log):
@@ -299,6 +303,15 @@ def load_sing(batch_size=256, optimizer_derivatives=2, optimizer_maxiter=100,
 
     def variance(pb, data):
         n = len(data)
+        if progress:
+            from sing_experiments.estimate_sing_memory import estimate_memory
+            estimate = estimate_memory(n, dimension=data.shape[1], batch_size=batch_size,
+                                       n_coeffs=int(pb.transport_map.n_coeffs))
+            print(f"Derivative memory estimate: P={estimate['n_coeffs']}, "
+                  f"B={estimate['batch_observations']}, baseline={estimate['baseline_gib']:.2f} GiB; "
+                  f"unmeasured 2-3x planning headroom="
+                  f"{estimate['planning_low_gib']:.1f}-{estimate['planning_high_gib']:.1f} GiB "
+                  f"(not a peak bound).", flush=True)
         fisher, jac = None, None
         for x in batches(data, "Delta-method derivatives"):
             hess = evaluate("delta-method input Hessians", pb.hess_x_log_pdf, x)

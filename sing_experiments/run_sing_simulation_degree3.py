@@ -12,7 +12,7 @@ from sing_experiments.run_sing_simulation import main as run_sing
 def main(argv=None):
     return run_sing(argv, fixed_degree=3, defaults=dict(
         model_config=ROOT / "sing_experiments/sing_simulation_config_degree3.json",
-        n_train=[2000, 500], seeds=[1, 2], run_label="degree3_maxiter300_fullsample",
+        n_train=[2000, 500], seeds=[1, 2], run_label="degree3_maxiter300_all_observations",
         live_progress=True,
     ))
 
