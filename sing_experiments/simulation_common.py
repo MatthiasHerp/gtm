@@ -6,7 +6,7 @@ and GTM runners can use separate environments and share identical cached data.
 from __future__ import annotations
 
 import argparse
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import platform
 import tempfile
+import threading
 import time
 import traceback
 
@@ -273,6 +274,8 @@ def common_parser(description):
     parser.add_argument("--seeds", type=int, nargs="+")
     parser.add_argument("--run-label", default="default")
     parser.add_argument("--list-only", action="store_true", help="List selected jobs without fitting")
+    parser.add_argument("--live-progress", action=argparse.BooleanOptionalAction, default=False,
+                        help="Print progress to the terminal as well as run.log, with 30-second heartbeats")
     return parser
 
 
@@ -283,6 +286,53 @@ def setup_runner(args):
     validate_study(study)
     cases = select_cases(study, args.n_train, args.marginals, args.seeds)
     return study, cases
+
+
+class _Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+        self.lock = threading.Lock()
+
+    def write(self, value):
+        with self.lock:
+            for stream in self.streams:
+                stream.write(value)
+                stream.flush()
+        return len(value)
+
+    def flush(self):
+        with self.lock:
+            for stream in self.streams:
+                stream.flush()
+
+    def isatty(self):
+        return False
+
+
+@contextmanager
+def progress_output(log, label, enabled=False, heartbeat_seconds=30):
+    """Tee live output to the terminal and log, with elapsed-time heartbeats."""
+    if not enabled:
+        yield log
+        return
+    import sys
+    output = _Tee(log, sys.stdout)
+    stopped = threading.Event()
+    started = time.perf_counter()
+
+    def heartbeat():
+        while not stopped.wait(heartbeat_seconds):
+            output.write(f"RUNNING {label}: {time.perf_counter() - started:.0f}s elapsed "
+                         "(current computation still in progress)\n")
+
+    worker = threading.Thread(target=heartbeat, daemon=True)
+    worker.start()
+    try:
+        yield output
+    finally:
+        stopped.set()
+        worker.join()
+        output.flush()
 
 
 def run_case(directory, case, study, args, model, model_config, fit):
@@ -313,8 +363,12 @@ def _run_case_unlocked(directory, case, study, args, model, model_config, fit):
     atomic_json(result_path, row)
     started = time.perf_counter()
     try:
-        with (directory / "run.log").open("w") as log, redirect_stdout(log), redirect_stderr(log):
+        with (directory / "run.log").open("w") as log, \
+                progress_output(log, f"{model}: {case.name}", getattr(args, "live_progress", False)) as output, \
+                redirect_stdout(output), redirect_stderr(output):
+            print(f"START {model}: {case.name}; preparing shared dataset.", flush=True)
             data, metadata = get_dataset(args.output_dir, study, case)
+            print("Dataset ready; fitting model.", flush=True)
             metrics, artifacts = fit(data, metadata, directory)
             required = ["roc_auc", "train_loglik_mean", "test_loglik_mean"]
             if model.startswith("SING"):

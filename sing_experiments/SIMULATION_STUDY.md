@@ -69,8 +69,9 @@ No threshold is chosen against the known truth.
 
 `sing_simulation_config.json` keeps the pinned upstream algorithm, with
 `delta=1`, fixed ordering after the dataset's shuffle, Newton-CG, and up to
-150 iterations per map component. Scores/variances are accumulated in batches
-of 16 to limit memory, especially for degree 3. No rank/PIT transformation
+150 iterations per map component. The base runner accumulates scores/variances
+in batches of 16 to limit memory. The dedicated degree-3 runner described below
+uses the full training sample at once. No rank/PIT transformation
 or GPU port is introduced. The pinned SING/TransportMaps implementation is
 NumPy-based and has no GPU backend; SING always runs on CPU.
 
@@ -116,7 +117,29 @@ override `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` with
 `--n-train 125 --marginals gauss --seeds 1 --degrees 2`.
 
 `run_sing_simulation_degree3.py` selects only degree 3, maxiter 300, seeds 1/2,
-and N=2000 followed by N=500, under the `degree3_maxiter300` run label.
+and N=2000 followed by N=500, under the `degree3_maxiter300_fullsample` run label.
+Its `batch_size: null` setting evaluates derivatives on all training observations
+in one call (2000 or 500), including the coefficient derivatives and Fisher
+information. This can use substantially more memory than batches of 16;
+runtime improvement is not guaranteed. Held-out likelihood evaluation retains
+its separate batch size of 512.
+
+Live terminal output is enabled by default for this runner, with iteration and
+derivative-stage start/completion messages, timings, likelihood progress, and
+30-second elapsed-time heartbeats during long calls. These are also retained in
+`run.log`. A heartbeat reports elapsed time, rather than a percentage of an
+individual derivative call. Use `--no-live-progress` to log only, or
+`--live-progress` to enable the same live output on the other study runners.
+
+An already running Python process keeps its loaded code and configuration.
+To apply these settings, stop it with Ctrl-C, wait for it to exit, then run:
+
+```sh
+.venv-sing/bin/python -u sing_experiments/run_sing_simulation_degree3.py
+```
+
+The unfinished fit restarts from the beginning. The new run label preserves the
+previous `degree3_maxiter300` profile and prevents configurations from mixing.
 Use `--n-train 2000` for the six N=2000 fits, or `--list-only` to inspect
 the selection. The runner also supports mounting the whole repository at
 `/workspace`: it uses the pinned checkout at `/opt/gtm/.external/SING` when
@@ -185,9 +208,51 @@ that fit. A hard process kill can leave `status=running`, which is retried once
 its process lock is released.
 Do not regard an incomplete grid as 10 successful replicates.
 
+## Local runtime comparison
+
+`run_local_runtime_comparison.py` measures only total wall-clock runtime for
+degree-2 SING and GTM on Gaussian-marginal R-vines at N=125, 500, and 2000.
+It uses the same 10D data, column shuffles, standardization, seeds, and model
+JSON settings as the study runners. GTM includes all 30 tuning trials, both
+pilots, final refitting, and training-data dependence scores. SING includes its
+complete iterative map fitting, Hessian scores, and delta-method thresholding.
+Timing excludes imports, dataset preparation, external test likelihoods, and
+accuracy metrics. Both run sequentially on CPU with one thread by default.
+
+From the repository root, in your GTM environment:
+
+```sh
+conda activate mctm_pytorch
+python sing_experiments/run_local_runtime_comparison.py
+```
+
+If `.venv-sing` is currently activated, run `deactivate` first. The script
+launches `.venv-sing/bin/python` for SING and the invoking Python for GTM,
+checking both environments before fitting. Alternatively, from either environment:
+
+```sh
+python sing_experiments/run_local_runtime_comparison.py \
+  --gtm-python "$HOME/anaconda3/envs/mctm_pytorch/bin/python"
+```
+
+Append `--seeds 1 2 3` for three seeds (18 fits instead of 6), `--list-only`
+to preview, or `--threads 4` to use four threads for both methods. Interpreter
+paths, SING checkout, dataset cache, and output directory are configurable; see
+`--help`. Run without competing compute jobs for a local comparison.
+
+Results are appended after each fit to
+`sing_experiments/results/local_runtime_comparison/runtimes.csv`, with one
+`total_runtime_seconds` value per successful fit plus model, N, seed, dataset
+and configuration hashes, interpreter, and thread count. Failed/interrupted
+fits have a status and error with an empty runtime. Each invocation performs
+fresh fits and appends measurements, including seeds measured previously.
+Models, likelihoods, graph matrices, and optimizer diagnostics are discarded;
+the existing shared dataset cache is retained. Data generation may still create
+the study's test set and truth audit, entirely outside the measured interval.
+
 ## Outputs and comparison
 
-Each run writes:
+Each study run writes:
 
 - `result.json`: metrics, status, data checksum, configuration, seeds, versions,
   timing, device, likelihood scale, and scoring/threshold conventions.

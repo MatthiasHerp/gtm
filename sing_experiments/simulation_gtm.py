@@ -205,7 +205,12 @@ def dependence_scores(model, values, config):
     return scores
 
 
-def fit_gtm(data, metadata, directory, config, device):
+def fit_gtm(data, metadata, directory, config, device, *, runtime_only=False):
+    """Fit the study protocol; optionally stop after training-data graph scores.
+
+    The runtime runner uses temporary storage for tuning diagnostics and skips
+    likelihood evaluation, accuracy metrics, and model/evaluation exports.
+    """
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     started = time.perf_counter()
     streams = metadata["seed_streams"]
@@ -281,6 +286,11 @@ def fit_gtm(data, metadata, directory, config, device):
     if device.startswith("cuda"):
         torch.cuda.synchronize(device)
     fit_seconds = time.perf_counter() - started
+    if runtime_only:
+        dependence_scores(model, data["x_train"], config)
+        if device.startswith("cuda"):
+            torch.cuda.synchronize(device)
+        return {}, {}
     likelihood, log_arrays = likelihood_metrics(
         logpdf(model, data["x_train"], config["loglik_batch_size"]),
         logpdf(model, data["x_test"], config["loglik_batch_size"]), data["scale"])

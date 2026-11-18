@@ -35,7 +35,7 @@ class DegreeRunnerTests(unittest.TestCase):
         self.assertTrue(all('n500_' in line for line in jobs[6:]))
         self.assertTrue(all(line.endswith(('seed01', 'seed02')) for line in jobs))
         self.assertEqual({line.split('_')[1] for line in jobs}, {'gauss', 'exp', 't'})
-        self.assertIn('maxiter=300; run label=degree3_maxiter300', lines[0])
+        self.assertIn('maxiter=300; run label=degree3_maxiter300_fullsample', lines[0])
         self.assertEqual(len(self.list_jobs(degree3, ['--n-train', '2000'])) - 1, 6)
 
     def test_degree_entry_points_reject_other_degree(self):
@@ -89,8 +89,10 @@ class DegreeRunnerTests(unittest.TestCase):
                 self.assertEqual(degree3.main(['--output-dir', str(output)]), 0)
             self.assertEqual(run_case.call_count, 12)
             profile, config = ensure_config.call_args.args
-            self.assertEqual(profile, output / 'runs/sing/degree3_maxiter300/degree3/config.json')
+            self.assertEqual(profile, output / 'runs/sing/degree3_maxiter300_fullsample/degree3/config.json')
             self.assertEqual(config['optimizer_maxiter'], 300)
+            self.assertIsNone(config['batch_size'])
+            self.assertTrue(run_case.call_args.args[3].live_progress)
             self.assertEqual(config['study'], read_json(DEFAULT_STUDY))
             self.assertTrue(all(call.args[4] == 'SING degree 3' for call in run_case.call_args_list))
             self.assertEqual(before, (original.read_bytes(), old3.read_bytes()))

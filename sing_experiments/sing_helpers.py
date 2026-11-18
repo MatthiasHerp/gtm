@@ -7,6 +7,7 @@ from pathlib import Path
 import random
 import subprocess
 import sys
+import time
 import types
 
 import numpy as np
@@ -219,13 +220,17 @@ def load_sing(batch_size=256, optimizer_derivatives=2, optimizer_maxiter=100,
     """Load upstream code with explicit compatibility/memory adaptations.
 
     No global NumPy monkey patches. The graph algorithm and threshold are upstream.
-    The variance uses the same delta-method formula, accumulated in small batches.
+    The variance uses the same delta-method formula. ``batch_size=None`` evaluates
+    all observations in one call; a positive integer accumulates smaller batches.
     With ``retain_density=True``, the final history entry also retains its fitted
     ``density`` for held-out log-density evaluation; earlier maps are released.
-    ``progress=True`` logs the observation range before each derivative batch.
+    ``progress=True`` logs iteration starts, observation ranges, and derivative
+    stage starts/completions with elapsed times.
     """
     if optimizer_derivatives not in (1, 2) or optimizer_maxiter < 1:
         raise ValueError("Use derivative order 1 (BFGS) or 2 (Newton-CG), with a positive iteration limit")
+    if batch_size is not None and (not isinstance(batch_size, int) or batch_size < 1):
+        raise ValueError("batch_size must be a positive integer or None (all observations)")
     directory = Path(sing_directory) if sing_directory is not None else ROOT / ".external/SING"
     commit = subprocess.check_output(["git", "-C", str(directory), "rev-parse", "HEAD"], text=True).strip()
     if commit != SING_COMMIT:
@@ -235,6 +240,20 @@ def load_sing(batch_size=256, optimizer_derivatives=2, optimizer_maxiter=100,
     exec(compile((path / "GeneralizedPrecision.py").read_text(), str(path / "GeneralizedPrecision.py"), "exec"), gp.__dict__)
     history = []
     solver_logs = []
+
+    def start_iteration(iteration):
+        if progress:
+            print(f"SING iteration {iteration}: fitting transport map (maxiter={optimizer_maxiter}).",
+                  flush=True)
+
+    def evaluate(label, function, *args):
+        if progress:
+            print(f"START {label}", flush=True)
+        started = time.perf_counter()
+        result = function(*args)
+        if progress:
+            print(f"DONE {label} ({time.perf_counter() - started:.1f}s)", flush=True)
+        return result
 
     def record_solve(log):
         logs = log if isinstance(log, list) else [log]
@@ -257,14 +276,15 @@ def load_sing(batch_size=256, optimizer_derivatives=2, optimizer_maxiter=100,
         print(f"Map fit converged ({len(logs)} components); computing Hessian scores.", flush=True)
 
     def batches(data, label=None):
-        for start in range(0, len(data), batch_size):
+        size = len(data) if batch_size is None else batch_size
+        for start in range(0, len(data), size):
             if progress and label:
-                print(f"{label}: observations {start + 1}-{min(start + batch_size, len(data))} of {len(data)}",
+                print(f"{label}: observations {start + 1}-{min(start + size, len(data))} of {len(data)}",
                       flush=True)
-            yield data[start:start + batch_size]
+            yield data[start:start + size]
 
     def precision(pb, data):
-        value = sum(np.square(pb.hess_x_log_pdf(x)).sum(axis=0)
+        value = sum(np.square(evaluate("input Hessians", pb.hess_x_log_pdf, x)).sum(axis=0)
                     for x in batches(data, "Input Hessians")) / len(data)
         if not np.isfinite(value).all():
             raise FloatingPointError("Nonfinite generalized precision")
@@ -273,27 +293,31 @@ def load_sing(batch_size=256, optimizer_derivatives=2, optimizer_maxiter=100,
         history.append({"omega_raw": value.copy(), "solver_logs": solver_logs[-1]})
         if retain_density:
             history[-1]["density"] = pb
-        print("Computing batched delta-method variance.", flush=True)
+        mode = "all observations at once" if batch_size is None else f"batches of {batch_size}"
+        print(f"Computing delta-method variance ({mode}).", flush=True)
         return value
 
     def variance(pb, data):
         n = len(data)
         fisher, jac = None, None
         for x in batches(data, "Delta-method derivatives"):
-            hess = pb.hess_x_log_pdf(x)
-            grad = pb.grad_a_hess_x_log_pdf(x)
+            hess = evaluate("delta-method input Hessians", pb.hess_x_log_pdf, x)
+            grad = evaluate("delta-method coefficient gradients of input Hessians", pb.grad_a_hess_x_log_pdf, x)
             partial_jac = np.einsum("nij,naij->aij", 2 * hess, grad)
-            partial_fisher = -pb.hess_a_log_pdf(x).sum(axis=0)
+            partial_fisher = -evaluate("delta-method coefficient Hessians (Fisher information)",
+                                       pb.hess_a_log_pdf, x).sum(axis=0)
             jac = partial_jac if jac is None else jac + partial_jac
             fisher = partial_fisher if fisher is None else fisher + partial_fisher
         jac, fisher = jac / n, fisher / n
         flat = jac.reshape(jac.shape[0], -1)
-        covariance_times_jac = np.linalg.solve(fisher, flat) / n
+        covariance_times_jac = evaluate("delta-method Fisher matrix solve", np.linalg.solve, fisher, flat) / n
         value = np.einsum("ai,ai->i", flat, covariance_times_jac).reshape(jac.shape[1:])
         if not np.isfinite(value).all() or value.min() < -1e-10:
             raise FloatingPointError("Invalid delta-method variance; inspect map fit/Fisher information")
         value = np.maximum(value, 0)
         history[-1]["variance"] = value.copy()
+        if progress:
+            print("Delta-method variance finished; thresholding graph.", flush=True)
         return value
 
     gp.gen_precision, gp.var_omega = precision, variance
@@ -317,7 +341,10 @@ def load_sing(batch_size=256, optimizer_derivatives=2, optimizer_maxiter=100,
                             f"tol=tol, ders=ders, maxit={optimizer_maxiter})")
     source = source.replace("       pb_density =", "       _record_solve(solve)\n       pb_density =")
     source = source.replace("np.int((dim**2 - dim)/2)", "int((dim**2 - dim)/2)")
+    source = source.replace("    while sparsityIncreasing:\n",
+                            "    while sparsityIncreasing:\n       _start_iteration(counter + 1)\n")
     module.__dict__["_record_solve"] = record_solve
+    module.__dict__["_start_iteration"] = start_iteration
     exec(compile(source, str(path / "SparsityIdentificationNonGaussian.py"), "exec"), module.__dict__)
     return module.SING, history
 
